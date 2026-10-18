@@ -2,7 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+
     <application
+        android:name=".KakeiApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -10,7 +24,9 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Kakei">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -19,10 +35,133 @@
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- SMS Capture Receiver -->
+        <receiver
+            android:name=".automation.SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Bank Push Notification Listener Service -->
+        <service
+            android:name=".automation.BankNotificationListenerService"
+            android:exported="true"
+            android:label="Kakei Bank Notification Capture"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Instant Category Overlay Service -->
+        <service
+            android:name=".automation.InstantPopupService"
+            android:exported="false" />
+
+        <!-- Quick Settings Tile Service -->
+        <service
+            android:name=".automation.QuickAddTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Kakei Quick Add"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- 7 Home Screen Widgets (Kakei Spec Section 9.2) -->
+        <receiver
+            android:name=".automation.BudgetRingWidget"
+            android:exported="true"
+            android:label="Kakei · Budget Ring">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.GoalsRingWidget"
+            android:exported="true"
+            android:label="Kakei · Savings Goals Ring">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.TodaySpendWidget"
+            android:exported="true"
+            android:label="Kakei · Today's Spend">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.DebtBalanceWidget"
+            android:exported="true"
+            android:label="Kakei · Lend &amp; Borrow">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.QuickAddWidget"
+            android:exported="true"
+            android:label="Kakei · Quick Add">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.SplitBillWidget"
+            android:exported="true"
+            android:label="Kakei · Split Bill">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".automation.NetWorthWidget"
+            android:exported="true"
+            android:label="Kakei · Net Worth">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/kakei_widget_info" />
+        </receiver>
+
     </application>
 
 </manifest>
