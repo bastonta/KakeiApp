@@ -1,6 +1,7 @@
 package com.kakei.app.data.repository
 
 import android.content.Context
+import com.kakei.app.BuildConfig
 import com.kakei.app.automation.BankSmsPatterns
 import com.kakei.app.automation.KakeiWidgetUpdater
 import com.kakei.app.automation.NotificationDeduplicationHelper
@@ -8,9 +9,12 @@ import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.security.SecurePrefs
+import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
+import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.local.KakeiDatabase
+import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.local.SyncErrorEntity
 import com.kakei.app.data.local.SyncMutationEntity
 import com.kakei.app.data.remote.ApiException
@@ -59,6 +63,10 @@ data class AppSettingsState(
     val smsCaptureEnabled: Boolean = true,
     val pushCaptureEnabled: Boolean = true,
     val instantPopupEnabled: Boolean = true,
+    /** Account that captured bank alerts are filed into when no sender mapping matches. */
+    val captureDefaultAccountId: String? = null,
+    /** Alert sender (SMS address / app package) → account id, set when the user files a pending capture. */
+    val captureSenderAccounts: Map<String, String> = emptyMap(),
     val syncInProgress: Boolean = false,
     val lastSyncTimestamp: String? = null,
     val statusMessage: String? = null
@@ -211,6 +219,18 @@ class KakeiRepository(
     )
     val insights: StateFlow<InsightsSummaryDto> = _insights.asStateFlow()
 
+    private val _exchangeRates = MutableStateFlow(ExchangeRatesResponse())
+    /** Last `GET /profile/exchange-rates` answer (market rates + the user's overrides). */
+    val exchangeRates: StateFlow<ExchangeRatesResponse> = _exchangeRates.asStateFlow()
+
+    private val _rateBook = MutableStateFlow(ExchangeRateBook.EMPTY)
+    /** Effective rates used for every conversion; never contains invented rates. */
+    val rateBook: StateFlow<ExchangeRateBook> = _rateBook.asStateFlow()
+
+    private val _pendingCaptures = MutableStateFlow<List<PendingCaptureEntity>>(emptyList())
+    /** Parsed bank alerts waiting for the user to choose an account. */
+    val pendingCaptures: StateFlow<List<PendingCaptureEntity>> = _pendingCaptures.asStateFlow()
+
     private val _instantCapturedRecord = MutableStateFlow<TransactionDto?>(null)
     val instantCapturedRecord: StateFlow<TransactionDto?> = _instantCapturedRecord.asStateFlow()
 
@@ -225,12 +245,11 @@ class KakeiRepository(
             securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)
         }
         apiClient.onSessionExpired = { handleSessionExpired() }
-        // Demo data only belongs to the explicit offline/autonomous mode; a signed-in
-        // user must never see fabricated accounts or have real SMS routed into them.
-        if (_settingsState.value.isOfflineAutonomousMode && !_settingsState.value.isAuthenticated) {
-            ensureDefaultSeedDataIfEmpty()
-        }
+        // Demo data is never created automatically (see loadDemoDataForDevelopment);
+        // installs that received it from older builds get the untouched rows removed.
+        removeUntouchedLegacyDemoSeed()
         reloadFromLocalDatabase()
+        reportDatabaseOpenState()
         if (_settingsState.value.isAuthenticated) {
             scheduleSync()
         }
@@ -272,7 +291,7 @@ class KakeiRepository(
             ThemeMode.valueOf(prefs.getString("theme_mode", "DARK") ?: "DARK")
         }.getOrDefault(ThemeMode.DARK)
         val defaultCurrency = prefs.getString("default_currency", "KZT") ?: "KZT"
-        val userName = prefs.getString("user_name", "Аблай") ?: "Аблай"
+        val userName = prefs.getString("user_name", "Kakei User") ?: "Kakei User"
         val userEmail = prefs.getString("user_email", "user@kakei.app") ?: "user@kakei.app"
 
         return AppSettingsState(
@@ -285,6 +304,10 @@ class KakeiRepository(
             smsCaptureEnabled = prefs.getBoolean("sms_capture", true),
             pushCaptureEnabled = prefs.getBoolean("push_capture", true),
             instantPopupEnabled = prefs.getBoolean("instant_popup", true),
+            captureDefaultAccountId = prefs.getString("capture_default_account", null),
+            captureSenderAccounts = runCatching {
+                database.json.decodeFromString<Map<String, String>>(prefs.getString("capture_sender_accounts", null) ?: "{}")
+            }.getOrDefault(emptyMap()),
             lastSyncTimestamp = prefs.getString("last_sync", null),
             profile = ProfileInfoResponse(
                 userId = prefs.getString("user_id", "local-user") ?: "local-user",
@@ -367,7 +390,6 @@ class KakeiRepository(
 
     fun enterOfflineAutonomousMode() {
         prefs.edit().putBoolean("offline_mode", true).apply()
-        ensureDefaultSeedDataIfEmpty()
         reloadFromLocalDatabase()
         _settingsState.value = _settingsState.value.copy(
             isOfflineAutonomousMode = true,
@@ -632,6 +654,14 @@ class KakeiRepository(
                             }
                             // Equivalent record already exists on the server (dedup hash).
                             409 -> if (r.duplicateHash != null) applied() else rejected(r.status, r.error)
+                            // The account does not exist on the server (e.g. a local-only demo
+                            // account): keep the transaction for the user to re-file instead of
+                            // letting the next pull silently drop it.
+                            404 -> {
+                                parkRejectedRecordCreate(item, r.error)
+                                rejected(r.status, r.error)
+                            }
+                            422 -> rejected(r.status, describeRecordError(r.error))
                             else -> rejected(r.status, r.error)
                         }
                     },
@@ -650,6 +680,7 @@ class KakeiRepository(
                             }
                             // Revision conflict: the server copy wins and is pulled right after.
                             409 -> rejected(r.status, r.error ?: "Sync revision conflict")
+                            422 -> rejected(r.status, describeRecordError(r.error))
                             else -> rejected(r.status, r.error)
                         }
                     },
@@ -827,6 +858,32 @@ class KakeiRepository(
 
             else -> rejected(0, "Unknown mutation ${mut.entityType}/${mut.operation}")
         }
+    }
+
+    private fun describeRecordError(error: String?): String? =
+        if (error?.contains(FX_RATE_UNAVAILABLE) == true) {
+            "No exchange rate known for this transfer; enter the received amount or set a rate and add it again"
+        } else error
+
+    /** Moves a record the server refused (unknown account) into the pending-capture review list. */
+    private fun parkRejectedRecordCreate(item: CreateRecordItem, error: String?) {
+        if (item.type == "TRANSFER") return // a transfer cannot be re-filed without its target; the sync error stays visible
+        val currency = database.getItem<AccountDto>(KakeiDatabase.COL_ACCOUNTS, item.accountId)?.currency
+            ?: _settingsState.value.profile.defaultCurrency
+        val now = Instant.now().toString()
+        val capture = PendingCaptureEntity(
+            id = UUID.randomUUID().toString(),
+            sourceChannel = "SYNC",
+            rawText = listOfNotNull(item.payee, item.note, error).joinToString(" · "),
+            operationType = item.type,
+            amount = item.amount,
+            currency = currency,
+            merchant = item.payee,
+            bookingDate = item.bookingDate ?: now,
+            reason = "SERVER_REJECTED",
+            createdAt = now
+        )
+        putDto(KakeiDatabase.COL_PENDING_CAPTURES, capture.id, capture.createdAt, capture)
     }
 
     private suspend fun simpleDelete(call: suspend () -> Result<Unit>): MutationResult =
@@ -1009,6 +1066,8 @@ class KakeiRepository(
                 _passkeys.value = list
             }
 
+            apiClient.getExchangeRates().onSuccess { storeExchangeRates(it) }.onFailure { pullFailures++ }
+
             val nowIso = Instant.now().toString()
             prefs.edit().putString("last_sync", nowIso).apply()
             reloadFromLocalDatabase()
@@ -1069,6 +1128,11 @@ class KakeiRepository(
         _groupMembers.value = grpItems
         _pendingMutations.value = muts
         _syncErrors.value = errs
+        _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
+        database.getItem<ExchangeRatesResponse>(KakeiDatabase.COL_EXCHANGE_RATES, EXCHANGE_RATES_ID)?.let {
+            _exchangeRates.value = it
+            _rateBook.value = ExchangeRateBook.from(it)
+        }
 
         recomputeDerivedAnalytics()
         KakeiWidgetUpdater.refreshAllWidgets(appContext)
@@ -1076,24 +1140,29 @@ class KakeiRepository(
 
     private fun recomputeDerivedAnalytics() {
         val baseCurrency = _settingsState.value.profile.defaultCurrency
+        val rates = _rateBook.value
         val accs = _accounts.value
         val txs = _transactions.value
         val rawBudgets = database.listItems<BudgetEnvelopeDto>(KakeiDatabase.COL_BUDGETS, descending = false)
         val obs = _obligations.value
         val lendItems = database.listItems<LendingRecordDto>(KakeiDatabase.COL_LENDING, descending = true)
 
-        val evaluatedBudgets = FinancialCalculators.evaluateBudgets(rawBudgets, txs)
+        val evaluatedBudgets = FinancialCalculators.evaluateBudgets(rawBudgets, txs, rates = rates)
         _budgets.value = evaluatedBudgets
 
-        val owedToMe = lendItems.filter { it.type == "LENT" && !it.isSettled && !it.isForgiven }
-            .fold(BigDecimal.ZERO) { acc, r ->
-                acc + CurrencyFormatter.convert(r.outstandingAmount, r.currency, baseCurrency)
-            }.setScale(2, RoundingMode.HALF_UP)
+        // Debts in a currency without a known rate are left out of the base-currency totals
+        // (each record still shows its own amount and currency).
+        val owedToMe = ConvertedTotal.of(
+            lendItems.filter { it.type == "LENT" && !it.isSettled && !it.isForgiven }.map { it.outstandingAmount to it.currency },
+            baseCurrency,
+            rates
+        ).total.setScale(2, RoundingMode.HALF_UP)
 
-        val owedByMe = lendItems.filter { it.type == "BORROWED" && !it.isSettled && !it.isForgiven }
-            .fold(BigDecimal.ZERO) { acc, r ->
-                acc + CurrencyFormatter.convert(r.outstandingAmount, r.currency, baseCurrency)
-            }.setScale(2, RoundingMode.HALF_UP)
+        val owedByMe = ConvertedTotal.of(
+            lendItems.filter { it.type == "BORROWED" && !it.isSettled && !it.isForgiven }.map { it.outstandingAmount to it.currency },
+            baseCurrency,
+            rates
+        ).total.setScale(2, RoundingMode.HALF_UP)
 
         _lendingResponse.value = LendingListResponse(
             baseCurrency = baseCurrency,
@@ -1103,11 +1172,83 @@ class KakeiRepository(
             items = lendItems
         )
 
-        _forecast.value = FinancialCalculators.calculateCashFlowForecast(accs, obs, baseCurrency)
-        _healthScore.value = FinancialCalculators.calculateHealthScore(txs, evaluatedBudgets, lendItems, baseCurrency)
+        _forecast.value = FinancialCalculators.calculateCashFlowForecast(accs, obs, baseCurrency, rates = rates)
+        _healthScore.value = FinancialCalculators.calculateHealthScore(txs, evaluatedBudgets, lendItems, baseCurrency, rates = rates)
         _streaks.value = FinancialCalculators.calculateNoSpendStreak(txs)
-        _heatmaps.value = FinancialCalculators.calculateHeatmaps(txs, baseCurrency)
-        _insights.value = FinancialCalculators.calculateInsights(txs, baseCurrency)
+        _heatmaps.value = FinancialCalculators.calculateHeatmaps(txs, baseCurrency, rates = rates)
+        _insights.value = FinancialCalculators.calculateInsights(txs, baseCurrency, rates = rates)
+    }
+
+    /** Net worth in the base currency plus the balances that could not be converted. */
+    fun netWorth(): ConvertedTotal = ConvertedTotal.of(
+        _accounts.value.filter { !it.isArchived && !it.isExcludedFromStats }.map { it.currentBalance to it.currency },
+        _settingsState.value.profile.defaultCurrency,
+        _rateBook.value
+    )
+
+    // ========================================================================
+    // Exchange Rates (server-provided, user overrides)
+    // ========================================================================
+
+    private fun storeExchangeRates(resp: ExchangeRatesResponse) {
+        putDto(KakeiDatabase.COL_EXCHANGE_RATES, EXCHANGE_RATES_ID, EXCHANGE_RATES_ID, resp)
+        _exchangeRates.value = resp
+        _rateBook.value = ExchangeRateBook.from(resp)
+        recomputeDerivedAnalytics()
+    }
+
+    fun refreshExchangeRates() {
+        if (!_settingsState.value.isAuthenticated) return
+        scope.launch {
+            apiClient.getExchangeRates()
+                .onSuccess { storeExchangeRates(it) }
+                .onFailure { postMessage("Exchange rates refresh failed: ${it.message}") }
+        }
+    }
+
+    /** Sets a manual rate: [rate] units of [toCurrency] per 1 [fromCurrency]. Requires a connection. */
+    fun setExchangeRateOverride(fromCurrency: String, toCurrency: String, rate: BigDecimal) {
+        val from = fromCurrency.trim().uppercase(Locale.ROOT)
+        val to = toCurrency.trim().uppercase(Locale.ROOT)
+        if (from == to || rate <= BigDecimal.ZERO) return
+        if (!_settingsState.value.isAuthenticated) {
+            postMessage("Sign in to Kakei Server to set exchange rates")
+            return
+        }
+        scope.launch {
+            apiClient.upsertExchangeRateOverride(
+                UpsertExchangeRateOverrideRequest(fromCurrency = from, toCurrency = to, rate = rate.stripTrailingZeros())
+            ).onSuccess { saved ->
+                val current = _exchangeRates.value
+                storeExchangeRates(
+                    current.copy(
+                        overrides = current.overrides.filterNot {
+                            it.fromCurrency.equals(from, true) && it.toCurrency.equals(to, true)
+                        } + saved
+                    )
+                )
+                postMessage("Rate saved: 1 $from = ${saved.rate.stripTrailingZeros().toPlainString()} $to")
+            }.onFailure { postMessage("Could not save rate: ${it.message}") }
+        }
+    }
+
+    fun resetExchangeRateOverride(fromCurrency: String, toCurrency: String) {
+        if (!_settingsState.value.isAuthenticated) {
+            postMessage("Sign in to Kakei Server to change exchange rates")
+            return
+        }
+        scope.launch {
+            apiClient.deleteExchangeRateOverride(fromCurrency, toCurrency).onSuccess {
+                val current = _exchangeRates.value
+                storeExchangeRates(
+                    current.copy(
+                        overrides = current.overrides.filterNot {
+                            it.fromCurrency.equals(fromCurrency, true) && it.toCurrency.equals(toCurrency, true)
+                        }
+                    )
+                )
+            }.onFailure { postMessage("Could not reset rate: ${it.message}") }
+        }
     }
 
     // ========================================================================
@@ -1290,6 +1431,15 @@ class KakeiRepository(
     // 5. Transactions / Ledger Records (Splits, Counterflow Transfers, Review)
     // ========================================================================
 
+    /** Outcome of [createRecordDetailed]. */
+    data class RecordCreateResult(
+        val record: TransactionDto?,
+        /** True when an identical record (same dedup hash on the same account) already existed. */
+        val duplicate: Boolean = false,
+        /** Set when nothing was created and the user has to act (e.g. missing exchange rate). */
+        val error: String? = null
+    )
+
     fun createRecord(
         accountId: String,
         type: String,
@@ -1302,23 +1452,73 @@ class KakeiRepository(
         splits: List<SplitDto> = emptyList(),
         labelIds: List<String> = emptyList(),
         needsReview: Boolean = false,
-        bookingDateIso: String = Instant.now().toString()
-    ): TransactionDto? {
-        val account = _accounts.value.firstOrNull { it.id == accountId } ?: return null
+        bookingDateIso: String = Instant.now().toString(),
+        targetAmount: BigDecimal? = null
+    ): TransactionDto? = createRecordDetailed(
+        accountId, type, amount, categoryId, payee, note, status, transferTargetAccountId,
+        splits, labelIds, needsReview, bookingDateIso, targetAmount
+    ).also { result -> result.error?.let { postMessage(it) } }.record
+
+    /**
+     * Creates a record locally and queues it for the server.
+     *
+     * - Dedup: when a local record on the same account already carries the same canonical
+     *   dedup hash (see [HashDedupCalculator]) the existing record is returned and nothing
+     *   is created, so re-importing a statement or a re-delivered bank alert is idempotent.
+     * - Transfers: the target account is credited exactly [targetAmount] (the amount the
+     *   bank actually credited, in the target currency). Without it, a cross-currency
+     *   transfer uses the effective server rate; if no rate is known it is refused.
+     */
+    fun createRecordDetailed(
+        accountId: String,
+        type: String,
+        amount: BigDecimal,
+        categoryId: String?,
+        payee: String?,
+        note: String?,
+        status: String = "CLEARED",
+        transferTargetAccountId: String? = null,
+        splits: List<SplitDto> = emptyList(),
+        labelIds: List<String> = emptyList(),
+        needsReview: Boolean = false,
+        bookingDateIso: String = Instant.now().toString(),
+        targetAmount: BigDecimal? = null
+    ): RecordCreateResult {
+        val account = _accounts.value.firstOrNull { it.id == accountId }
+            ?: return RecordCreateResult(null, error = "Account not found")
         val baseCurrency = _settingsState.value.profile.defaultCurrency
+        val rates = _rateBook.value
         val normalizedAmount = amount.abs().setScale(4, RoundingMode.HALF_UP)
-        val converted = CurrencyFormatter.convert(normalizedAmount, account.currency, baseCurrency)
+        val cleanPayee = payee?.takeIf { it.isNotBlank() }
         val dedupHash = HashDedupCalculator.computeTransactionHash(
             accountId = accountId,
             amount = normalizedAmount,
             currency = account.currency,
             bookingDateIso = bookingDateIso,
-            payee = payee
+            payee = cleanPayee
         )
+        _transactions.value.firstOrNull {
+            it.accountId == accountId && !it.isTransferCredit && it.hashDedup == dedupHash
+        }?.let { return RecordCreateResult(it, duplicate = true) }
 
-        val pairId = if (type == "TRANSFER" && !transferTargetAccountId.isNullOrBlank()) {
-            UUID.randomUUID().toString()
+        val isTransfer = type == "TRANSFER" && !transferTargetAccountId.isNullOrBlank()
+        val targetAcc = if (isTransfer) {
+            _accounts.value.firstOrNull { it.id == transferTargetAccountId }
+                ?: return RecordCreateResult(null, error = "Transfer target account not found")
         } else null
+        val crossCurrency = targetAcc != null && !targetAcc.currency.equals(account.currency, ignoreCase = true)
+        val creditAmount: BigDecimal? = when {
+            targetAcc == null -> null
+            !crossCurrency -> normalizedAmount
+            targetAmount != null && targetAmount.signum() > 0 -> targetAmount.abs().setScale(4, RoundingMode.HALF_UP)
+            else -> rates.convert(normalizedAmount, account.currency, targetAcc.currency)
+                ?: return RecordCreateResult(
+                    null,
+                    error = "No ${account.currency}→${targetAcc.currency} exchange rate known: enter the amount received"
+                )
+        }
+
+        val pairId = if (targetAcc != null) UUID.randomUUID().toString() else null
 
         val record = TransactionDto(
             id = UUID.randomUUID().toString(),
@@ -1327,9 +1527,11 @@ class KakeiRepository(
             type = type,
             amount = normalizedAmount,
             currency = account.currency,
-            convertedAmount = converted,
+            // Informational only (the server sends the authoritative value); zero when no rate is known.
+            convertedAmount = CurrencyFormatter.convert(normalizedAmount, account.currency, baseCurrency, rates)
+                ?: BigDecimal.ZERO,
             bookingDate = bookingDateIso,
-            payee = payee?.takeIf { it.isNotBlank() },
+            payee = cleanPayee,
             note = note?.takeIf { it.isNotBlank() },
             status = status,
             needsReview = needsReview,
@@ -1343,62 +1545,45 @@ class KakeiRepository(
             updatedAt = bookingDateIso
         )
 
-        database.putItem(
-            KakeiDatabase.COL_TRANSACTIONS,
-            record.id,
-            record.bookingDate,
-            database.json.encodeToString(record)
-        )
+        database.runInTransaction {
+            putDto(KakeiDatabase.COL_TRANSACTIONS, record.id, record.bookingDate, record)
 
-        // Update source account balance
-        val deltaSource = when (type) {
-            "INCOME" -> normalizedAmount
-            "EXPENSE", "TRANSFER" -> normalizedAmount.negate()
-            else -> BigDecimal.ZERO
-        }
-        val updatedSource = account.copy(
-            currentBalance = (account.currentBalance + deltaSource).setScale(4, RoundingMode.HALF_UP),
-            updatedAt = bookingDateIso
-        )
-        database.putItem(
-            KakeiDatabase.COL_ACCOUNTS,
-            updatedSource.id,
-            updatedSource.name,
-            database.json.encodeToString(updatedSource)
-        )
+            // Update source account balance
+            val deltaSource = when (type) {
+                "INCOME" -> normalizedAmount
+                "EXPENSE", "TRANSFER" -> normalizedAmount.negate()
+                else -> BigDecimal.ZERO
+            }
+            val updatedSource = account.copy(
+                currentBalance = (account.currentBalance + deltaSource).setScale(4, RoundingMode.HALF_UP),
+                updatedAt = bookingDateIso
+            )
+            putDto(KakeiDatabase.COL_ACCOUNTS, updatedSource.id, updatedSource.name, updatedSource)
 
-        // If TRANSFER, create counterflow paired record in target account
-        if (type == "TRANSFER" && !transferTargetAccountId.isNullOrBlank() && pairId != null) {
-            val targetAcc = _accounts.value.firstOrNull { it.id == transferTargetAccountId }
-            if (targetAcc != null) {
-                val targetAmount = CurrencyFormatter.convert(normalizedAmount, account.currency, targetAcc.currency)
+            // TRANSFER: counterflow credit leg on the target account, exactly creditAmount.
+            if (targetAcc != null && creditAmount != null && pairId != null) {
                 val mirrorTx = record.copy(
                     id = UUID.randomUUID().toString(),
                     accountId = targetAcc.id,
                     type = "TRANSFER",
                     isTransferCredit = true,
-                    amount = targetAmount,
+                    amount = creditAmount,
                     currency = targetAcc.currency,
+                    convertedAmount = CurrencyFormatter.convert(creditAmount, targetAcc.currency, baseCurrency, rates)
+                        ?: BigDecimal.ZERO,
                     payee = "Transfer from ${account.name}",
                     transferPairId = pairId,
-                    transferTargetAccountId = account.id
+                    transferTargetAccountId = account.id,
+                    hashDedup = null
                 )
-                database.putItem(
-                    KakeiDatabase.COL_TRANSACTIONS,
-                    mirrorTx.id,
-                    mirrorTx.bookingDate,
-                    database.json.encodeToString(mirrorTx)
-                )
-                val updatedTarget = targetAcc.copy(
-                    currentBalance = (targetAcc.currentBalance + targetAmount).setScale(4, RoundingMode.HALF_UP),
+                putDto(KakeiDatabase.COL_TRANSACTIONS, mirrorTx.id, mirrorTx.bookingDate, mirrorTx)
+                // Re-read: the target may be the same row we just wrote for the source.
+                val freshTarget = database.getItem<AccountDto>(KakeiDatabase.COL_ACCOUNTS, targetAcc.id) ?: targetAcc
+                val updatedTarget = freshTarget.copy(
+                    currentBalance = (freshTarget.currentBalance + creditAmount).setScale(4, RoundingMode.HALF_UP),
                     updatedAt = bookingDateIso
                 )
-                database.putItem(
-                    KakeiDatabase.COL_ACCOUNTS,
-                    updatedTarget.id,
-                    updatedTarget.name,
-                    database.json.encodeToString(updatedTarget)
-                )
+                putDto(KakeiDatabase.COL_ACCOUNTS, updatedTarget.id, updatedTarget.name, updatedTarget)
             }
         }
 
@@ -1414,6 +1599,9 @@ class KakeiRepository(
             note = record.note,
             status = status,
             transferTargetAccountId = transferTargetAccountId,
+            // Always state the credited amount for cross-currency transfers so the server
+            // books exactly what was credited locally (it would otherwise apply its own rate).
+            targetAmount = if (crossCurrency) creditAmount else null,
             splits = splits.map { SplitItemInput(it.categoryId, it.amount, it.note) },
             labelIds = labelIds,
             skipIfDuplicateHash = true
@@ -1426,7 +1614,7 @@ class KakeiRepository(
             payloadJson = database.json.encodeToString(createReqItem),
             expectedSyncRevision = 1L
         )
-        return record
+        return RecordCreateResult(record)
     }
 
     fun confirmReview(record: TransactionDto, categoryId: String, createRule: Boolean) {
@@ -1472,30 +1660,41 @@ class KakeiRepository(
         else -> BigDecimal.ZERO
     }
 
-    private fun removeRecordLocally(record: TransactionDto) {
-        database.deleteItem(KakeiDatabase.COL_TRANSACTIONS, record.id)
-        val account = _accounts.value.firstOrNull { it.id == record.accountId } ?: return
-        val updatedAcc = account.copy(
-            currentBalance = (account.currentBalance - balanceEffect(record)).setScale(4, RoundingMode.HALF_UP)
-        )
-        database.putItem(KakeiDatabase.COL_ACCOUNTS, updatedAcc.id, updatedAcc.name, database.json.encodeToString(updatedAcc))
-    }
-
+    /**
+     * Deletes a record. A transfer is removed as a whole: both legs (same transferPairId)
+     * are deleted and each leg's own effect is reverted on its own account, in its own
+     * currency, inside one transaction. The server deletes both legs when either is
+     * deleted, so exactly one DELETE is queued.
+     */
     fun deleteRecord(record: TransactionDto) {
-        removeRecordLocally(record)
-        // A transfer is removed as a whole: drop the paired leg too (the server does the same).
-        if (record.transferPairId != null) {
-            _transactions.value
-                .filter { it.transferPairId == record.transferPairId && it.id != record.id }
-                .forEach { removeRecordLocally(it) }
+        val legs = if (record.transferPairId != null) {
+            database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS)
+                .filter { it.transferPairId == record.transferPairId }
+                .ifEmpty { listOf(record) }
+        } else listOf(record)
+
+        database.runInTransaction {
+            for (leg in legs) {
+                database.deleteItem(KakeiDatabase.COL_TRANSACTIONS, leg.id)
+                // Fresh read per leg: both legs may sit on the same account.
+                val account = database.getItem<AccountDto>(KakeiDatabase.COL_ACCOUNTS, leg.accountId) ?: continue
+                val updatedAcc = account.copy(
+                    currentBalance = (account.currentBalance - balanceEffect(leg)).setScale(4, RoundingMode.HALF_UP)
+                )
+                putDto(KakeiDatabase.COL_ACCOUNTS, updatedAcc.id, updatedAcc.name, updatedAcc)
+            }
         }
         reloadFromLocalDatabase()
+
+        // Delete through the debit leg: its id is the client id the server stored, while a
+        // locally generated credit leg id is unknown to the server until the next pull.
+        val serverLeg = legs.firstOrNull { !it.isTransferCredit } ?: record
         enqueueMutation(
             entityType = "RECORD",
-            entityId = record.id,
+            entityId = serverLeg.id,
             operation = "DELETE",
             payloadJson = "{}",
-            expectedSyncRevision = record.syncRevision
+            expectedSyncRevision = serverLeg.syncRevision
         )
     }
 
@@ -2042,14 +2241,52 @@ class KakeiRepository(
     // 12. Native SMS / Push Ingestion Pipeline & Widget Metrics
     // ========================================================================
 
-    fun ingestRawBankAlert(rawText: String, sourceChannel: String = "SMS"): TransactionDto? {
+    /**
+     * Parses a bank SMS / push and books it. The target account comes only from the
+     * user's own configuration: the account mapped to this [sender], else the default
+     * capture account. Without one (or when the alert's currency differs from that
+     * account's) the alert is parked in [pendingCaptures] for the user to file; it is
+     * never booked against a guessed or non-existent account.
+     */
+    fun ingestRawBankAlert(
+        rawText: String,
+        sourceChannel: String = "SMS",
+        sender: String? = null
+    ): TransactionDto? {
         val defaultCurrency = _settingsState.value.profile.defaultCurrency
         val parsed = BankSmsPatterns.parse(rawText, sourceChannel, defaultCurrency) ?: return null
         if (!dedupHelper.shouldProcess(parsed)) return null
 
-        val targetAccount = _accounts.value.firstOrNull {
-            !it.isArchived && it.currency.equals(parsed.currency, ignoreCase = true)
-        } ?: _accounts.value.firstOrNull { !it.isArchived } ?: return null
+        val settings = _settingsState.value
+        val usable = _accounts.value.filter { !it.isArchived && it.permissionLevel != "READ_ONLY" }.associateBy { it.id }
+        val senderKey = sender?.trim()?.takeIf { it.isNotEmpty() }
+        val targetAccount = senderKey?.let { settings.captureSenderAccounts[it] }?.let { usable[it] }
+            ?: settings.captureDefaultAccountId?.let { usable[it] }
+
+        val bookingDate = Instant.now().toString()
+        val reason = when {
+            targetAccount == null -> "NO_ACCOUNT"
+            !targetAccount.currency.equals(parsed.currency, ignoreCase = true) -> "CURRENCY_MISMATCH"
+            else -> null
+        }
+        if (targetAccount == null || reason != null) {
+            val capture = PendingCaptureEntity(
+                id = UUID.randomUUID().toString(),
+                sourceChannel = sourceChannel,
+                sender = senderKey,
+                rawText = parsed.rawMessage,
+                operationType = parsed.operationType,
+                amount = parsed.amount,
+                currency = parsed.currency.uppercase(Locale.ROOT),
+                merchant = parsed.merchant.takeIf { it.isNotBlank() },
+                bookingDate = bookingDate,
+                reason = reason ?: "NO_ACCOUNT",
+                createdAt = bookingDate
+            )
+            putDto(KakeiDatabase.COL_PENDING_CAPTURES, capture.id, capture.createdAt, capture)
+            _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
+            return null
+        }
 
         val classification = SmartMerchantMatcher.classify(
             payee = parsed.merchant,
@@ -2058,7 +2295,7 @@ class KakeiRepository(
             categories = _categories.value
         )
 
-        val created = createRecord(
+        val result = createRecordDetailed(
             accountId = targetAccount.id,
             type = parsed.operationType,
             amount = parsed.amount,
@@ -2066,33 +2303,81 @@ class KakeiRepository(
             payee = parsed.merchant,
             note = "[Auto-$sourceChannel] ${parsed.rawMessage}",
             status = "CLEARED",
-            needsReview = classification.needsReview
+            needsReview = classification.needsReview,
+            bookingDateIso = bookingDate
         )
 
+        val created = result.record?.takeIf { !result.duplicate }
         if (created != null && _settingsState.value.instantPopupEnabled) {
             _instantCapturedRecord.value = created
         }
         return created
     }
 
+    /** Books a pending capture into [accountId]; optionally remembers the account for its sender. */
+    fun filePendingCapture(capture: PendingCaptureEntity, accountId: String, rememberSender: Boolean) {
+        val account = _accounts.value.firstOrNull { it.id == accountId } ?: return
+        if (!account.currency.equals(capture.currency, ignoreCase = true)) {
+            postMessage("${account.name} is in ${account.currency}, the alert is in ${capture.currency}")
+            return
+        }
+        val classification = SmartMerchantMatcher.classify(
+            payee = capture.merchant,
+            note = capture.rawText,
+            rules = _rules.value,
+            categories = _categories.value
+        )
+        val result = createRecordDetailed(
+            accountId = account.id,
+            type = capture.operationType,
+            amount = capture.amount,
+            categoryId = classification.categoryId,
+            payee = capture.merchant,
+            note = "[Auto-${capture.sourceChannel}] ${capture.rawText}",
+            needsReview = classification.needsReview,
+            bookingDateIso = capture.bookingDate
+        )
+        if (result.record == null) {
+            result.error?.let { postMessage(it) }
+            return
+        }
+        if (rememberSender && !capture.sender.isNullOrBlank()) {
+            setCaptureSenderAccount(capture.sender, account.id)
+        }
+        dismissPendingCapture(capture.id)
+    }
+
+    fun dismissPendingCapture(id: String) {
+        database.deleteItem(KakeiDatabase.COL_PENDING_CAPTURES, id)
+        _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
+    }
+
+    fun setDefaultCaptureAccount(accountId: String?) {
+        prefs.edit().putString("capture_default_account", accountId).apply()
+        _settingsState.value = _settingsState.value.copy(captureDefaultAccountId = accountId)
+    }
+
+    fun setCaptureSenderAccount(sender: String, accountId: String?) {
+        val map = _settingsState.value.captureSenderAccounts.toMutableMap()
+        if (accountId == null) map.remove(sender) else map[sender] = accountId
+        prefs.edit().putString("capture_sender_accounts", database.json.encodeToString(map.toMap())).apply()
+        _settingsState.value = _settingsState.value.copy(captureSenderAccounts = map.toMap())
+    }
+
     fun getWidgetMetricSummary(widgetAction: String): String {
         val baseCurr = _settingsState.value.profile.defaultCurrency
         return when (widgetAction) {
-            "NET_WORTH" -> {
-                val nw = _accounts.value.filter { !it.isArchived && !it.isExcludedFromStats }
-                    .fold(BigDecimal.ZERO) { acc, a ->
-                        acc + CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurr)
-                    }
-                CurrencyFormatter.format(nw, baseCurr)
-            }
+            "NET_WORTH" -> formatConvertedTotal(netWorth())
             "TODAY_SPEND" -> {
                 val today = LocalDate.now().toString()
-                val spent = _transactions.value.filter {
-                    it.type == "EXPENSE" && it.bookingDate.startsWith(today)
-                }.fold(BigDecimal.ZERO) { acc, tx ->
-                    acc + CurrencyFormatter.convert(tx.amount, tx.currency, baseCurr)
-                }
-                CurrencyFormatter.format(spent, baseCurr)
+                val spent = ConvertedTotal.of(
+                    _transactions.value
+                        .filter { it.type == "EXPENSE" && it.bookingDate.startsWith(today) }
+                        .map { it.amount to it.currency },
+                    baseCurr,
+                    _rateBook.value
+                )
+                formatConvertedTotal(spent)
             }
             "BUDGET_RING" -> {
                 val first = _budgets.value.firstOrNull()
@@ -2110,21 +2395,179 @@ class KakeiRepository(
         }
     }
 
+    /** "1 000 ₸ + 20 $" — amounts without a known rate stay in their own currency. */
+    private fun formatConvertedTotal(total: ConvertedTotal): String = buildString {
+        append(CurrencyFormatter.format(total.total, total.currency))
+        total.unconverted.forEach { (cur, amt) -> append(" + ").append(CurrencyFormatter.format(amt, cur)) }
+    }
+
     companion object {
         private const val RECORDS_PAGE_SIZE = 500
+        private const val EXCHANGE_RATES_ID = "current"
+        private const val FX_RATE_UNAVAILABLE = "fx_rate_unavailable"
+        private const val PREF_DEMO_SEED_CLEANED = "demo_seed_cleanup_v1"
         private const val MAX_PULLED_RECORDS = 20_000
     }
 
     // ========================================================================
-    // Seed Data for Initial Offline / Demo Experience
+    // Demo Data (developer previews only)
     // ========================================================================
 
-    private fun ensureDefaultSeedDataIfEmpty() {
-        val existingCats = database.listItems<CategoryDto>(KakeiDatabase.COL_CATEGORIES)
-        if (existingCats.isNotEmpty()) return
+    private data class DemoSeed(
+        val categories: List<CategoryDto>,
+        val labels: List<LabelDto>,
+        val rules: List<CounterpartyRuleDto>,
+        val accounts: List<AccountDto>,
+        val transactions: List<TransactionDto>,
+        val budgets: List<BudgetEnvelopeDto>,
+        val obligations: List<PlannedObligationDto>,
+        val lending: List<LendingRecordDto>,
+        val savings: List<SavingsGoalDto>
+    )
 
-        val now = Instant.now().toString()
-        val today = LocalDate.now()
+    /** Demo data is only available in debug builds. */
+    val canLoadDemoData: Boolean
+        get() = BuildConfig.DEBUG && !_settingsState.value.isAuthenticated
+
+    /**
+     * Fills an empty offline replica with demo rows. Debug builds only and only on an
+     * explicit developer action (never automatically, never for a signed-in user): the
+     * demo ids do not exist on any server, so records booked against them are rejected.
+     */
+    fun loadDemoDataForDevelopment() {
+        if (!canLoadDemoData) return
+        if (database.listIds(KakeiDatabase.COL_ACCOUNTS).isNotEmpty()) {
+            postMessage("Demo data is only loaded into an empty offline replica")
+            return
+        }
+        val seed = buildDemoSeed(Instant.now().toString(), LocalDate.now())
+        database.runInTransaction {
+            seed.categories.forEach { putDto(KakeiDatabase.COL_CATEGORIES, it.id, it.name, it) }
+            seed.labels.forEach { putDto(KakeiDatabase.COL_LABELS, it.id, it.name, it) }
+            seed.rules.forEach { putDto(KakeiDatabase.COL_RULES, it.id, it.counterpartyPattern, it) }
+            seed.accounts.forEach { putDto(KakeiDatabase.COL_ACCOUNTS, it.id, it.name, it) }
+            seed.transactions.forEach { putDto(KakeiDatabase.COL_TRANSACTIONS, it.id, it.bookingDate, it) }
+            seed.budgets.forEach { putDto(KakeiDatabase.COL_BUDGETS, it.id, it.name, it) }
+            seed.obligations.forEach { putDto(KakeiDatabase.COL_OBLIGATIONS, it.id, it.nextDueDate, it) }
+            seed.lending.forEach { putDto(KakeiDatabase.COL_LENDING, it.id, it.createdAt, it) }
+            seed.savings.forEach { putDto(KakeiDatabase.COL_SAVINGS, it.id, it.title, it) }
+        }
+        reloadFromLocalDatabase()
+    }
+
+    /**
+     * Older builds wrote the demo seed into every install. Remove those rows on upgrade,
+     * but only rows that are provably untouched: same id and same content as the seed
+     * (timestamps and install-relative dates ignored), not referenced by anything the
+     * user created, and not targeted by a queued mutation. Seed ids are not UUIDs, so they
+     * never exist on the server. Anything the user edited or built upon is kept.
+     */
+    private fun removeUntouchedLegacyDemoSeed() {
+        if (prefs.getBoolean(PREF_DEMO_SEED_CLEANED, false)) return
+        val seed = buildDemoSeed("", LocalDate.now())
+        val queued = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
+        fun isQueued(id: String) = queued.any { it.entityId == id || it.payloadJson.contains("\"$id\"") }
+
+        database.runInTransaction {
+            val txs = database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS)
+            val seedTx = seed.transactions.associateBy { it.id }
+            val removedTx = txs.filter { tx ->
+                val ref = seedTx[tx.id] ?: return@filter false
+                tx.copy(bookingDate = ref.bookingDate, createdAt = ref.createdAt, updatedAt = ref.updatedAt) == ref && !isQueued(tx.id)
+            }.map { it.id }.toSet()
+            removedTx.forEach { database.deleteItem(KakeiDatabase.COL_TRANSACTIONS, it) }
+            val remainingTx = txs.filter { it.id !in removedTx }
+
+            val seedOb = seed.obligations.associateBy { it.id }
+            val obs = database.listItems<PlannedObligationDto>(KakeiDatabase.COL_OBLIGATIONS)
+            val removedOb = obs.filter { ob ->
+                val ref = seedOb[ob.id] ?: return@filter false
+                ob.copy(nextDueDate = ref.nextDueDate, createdAt = ref.createdAt, updatedAt = ref.updatedAt) == ref && !isQueued(ob.id)
+            }.map { it.id }.toSet()
+            removedOb.forEach { database.deleteItem(KakeiDatabase.COL_OBLIGATIONS, it) }
+            val remainingOb = obs.filter { it.id !in removedOb }
+
+            val seedBudgets = seed.budgets.associateBy { it.id }
+            val budgets = database.listItems<BudgetEnvelopeDto>(KakeiDatabase.COL_BUDGETS)
+            val removedBudgets = budgets.filter { b ->
+                val ref = seedBudgets[b.id] ?: return@filter false
+                b.copy(createdAt = ref.createdAt, updatedAt = ref.updatedAt) == ref && !isQueued(b.id)
+            }.map { it.id }.toSet()
+            removedBudgets.forEach { database.deleteItem(KakeiDatabase.COL_BUDGETS, it) }
+            val remainingBudgets = budgets.filter { it.id !in removedBudgets }
+
+            val seedLend = seed.lending.associateBy { it.id }
+            database.listItems<LendingRecordDto>(KakeiDatabase.COL_LENDING).filter { l ->
+                val ref = seedLend[l.id] ?: return@filter false
+                l.copy(
+                    dueDate = ref.dueDate,
+                    createdAt = ref.createdAt,
+                    updatedAt = ref.updatedAt,
+                    repayments = l.repayments.map { rp ->
+                        ref.repayments.firstOrNull { it.id == rp.id }
+                            ?.let { rp.copy(repaymentDate = it.repaymentDate, createdAt = it.createdAt) } ?: rp
+                    }
+                ) == ref && !isQueued(l.id)
+            }.forEach { database.deleteItem(KakeiDatabase.COL_LENDING, it.id) }
+
+            val seedGoals = seed.savings.associateBy { it.id }
+            database.listItems<SavingsGoalDto>(KakeiDatabase.COL_SAVINGS).filter { g ->
+                val ref = seedGoals[g.id] ?: return@filter false
+                g.copy(deadlineDate = ref.deadlineDate, createdAt = ref.createdAt, updatedAt = ref.updatedAt) == ref && !isQueued(g.id)
+            }.forEach { database.deleteItem(KakeiDatabase.COL_SAVINGS, it.id) }
+
+            val seedRules = seed.rules.associateBy { it.id }
+            val rules = database.listItems<CounterpartyRuleDto>(KakeiDatabase.COL_RULES)
+            val removedRules = rules.filter { r ->
+                val ref = seedRules[r.id] ?: return@filter false
+                r.copy(updatedAt = ref.updatedAt) == ref && !isQueued(r.id)
+            }.map { it.id }.toSet()
+            removedRules.forEach { database.deleteItem(KakeiDatabase.COL_RULES, it) }
+            val remainingRules = rules.filter { it.id !in removedRules }
+
+            val seedAccounts = seed.accounts.associateBy { it.id }
+            database.listItems<AccountDto>(KakeiDatabase.COL_ACCOUNTS).filter { acc ->
+                val ref = seedAccounts[acc.id] ?: return@filter false
+                acc.copy(createdAt = ref.createdAt, updatedAt = ref.updatedAt) == ref &&
+                    remainingTx.none { it.accountId == acc.id || it.transferTargetAccountId == acc.id } &&
+                    remainingOb.none { it.accountId == acc.id } &&
+                    !isQueued(acc.id)
+            }.forEach { database.deleteItem(KakeiDatabase.COL_ACCOUNTS, it.id) }
+
+            val seedLabels = seed.labels.associateBy { it.id }
+            database.listItems<LabelDto>(KakeiDatabase.COL_LABELS).filter { l ->
+                val ref = seedLabels[l.id] ?: return@filter false
+                l.copy(createdAt = ref.createdAt) == ref &&
+                    remainingTx.none { l.id in it.labelIds } && !isQueued(l.id)
+            }.forEach { database.deleteItem(KakeiDatabase.COL_LABELS, it.id) }
+
+            val seedCats = seed.categories.associateBy { it.id }
+            database.listItems<CategoryDto>(KakeiDatabase.COL_CATEGORIES).filter { c ->
+                val ref = seedCats[c.id] ?: return@filter false
+                c.copy(createdAt = ref.createdAt) == ref &&
+                    remainingTx.none { tx -> tx.categoryId == c.id || tx.splits.any { it.categoryId == c.id } } &&
+                    remainingRules.none { it.categoryId == c.id } &&
+                    remainingBudgets.none { c.id in it.categoryIds } &&
+                    remainingOb.none { it.categoryId == c.id } &&
+                    !isQueued(c.id)
+            }.forEach { database.deleteItem(KakeiDatabase.COL_CATEGORIES, it.id) }
+        }
+        prefs.edit().putBoolean(PREF_DEMO_SEED_CLEANED, true).apply()
+    }
+
+    private fun reportDatabaseOpenState() {
+        when (database.openState) {
+            KakeiDatabase.OpenState.OK -> Unit
+            KakeiDatabase.OpenState.MIGRATED_FROM_LEGACY_KEY ->
+                postMessage("Local database re-encrypted with a hardware-backed key")
+            KakeiDatabase.OpenState.RECOVERED_AFTER_KEY_LOSS ->
+                postMessage("Local encrypted data could not be unlocked and was reset; it will be restored from Kakei Server after sign-in")
+            KakeiDatabase.OpenState.KEYSTORE_UNAVAILABLE ->
+                postMessage("Secure storage is temporarily unavailable: changes made now are not kept after restart. Please restart the app later.")
+        }
+    }
+
+    private fun buildDemoSeed(now: String, today: LocalDate): DemoSeed {
 
         val defaultCategories = listOf(
             CategoryDto(
@@ -2182,18 +2625,12 @@ class KakeiRepository(
                 createdAt = now
             )
         )
-        defaultCategories.forEach {
-            database.putItem(KakeiDatabase.COL_CATEGORIES, it.id, it.name, database.json.encodeToString(it))
-        }
 
         val defaultLabels = listOf(
             LabelDto(id = "lbl-family", name = "Семья / Family", colorHex = "#30A46C", createdAt = now),
             LabelDto(id = "lbl-work", name = "Работа / Work", colorHex = "#6366F1", createdAt = now),
             LabelDto(id = "lbl-travel", name = "Отпуск / Travel", colorHex = "#F59E0B", createdAt = now)
         )
-        defaultLabels.forEach {
-            database.putItem(KakeiDatabase.COL_LABELS, it.id, it.name, database.json.encodeToString(it))
-        }
 
         val defaultRules = listOf(
             CounterpartyRuleDto(
@@ -2218,9 +2655,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        defaultRules.forEach {
-            database.putItem(KakeiDatabase.COL_RULES, it.id, it.counterpartyPattern, database.json.encodeToString(it))
-        }
 
         val defaultAccounts = listOf(
             AccountDto(
@@ -2257,9 +2691,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        defaultAccounts.forEach {
-            database.putItem(KakeiDatabase.COL_ACCOUNTS, it.id, it.name, database.json.encodeToString(it))
-        }
 
         val seedTransactions = listOf(
             TransactionDto(
@@ -2326,9 +2757,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        seedTransactions.forEach {
-            database.putItem(KakeiDatabase.COL_TRANSACTIONS, it.id, it.bookingDate, database.json.encodeToString(it))
-        }
 
         val seedBudgets = listOf(
             BudgetEnvelopeDto(
@@ -2354,9 +2782,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        seedBudgets.forEach {
-            database.putItem(KakeiDatabase.COL_BUDGETS, it.id, it.name, database.json.encodeToString(it))
-        }
 
         val seedObligations = listOf(
             PlannedObligationDto(
@@ -2392,9 +2817,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        seedObligations.forEach {
-            database.putItem(KakeiDatabase.COL_OBLIGATIONS, it.id, it.nextDueDate, database.json.encodeToString(it))
-        }
 
         val seedLending = listOf(
             LendingRecordDto(
@@ -2434,9 +2856,6 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        seedLending.forEach {
-            database.putItem(KakeiDatabase.COL_LENDING, it.id, it.createdAt, database.json.encodeToString(it))
-        }
 
         val seedSavings = listOf(
             SavingsGoalDto(
@@ -2472,8 +2891,17 @@ class KakeiRepository(
                 updatedAt = now
             )
         )
-        seedSavings.forEach {
-            database.putItem(KakeiDatabase.COL_SAVINGS, it.id, it.title, database.json.encodeToString(it))
-        }
+
+        return DemoSeed(
+            categories = defaultCategories,
+            labels = defaultLabels,
+            rules = defaultRules,
+            accounts = defaultAccounts,
+            transactions = seedTransactions,
+            budgets = seedBudgets,
+            obligations = seedObligations,
+            lending = seedLending,
+            savings = seedSavings
+        )
     }
 }

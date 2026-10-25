@@ -6,10 +6,16 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import com.kakei.app.core.security.DatabaseKeyInvalidatedException
 import com.kakei.app.core.security.DatabaseKeyManager
+import com.kakei.app.core.security.KeystoreUnavailableException
+import com.kakei.app.data.remote.dto.DecimalStr
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import net.zetetic.database.DatabaseErrorHandler
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import java.security.SecureRandom
+import net.zetetic.database.sqlcipher.SQLiteDatabase as CipherDatabase
 
 /**
  * One queued offline mutation (Outbox pattern). Mutations are drained FIFO by
@@ -45,6 +51,29 @@ data class SyncErrorEntity(
 )
 
 /**
+ * A bank SMS / push that was parsed but could not be filed automatically: no account is
+ * mapped to its sender (and no default capture account is set), its currency does not
+ * match the mapped account, or the server rejected the record. It waits for the user to
+ * pick an account instead of being booked against a guessed or non-existent one.
+ */
+@Serializable
+data class PendingCaptureEntity(
+    val id: String,
+    val sourceChannel: String,
+    /** SMS originating address or notification package; key for the sender→account mapping. */
+    val sender: String? = null,
+    val rawText: String,
+    val operationType: String,
+    val amount: DecimalStr,
+    val currency: String,
+    val merchant: String? = null,
+    val bookingDate: String,
+    /** NO_ACCOUNT | CURRENCY_MISMATCH | SERVER_REJECTED */
+    val reason: String,
+    val createdAt: String
+)
+
+/**
  * Encrypted local SQLite database powered by SQLCipher (AES-256) and AndroidKeyStore.
  * Stores full offline replicas of all Kakei domain entities and the Outbox mutation queue.
  */
@@ -56,6 +85,20 @@ class KakeiDatabase(private val context: Context) {
     }
 
     var isSqlCipherActive: Boolean = false
+        private set
+
+    /** How the encrypted database was opened (see [resolvePassphrase]). */
+    enum class OpenState {
+        OK,
+        /** A database created with the legacy constant passphrase was re-keyed. */
+        MIGRATED_FROM_LEGACY_KEY,
+        /** The local replica was unreadable and was wiped; it is rebuilt by the next sync. */
+        RECOVERED_AFTER_KEY_LOSS,
+        /** Keystore unusable this launch; an in-memory database is used and nothing persists. */
+        KEYSTORE_UNAVAILABLE
+    }
+
+    var openState: OpenState = OpenState.OK
         private set
 
     private val openHelper: SupportSQLiteOpenHelper
@@ -71,13 +114,18 @@ class KakeiDatabase(private val context: Context) {
             }
         }
 
+        var dbName: String? = DB_NAME
         val factory: SupportSQLiteOpenHelper.Factory = try {
             System.loadLibrary("sqlcipher")
-            // If the wrapped key cannot be unwrapped (restored onto another device or the
-            // Keystore key was lost) the encrypted file is unreadable: discard it so the
-            // app starts with an empty replica instead of crashing on every launch.
-            val passphrase = DatabaseKeyManager.getOrCreateDatabasePassphrase(context) {
-                deleteDatabaseFiles(context)
+            val passphrase = try {
+                resolvePassphrase(context)
+            } catch (e: KeystoreUnavailableException) {
+                // Transient Keystore failure that survived the retries: leave the encrypted
+                // file untouched (it opens normally once the Keystore recovers) and run this
+                // session on an ephemeral in-memory database keyed with a random passphrase.
+                openState = OpenState.KEYSTORE_UNAVAILABLE
+                dbName = null
+                ByteArray(32).also { SecureRandom().nextBytes(it) }
             }
             isSqlCipherActive = true
             SupportOpenHelperFactory(passphrase)
@@ -88,7 +136,7 @@ class KakeiDatabase(private val context: Context) {
         }
 
         val config = SupportSQLiteOpenHelper.Configuration.builder(context)
-            .name(DB_NAME)
+            .name(dbName)
             .callback(callback)
             .build()
 
@@ -97,6 +145,56 @@ class KakeiDatabase(private val context: Context) {
 
     private val db: SupportSQLiteDatabase
         get() = openHelper.writableDatabase
+
+    /**
+     * Obtains the Keystore-wrapped passphrase and makes sure the database file on disk
+     * actually opens with it, handling the three ways it may not:
+     * 1. the wrapped key is permanently unreadable → wipe DB + key, start empty (resync);
+     * 2. the file was created by an old build with the constant fallback passphrase →
+     *    re-key it in place to the Keystore passphrase (no data loss);
+     * 3. the file opens with neither → it is unrecoverable: wipe it, start empty (resync).
+     * The local replica is only a cache of server data plus the Outbox, so (1) and (3)
+     * lose at most unsynced offline changes, and never leave the app crash-looping.
+     */
+    private fun resolvePassphrase(context: Context): ByteArray {
+        val passphrase = try {
+            DatabaseKeyManager.getOrCreateDatabasePassphrase(context)
+        } catch (_: DatabaseKeyInvalidatedException) {
+            deleteDatabaseFiles(context)
+            DatabaseKeyManager.resetDatabaseKey(context)
+            openState = OpenState.RECOVERED_AFTER_KEY_LOSS
+            return DatabaseKeyManager.getOrCreateDatabasePassphrase(context)
+        }
+
+        val file = context.getDatabasePath(DB_NAME)
+        if (!file.exists() || canOpen(file, passphrase)) return passphrase
+
+        val legacy = DatabaseKeyManager.LEGACY_FALLBACK_PASSPHRASE
+        if (canOpen(file, legacy) && runCatching { rekey(file, legacy, passphrase) }.isSuccess) {
+            openState = OpenState.MIGRATED_FROM_LEGACY_KEY
+            return passphrase
+        }
+
+        deleteDatabaseFiles(context)
+        openState = OpenState.RECOVERED_AFTER_KEY_LOSS
+        return passphrase
+    }
+
+    /** Probes a key without the default error handler (which would delete a "corrupt" file). */
+    private fun canOpen(file: java.io.File, passphrase: ByteArray): Boolean = runCatching {
+        CipherDatabase.openDatabase(
+            file.path, passphrase.copyOf(), null, CipherDatabase.OPEN_READWRITE, NO_OP_ERROR_HANDLER, null
+        ).use { probe ->
+            probe.rawQuery("SELECT count(*) FROM sqlite_master", emptyArray<String>()).use { it.moveToFirst() }
+        }
+    }.getOrDefault(false)
+
+    private fun rekey(file: java.io.File, oldPassphrase: ByteArray, newPassphrase: ByteArray) {
+        CipherDatabase.openDatabase(
+            file.path, oldPassphrase.copyOf(), null, CipherDatabase.OPEN_READWRITE, NO_OP_ERROR_HANDLER, null
+        ).use { it.changePassword(newPassphrase.copyOf()) }
+        check(canOpen(file, newPassphrase)) { "Re-key of legacy database failed" }
+    }
 
     private fun createSchema(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -218,6 +316,16 @@ class KakeiDatabase(private val context: Context) {
         return result
     }
 
+    inline fun <reified T> getItem(collection: String, id: String): T? {
+        val cursor = readableOpenHelper.readableDatabase.query(
+            "SELECT payload_json FROM kv_store WHERE collection = ? AND id = ?",
+            arrayOf(collection, id)
+        )
+        return cursor.use { c ->
+            if (c.moveToFirst()) runCatching { json.decodeFromString<T>(c.getString(0)) }.getOrNull() else null
+        }
+    }
+
     @PublishedApi
     internal val readableOpenHelper: SupportSQLiteOpenHelper
         get() = openHelper
@@ -236,6 +344,10 @@ class KakeiDatabase(private val context: Context) {
         const val COL_GROUP_MEMBERS = "group_members"
         const val COL_MUTATIONS = "sync_mutations"
         const val COL_SYNC_ERRORS = "sync_errors"
+        const val COL_EXCHANGE_RATES = "exchange_rates"
+        const val COL_PENDING_CAPTURES = "pending_captures"
+
+        private val NO_OP_ERROR_HANDLER = DatabaseErrorHandler { }
 
         /** Removes the encrypted database and its journal files. */
         fun deleteDatabaseFiles(context: Context) {

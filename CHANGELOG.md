@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto Backup is disabled and the encrypted database, Keystore-wrapped key and session tokens are excluded from cloud backup and device transfer.
 - The hard-coded SQLCipher fallback passphrase is gone. If the wrapped key cannot be unwrapped (data restored onto another device), the unreadable local replica is discarded and a fresh key is generated instead of crash-looping.
 - Access JWT and refresh cookie are stored in `SecurePrefs` (AES-256-GCM, hardware-backed Keystore) instead of plaintext SharedPreferences.
+- Database key: transient Keystore failures are retried; the key prefers StrongBox and falls back to the TEE Keystore. A permanently invalidated key triggers a controlled reset (local DB + wrapped key wiped, resync from server); databases created by old builds with the constant fallback passphrase are re-keyed in place. A Keystore that stays unavailable runs the session on an in-memory database without touching the file.
+- `READ_SMS` permission removed (only `RECEIVE_SMS` is needed).
 
 ### Fixed
 - Refresh token survives process restarts; token refresh is single-flight; when the refresh fails the session is cleared and the sign-in screen is shown instead of silently failing every request.
@@ -18,11 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every local write (accounts, categories, labels, rules, budgets, obligations, lending, savings, group sharing, profile, review, obligation execution) now goes through the Outbox instead of fire-and-forget API calls, so offline changes are no longer lost.
 - Server pulls merge into the local replica (entities with pending mutations are preserved) instead of wiping collections; the ledger pull walks every page instead of the first 300 records.
 - Records are created with a client id that the server adopts, so queued updates/deletes reference an id the server knows; client-created entities are remapped to server ids across all local references once acknowledged.
-- Demo seed data is created only in explicit offline mode, never for signed-in users; bank SMS can no longer be routed into a fabricated account.
-- Deleting a transfer removes both legs locally and reverses both balances using the leg direction.
 - Executing an obligation while signed in no longer posts a local record in addition to the server-posted one.
+- Dedup hash now uses the server's canonical v2 format (UTC second-precision booking date, HALF_EVEN 4-dp amount); creating a record whose hash already exists on the same account returns the existing one, so re-imports and re-delivered alerts no longer duplicate.
+- Hardcoded FX table removed: rates come from `GET /profile/exchange-rates` and are cached locally; amounts without a known rate are shown in their own currency instead of being converted with rate 1. Cross-currency transfers credit the target exactly the received amount the user entered (or the effective rate) and send `targetAmount` to the server; saving is blocked when no rate is known.
+- Deleting a transfer deletes both legs in one transaction, reverting each leg on its own account in its own currency, and queues a single server delete.
+- No demo data is created on install or in offline mode (debug builds can load it explicitly); untouched demo rows from older builds are removed on upgrade. Bank alerts are filed only into the account mapped to the sender or the chosen default capture account, otherwise they wait in a "needs an account" list; records the server rejects with 404 are parked there instead of being dropped.
 
 ### Added
+- Auto-capture settings: runtime SMS / notification permission requests, shortcuts to notification-listener and overlay settings with live status, default capture account, pending-capture review.
+- Exchange-rate settings: effective rates and manual per-pair overrides (set / reset).
 - Standardized project guidelines and AI assistant rules in `AGENTS.md`.
 - Comprehensive project documentation in `README.md`.
 - Standardized release automation skill in `.agents/skills/release`.

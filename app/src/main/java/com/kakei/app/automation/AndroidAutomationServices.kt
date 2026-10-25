@@ -33,8 +33,9 @@ class SmsReceiver : BroadcastReceiver() {
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         val combinedBody = messages.joinToString("") { it.displayMessageBody.orEmpty() }
+        val sender = messages.firstOrNull()?.originatingAddress
         if (combinedBody.isNotBlank()) {
-            app.repository.ingestRawBankAlert(combinedBody, sourceChannel = "SMS")
+            app.repository.ingestRawBankAlert(combinedBody, sourceChannel = "SMS", sender = sender)
         }
     }
 }
@@ -57,7 +58,7 @@ class BankNotificationListenerService : NotificationListenerService() {
         val text = extras.getCharSequence("android.text")?.toString().orEmpty()
         val combined = "$title $text".trim()
         if (combined.isNotBlank()) {
-            app.repository.ingestRawBankAlert(combined, sourceChannel = "PUSH")
+            app.repository.ingestRawBankAlert(combined, sourceChannel = "PUSH", sender = pkg)
         }
     }
 }

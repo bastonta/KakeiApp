@@ -342,6 +342,15 @@ class KakeiApiClient(
     suspend fun disable2fa(req: TfaDisableRequest): Result<Unit> =
         requestJson("POST", "/profile/2fa-disable", json.encodeToString(req))
 
+    suspend fun getExchangeRates(): Result<ExchangeRatesResponse> =
+        requestJson("GET", "/profile/exchange-rates")
+
+    suspend fun upsertExchangeRateOverride(req: UpsertExchangeRateOverrideRequest): Result<ExchangeRateOverrideDto> =
+        requestJson("PUT", "/profile/exchange-rates/overrides", json.encodeToString(req))
+
+    suspend fun deleteExchangeRateOverride(fromCurrency: String, toCurrency: String): Result<Unit> =
+        requestJson("DELETE", "/profile/exchange-rates/overrides/$fromCurrency/$toCurrency")
+
     suspend fun listPasskeys(): Result<List<UserPasskeyItem>> =
         requestJson("GET", "/profile/passkeys")
 
@@ -512,17 +521,18 @@ class KakeiApiClient(
     suspend fun importStatement(req: ImportStatementRequest): Result<ImportStatementResponse> =
         requestJson("POST", "/exchange/import", json.encodeToString(req))
 
+    /** [startDate]/[endDate] are sent as ISO 8601 instants (e.g. 2026-01-31T00:00:00Z). */
     suspend fun exportRecordsRaw(
         format: String = "csv",
-        startDate: String? = null,
-        endDate: String? = null,
+        startDate: java.time.Instant? = null,
+        endDate: java.time.Instant? = null,
         accountId: String? = null
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
             val urlBuilder = "$baseUrl/exchange/export".toHttpUrlOrNull()!!.newBuilder()
                 .addQueryParameter("format", format)
-            if (!startDate.isNullOrBlank()) urlBuilder.addQueryParameter("startDate", startDate)
-            if (!endDate.isNullOrBlank()) urlBuilder.addQueryParameter("endDate", endDate)
+            startDate?.let { urlBuilder.addQueryParameter("startDate", it.toString()) }
+            endDate?.let { urlBuilder.addQueryParameter("endDate", it.toString()) }
             if (!accountId.isNullOrBlank()) urlBuilder.addQueryParameter("accountId", accountId)
             val req = Request.Builder().url(urlBuilder.build()).get().build()
             okHttpClient.newCall(req).execute().use { resp ->

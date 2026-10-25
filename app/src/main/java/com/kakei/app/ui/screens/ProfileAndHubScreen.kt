@@ -1,6 +1,7 @@
 package com.kakei.app.ui.screens
 
 import android.content.Intent
+import com.kakei.app.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -365,19 +366,40 @@ fun ProfileAndHubScreen(
                     )
                 }
 
-                FilledTonalButton(
-                    onClick = {
-                        val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
-                        sampleSmsIdx++
-                        repository.ingestRawBankAlert(raw, sourceChannel = "SMS")
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(s.simulateSmsCaptureButton)
+                // Developer tools: synthetic alerts would book fake money into real accounts.
+                if (BuildConfig.DEBUG) {
+                    FilledTonalButton(
+                        onClick = {
+                            val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
+                            sampleSmsIdx++
+                            repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(s.simulateSmsCaptureButton)
+                    }
+                    if (repository.canLoadDemoData && accounts.isEmpty()) {
+                        OutlinedButton(
+                            onClick = { repository.loadDemoDataForDevelopment() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(s.loadDemoDataButton)
+                        }
+                    }
                 }
             }
+        }
+
+        // 3b. Auto-capture permissions, default capture account & alerts awaiting an account
+        item {
+            AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
+        }
+
+        // 3c. Exchange rates (server rates + manual overrides)
+        item {
+            ExchangeRatesCard(settings = settings, repository = repository)
         }
 
         // 4. Feature Hub Action Cards (Categories & Smart Rules, Group Sharing, Import/Export, Encrypted Backups)

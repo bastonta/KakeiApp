@@ -4,6 +4,8 @@ import com.kakei.app.automation.BankSmsPatterns
 import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
+import com.kakei.app.core.util.ConvertedTotal
+import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.BudgetEnvelopeDto
@@ -22,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDate
 
 class UnitTest {
@@ -32,23 +35,61 @@ class UnitTest {
     }
 
     @Test
-    fun hashDedupCalculator_isDeterministicAndNormalized() {
-        val h1 = HashDedupCalculator.computeTransactionHash(
-            accountId = "acc-1",
-            amount = BigDecimal("1500.5"),
-            currency = "kzt",
-            bookingDateIso = "2026-10-18T14:22:00Z",
-            payee = " Magnum Cash & Carry "
+    fun hashDedupCalculator_matchesServerCanonicalV2Vector() {
+        val input = HashDedupCalculator.canonicalInput(
+            accountId = "00000000-0000-0000-0000-000000000000",
+            amount = BigDecimal("12.50"),
+            currency = "usd",
+            bookingDate = Instant.ofEpochSecond(1_700_000_000L),
+            payee = " Starbucks "
         )
-        val h2 = HashDedupCalculator.computeTransactionHash(
-            accountId = "acc-1",
-            amount = BigDecimal("1500.5000"),
-            currency = "KZT",
-            bookingDateIso = "2026-10-18T00:00:00Z",
-            payee = "magnum cash & carry"
+        assertEquals("00000000-0000-0000-0000-000000000000|12.5|USD|2023-11-14T22:13:20Z|starbucks", input)
+        // Fixed digest computed independently: printf '%s' '<input>' | sha256sum
+        val hash = HashDedupCalculator.computeTransactionHash(
+            accountId = "00000000-0000-0000-0000-000000000000",
+            amount = BigDecimal("12.50"),
+            currency = "usd",
+            bookingDateIso = "2023-11-14T22:13:20.987654Z", // sub-second part is truncated
+            payee = " Starbucks "
         )
-        assertEquals(64, h1.length)
-        assertEquals(h1, h2)
+        assertEquals("2c666f7bcb2b0ddb04911a3fbc80f483611429af8537fe14cb93dddf783182c6", hash)
+    }
+
+    @Test
+    fun hashDedupCalculator_normalizesAmountsLikeRustDecimal() {
+        fun amountPart(amount: String) = HashDedupCalculator.canonicalInput(
+            "0191C1E2-0000-7000-8000-000000000001", BigDecimal(amount), "kzt", Instant.EPOCH, null
+        ).split("|")
+        assertEquals("0191c1e2-0000-7000-8000-000000000001", amountPart("1")[0])
+        assertEquals("0", amountPart("0.0000")[1])
+        assertEquals("1500", amountPart("-1500.0000")[1])
+        assertEquals("0.1234", amountPart("0.12345")[1]) // banker's rounding: ...45 -> ...4
+        assertEquals("0.1236", amountPart("0.12355")[1])
+        assertEquals("1970-01-01T00:00:00Z", amountPart("1")[3])
+        assertEquals("", amountPart("1")[4])
+    }
+
+    @Test
+    fun exchangeRateBook_neverInventsRatesAndAppliesOverrides() {
+        val book = ExchangeRateBook(
+            unitsPerUsd = mapOf("USD" to BigDecimal("1"), "KZT" to BigDecimal("500"), "EUR" to BigDecimal("0.8")),
+            overrides = mapOf(("USD" to "KZT") to BigDecimal("505.5"))
+        )
+        assertEquals(0, BigDecimal("505.5").compareTo(book.rate("USD", "KZT")))
+        // Inverse override is used inverted.
+        assertEquals(0, BigDecimal("10.1100").compareTo(book.convert(BigDecimal("5110.605"), "KZT", "USD")))
+        // Cross rate from market rates: KZT per EUR = 500 / 0.8.
+        assertEquals(0, BigDecimal("625").compareTo(book.rate("EUR", "KZT")))
+        assertNull(book.rate("GBP", "KZT"))
+        assertNull(book.convert(BigDecimal.TEN, "KZT", "JPY"))
+
+        val total = ConvertedTotal.of(
+            listOf(BigDecimal("1000") to "KZT", BigDecimal("2") to "USD", BigDecimal("7") to "GBP"),
+            "KZT",
+            book
+        )
+        assertEquals(0, BigDecimal("2011").compareTo(total.total))
+        assertEquals(mapOf("GBP" to BigDecimal("7")), total.unconverted)
     }
 
     @Test

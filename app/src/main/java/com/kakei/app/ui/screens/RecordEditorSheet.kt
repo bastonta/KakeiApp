@@ -4,6 +4,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.security.HapticHelper
@@ -45,6 +47,8 @@ fun RecordEditorDialog(
     categories: List<CategoryDto>,
     labels: List<LabelDto>,
     langCode: String,
+    /** Effective server rate (target units per 1 source unit), or null when unknown. */
+    rateFor: (fromCurrency: String, toCurrency: String) -> BigDecimal?,
     onDismiss: () -> Unit,
     onSave: (
         accountId: String,
@@ -56,7 +60,9 @@ fun RecordEditorDialog(
         status: String,
         transferTargetAccountId: String?,
         splits: List<SplitDto>,
-        labelIds: List<String>
+        labelIds: List<String>,
+        /** Cross-currency transfers: amount credited to the target account, in its currency. */
+        targetAmount: BigDecimal?
     ) -> Unit
 ) {
     val s = LocalAppStrings.current
@@ -78,6 +84,35 @@ fun RecordEditorDialog(
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
     val currency = selectedAccount?.currency ?: "KZT"
+
+    // Cross-currency transfer: the user states what the bank actually credited, or the
+    // rate; the other value is derived live from whichever field was edited last.
+    val targetAccount = accounts.firstOrNull { it.id == targetAccountId && it.id != selectedAccountId }
+    val targetCurrency = targetAccount?.currency
+    val isCrossCurrency = recordType == "TRANSFER" && targetCurrency != null &&
+        !targetCurrency.equals(currency, ignoreCase = true)
+    val sentAmount = evaluateExpression(expression)
+    var rateInput by remember(currency, targetCurrency) {
+        mutableStateOf(
+            targetCurrency?.let { rateFor(currency, it) }?.setScale(6, RoundingMode.HALF_UP)
+                ?.stripTrailingZeros()?.toPlainString().orEmpty()
+        )
+    }
+    var receivedInput by remember(currency, targetCurrency) { mutableStateOf("") }
+    var receivedIsAnchor by remember(currency, targetCurrency) { mutableStateOf(false) }
+    val enteredRate = parseDecimalInput(rateInput)
+    val enteredReceived = parseDecimalInput(receivedInput)
+    val effectiveReceived: BigDecimal? = if (receivedIsAnchor) {
+        enteredReceived
+    } else {
+        enteredRate?.let { sentAmount.multiply(it).setScale(2, RoundingMode.HALF_UP) }
+    }
+    val effectiveRate: BigDecimal? = if (receivedIsAnchor) {
+        if (enteredReceived != null && sentAmount > BigDecimal.ZERO) {
+            enteredReceived.divide(sentAmount, 6, RoundingMode.HALF_UP).stripTrailingZeros()
+        } else null
+    } else enteredRate
+    val crossCurrencyReady = !isCrossCurrency || (effectiveReceived != null && effectiveReceived > BigDecimal.ZERO)
 
     val accentColor = when (recordType) {
         "INCOME" -> EmeraldBrand
@@ -228,6 +263,42 @@ fun RecordEditorDialog(
                         )
                     }
                 }
+                if (isCrossCurrency && targetCurrency != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = if (receivedIsAnchor) receivedInput else effectiveReceived?.toPlainString().orEmpty(),
+                            onValueChange = {
+                                receivedInput = it
+                                receivedIsAnchor = true
+                            },
+                            label = { Text("${s.transferReceivedLabel} ($targetCurrency)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = if (receivedIsAnchor) effectiveRate?.toPlainString().orEmpty() else rateInput,
+                            onValueChange = {
+                                rateInput = it
+                                receivedIsAnchor = false
+                            },
+                            label = { Text("${s.transferRateLabel}: 1 $currency = ? $targetCurrency") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (!crossCurrencyReady) {
+                        Text(
+                            text = s.transferRateMissing,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             } else {
                 // Category Selector
                 Text(s.categoryLabel, style = MaterialTheme.typography.labelLarge)
@@ -351,7 +422,7 @@ fun RecordEditorDialog(
                 Button(
                     onClick = {
                         val evaluated = evaluateExpression(expression)
-                        if (evaluated > BigDecimal.ZERO && selectedAccountId.isNotBlank()) {
+                        if (evaluated > BigDecimal.ZERO && selectedAccountId.isNotBlank() && crossCurrencyReady) {
                             onSave(
                                 selectedAccountId,
                                 recordType,
@@ -362,10 +433,12 @@ fun RecordEditorDialog(
                                 clearingStatus,
                                 if (recordType == "TRANSFER") targetAccountId else null,
                                 splits,
-                                selectedLabels.toList()
+                                selectedLabels.toList(),
+                                if (isCrossCurrency) effectiveReceived else null
                             )
                         }
                     },
+                    enabled = crossCurrencyReady,
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -377,6 +450,9 @@ fun RecordEditorDialog(
         }
     }
 }
+
+private fun parseDecimalInput(raw: String): BigDecimal? =
+    raw.trim().replace(" ", "").replace(",", ".").toBigDecimalOrNull()?.takeIf { it > BigDecimal.ZERO }
 
 private fun applyCalculatorKey(current: String, key: String): String {
     if (key == "⌫") {

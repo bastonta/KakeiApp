@@ -1,6 +1,7 @@
 package com.kakei.app.domain.calculators
 
 import com.kakei.app.core.util.CurrencyFormatter
+import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.remote.dto.*
 import java.math.BigDecimal
@@ -15,6 +16,10 @@ import java.util.UUID
 /**
  * Local financial analytics, envelope budget burn-rate, 30-day cash flow forecast,
  * and statement import/export calculators matching the Kakei Rust backend logic.
+ *
+ * Cross-currency amounts are converted with the server-provided [ExchangeRateBook];
+ * an amount whose rate is unknown is left out of a converted aggregate (it is never
+ * converted with a guessed rate). The UI surfaces such amounts in their own currency.
  */
 object FinancialCalculators {
 
@@ -25,7 +30,8 @@ object FinancialCalculators {
     fun evaluateBudgets(
         budgets: List<BudgetEnvelopeDto>,
         transactions: List<TransactionDto>,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): List<BudgetEnvelopeDto> {
         val currentMonthStart = today.withDayOfMonth(1)
         val currentMonthEnd = YearMonth.from(today).atEndOfMonth()
@@ -58,7 +64,7 @@ object FinancialCalculators {
                 } else {
                     tx.amount
                 }
-                acc + CurrencyFormatter.convert(nominal, tx.currency, budget.currency)
+                acc + (CurrencyFormatter.convert(nominal, tx.currency, budget.currency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
             val remaining = (budget.limitAmount - spent).setScale(2, RoundingMode.HALF_UP)
@@ -100,7 +106,8 @@ object FinancialCalculators {
         budgets: List<BudgetEnvelopeDto>,
         lendingRecords: List<LendingRecordDto>,
         baseCurrency: String,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): FinancialHealthScoreDto {
         val windowStart = today.minusDays(30)
         val recentTx = transactions.filter { tx ->
@@ -111,12 +118,12 @@ object FinancialCalculators {
 
         val income = recentTx.filter { it.type == "INCOME" }
             .fold(BigDecimal.ZERO) { acc, tx ->
-                acc + CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency)
+                acc + (CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
         val expense = recentTx.filter { it.type == "EXPENSE" }
             .fold(BigDecimal.ZERO) { acc, tx ->
-                acc + CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency)
+                acc + (CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
         val savingsRatePct = if (income > BigDecimal.ZERO) {
@@ -132,7 +139,7 @@ object FinancialCalculators {
         // Savings score out of 100 (25%+ savings rate = 100 pts)
         val savingsScore = (savingsRatePct.toDouble() * 4.0).toInt().coerceIn(0, 100)
 
-        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today)
+        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates)
         val compliantCount = evaluatedBudgets.count { it.usagePercentage <= BigDecimal("100") }
         val budgetCompliancePct = if (evaluatedBudgets.isNotEmpty()) {
             BigDecimal.valueOf(compliantCount * 100L)
@@ -142,7 +149,7 @@ object FinancialCalculators {
 
         val totalDebt = lendingRecords.filter { it.type == "BORROWED" && !it.isSettled && !it.isForgiven }
             .fold(BigDecimal.ZERO) { acc, r ->
-                acc + CurrencyFormatter.convert(r.outstandingAmount, r.currency, baseCurrency)
+                acc + (CurrencyFormatter.convert(r.outstandingAmount, r.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
         val dtiPct = if (income > BigDecimal.ZERO) {
@@ -249,7 +256,8 @@ object FinancialCalculators {
         transactions: List<TransactionDto>,
         baseCurrency: String,
         year: Int = LocalDate.now().year,
-        month: Int = LocalDate.now().monthValue
+        month: Int = LocalDate.now().monthValue,
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): SpendingHeatmapsDto {
         val ym = YearMonth.of(year, month.coerceIn(1, 12))
         val expenses = transactions.filter { it.type == "EXPENSE" && it.transferPairId == null }
@@ -260,7 +268,7 @@ object FinancialCalculators {
         for (tx in expenses) {
             val date = runCatching { LocalDate.parse(tx.bookingDate.take(10)) }.getOrNull() ?: continue
             if (date.year != year) continue
-            val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency)
+            val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: continue
             val prevDay = byDate[date] ?: (BigDecimal.ZERO to 0L)
             byDate[date] = (prevDay.first + conv) to (prevDay.second + 1L)
 
@@ -315,11 +323,13 @@ object FinancialCalculators {
     fun calculateInsights(
         transactions: List<TransactionDto>,
         baseCurrency: String,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): InsightsSummaryDto {
         val currentYm = YearMonth.from(today)
         val prevYm = currentYm.minusMonths(1)
-        val smallSpendThreshold = CurrencyFormatter.convert(BigDecimal("10"), "USD", baseCurrency)
+        // Without a USD rate there is no meaningful "small spend" threshold: skip that metric.
+        val smallSpendThreshold = CurrencyFormatter.convert(BigDecimal("10"), "USD", baseCurrency, rates)
 
         var currentMonthSpent = BigDecimal.ZERO
         var prevMonthSpent = BigDecimal.ZERO
@@ -332,12 +342,12 @@ object FinancialCalculators {
         for (tx in transactions) {
             if (tx.type != "EXPENSE" || tx.transferPairId != null) continue
             val date = runCatching { LocalDate.parse(tx.bookingDate.take(10)) }.getOrNull() ?: continue
-            val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency)
+            val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: continue
             val txYm = YearMonth.from(date)
 
             if (txYm == currentYm) {
                 currentMonthSpent += conv
-                if (conv <= smallSpendThreshold) {
+                if (smallSpendThreshold != null && conv <= smallSpendThreshold) {
                     smallSpendsTotal += conv
                     smallSpendsCount++
                 }
@@ -399,12 +409,13 @@ object FinancialCalculators {
         obligations: List<PlannedObligationDto>,
         baseCurrency: String,
         horizonDays: Long = 30L,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): CashFlowForecastDto {
         val liquidBalance = accounts
             .filter { !it.isArchived && !it.isExcludedFromStats }
             .fold(BigDecimal.ZERO) { acc, a ->
-                acc + CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurrency)
+                acc + (CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
         val projections = mutableListOf<VirtualProjectionDto>()
@@ -419,8 +430,10 @@ object FinancialCalculators {
             while (!cursor.isAfter(endDate) && safety < 60) {
                 safety++
                 if (!cursor.isBefore(today) && (limitDate == null || !cursor.isAfter(limitDate))) {
-                    val conv = CurrencyFormatter.convert(ob.amount, ob.currency, baseCurrency)
-                    projections.add(
+                    val conv = CurrencyFormatter.convert(ob.amount, ob.currency, baseCurrency, rates)
+                    // An obligation in a currency without a known rate cannot be projected
+                    // into the base-currency timeline; it is skipped rather than guessed.
+                    if (conv != null) projections.add(
                         VirtualProjectionDto(
                             obligationId = ob.id,
                             title = ob.title,
@@ -532,6 +545,10 @@ object FinancialCalculators {
             }
 
             val normalizedDate = if (dateRaw.length >= 10) "${dateRaw.take(10)}T12:00:00Z" else "${LocalDate.now()}T12:00:00Z"
+            if (runCatching { HashDedupCalculator.parseBookingDate(normalizedDate) }.isFailure) {
+                failed++
+                continue
+            }
             val type = if (parsedAmount < BigDecimal.ZERO) "EXPENSE" else "INCOME"
             val absAmount = parsedAmount.abs().setScale(4, RoundingMode.HALF_UP)
 
@@ -604,6 +621,10 @@ object FinancialCalculators {
             val dateIso = if (dtPosted != null && dtPosted.length >= 8) {
                 "${dtPosted.substring(0, 4)}-${dtPosted.substring(4, 6)}-${dtPosted.substring(6, 8)}T12:00:00Z"
             } else "${LocalDate.now()}T12:00:00Z"
+            if (runCatching { HashDedupCalculator.parseBookingDate(dateIso) }.isFailure) {
+                failed++
+                continue
+            }
 
             val type = if (parsedAmount < BigDecimal.ZERO) "EXPENSE" else "INCOME"
             val absAmount = parsedAmount.abs().setScale(4, RoundingMode.HALF_UP)

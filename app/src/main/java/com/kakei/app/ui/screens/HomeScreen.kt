@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.data.repository.AppSettingsState
@@ -59,10 +60,19 @@ fun HomeScreen(
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
 
     val activeAccounts = accounts.filter { !it.isArchived }
-    val netWorth = activeAccounts.filter { !it.isExcludedFromStats }
-        .fold(BigDecimal.ZERO) { acc, a ->
-            acc + CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurrency)
-        }
+    val rateBook by repository.rateBook.collectAsState()
+    // Balances without a known exchange rate are shown in their own currency, never converted with a guess.
+    val netWorthTotal = remember(activeAccounts, rateBook, baseCurrency) {
+        ConvertedTotal.of(
+            activeAccounts.filter { !it.isExcludedFromStats }.map { it.currentBalance to it.currency },
+            baseCurrency,
+            rateBook
+        )
+    }
+    val netWorth = netWorthTotal.total
+    val netWorthUnconverted = netWorthTotal.unconverted.entries.joinToString(" + ") { (cur, amt) ->
+        CurrencyFormatter.format(amt, cur)
+    }
 
     val needsReviewItems = transactions.filter { it.needsReview }
     val filteredTransactions = transactions.filter { tx ->
@@ -113,6 +123,13 @@ fun HomeScreen(
                             style = MaterialTheme.typography.headlineLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                        if (netWorthUnconverted.isNotEmpty()) {
+                            Text(
+                                text = "+ $netWorthUnconverted · ${s.fxRateUnavailable}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),

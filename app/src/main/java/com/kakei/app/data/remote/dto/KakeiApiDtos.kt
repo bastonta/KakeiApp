@@ -207,6 +207,38 @@ data class ProfileInfoUpdateRequest(
     val language: String? = null
 )
 
+/** Market rate of one currency, relative to USD (`GET /profile/exchange-rates`). */
+@Serializable
+data class ExchangeRateDto(
+    val currency: String,
+    val unitsPerUsd: DecimalStr,
+    val rateDate: String = "",
+    val source: String = ""
+)
+
+/** User-defined rate for a pair: [rate] target units per 1 [fromCurrency] unit. */
+@Serializable
+data class ExchangeRateOverrideDto(
+    val fromCurrency: String,
+    val toCurrency: String,
+    val rate: DecimalStr,
+    val updatedAt: String = ""
+)
+
+@Serializable
+data class ExchangeRatesResponse(
+    val baseCurrency: String = "",
+    val rates: List<ExchangeRateDto> = emptyList(),
+    val overrides: List<ExchangeRateOverrideDto> = emptyList()
+)
+
+@Serializable
+data class UpsertExchangeRateOverrideRequest(
+    val fromCurrency: String,
+    val toCurrency: String,
+    val rate: DecimalStr
+)
+
 @Serializable
 data class PasswordChangeRequest(
     val oldPassword: String,
@@ -439,6 +471,10 @@ data class CreateRecordItem(
     val note: String? = null,
     val status: String? = "CLEARED",
     val transferTargetAccountId: String? = null,
+    /** Amount credited to the transfer target account, in its currency (wins over [exchangeRate]). */
+    val targetAmount: DecimalStr? = null,
+    /** Target units per 1 source unit for cross-currency transfers. */
+    val exchangeRate: DecimalStr? = null,
     val externalId: String? = null,
     val splits: List<SplitItemInput> = emptyList(),
     val labelIds: List<String> = emptyList(),
@@ -477,6 +513,12 @@ data class UpdateRecordItem(
     val needsReview: Boolean? = null,
     val splits: List<SplitItemInput>? = null,
     val labelIds: List<String>? = null,
+    /**
+     * Transfer legs only (`PATCH /records`): new amount of the *paired* leg, in that leg's
+     * currency (editing the debit leg → the credited amount). When omitted while [amount]
+     * changes, the server keeps the pair's previous implied rate.
+     */
+    val targetAmount: DecimalStr? = null,
     val expectedSyncRevision: Long? = null
 )
 

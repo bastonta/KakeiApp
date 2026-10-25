@@ -218,8 +218,9 @@ fun KakeiAppRoot(
                             categories = categories,
                             labels = labels,
                             langCode = settings.language.code,
+                            rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
                             onDismiss = { showQuickAddModal = false },
-                            onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds ->
+                            onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount ->
                                 repository.createRecord(
                                     accountId = accId,
                                     type = type,
@@ -230,7 +231,8 @@ fun KakeiAppRoot(
                                     status = status,
                                     transferTargetAccountId = targetAccId,
                                     splits = splits,
-                                    labelIds = labelIds
+                                    labelIds = labelIds,
+                                    targetAmount = targetAmount
                                 )
                                 showQuickAddModal = false
                             }

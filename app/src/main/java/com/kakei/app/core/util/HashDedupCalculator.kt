@@ -7,32 +7,75 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
+import java.util.UUID
 
 /**
- * Computes deterministic SHA-256 deduplication hashes identical to Kakei's `libs/dedup`:
- * TxHash = SHA256(AccountId || Amount || Currency || BookingDate || Payee)
+ * Computes deterministic SHA-256 deduplication hashes byte-identical to the Kakei
+ * server's canonical v2 format:
+ *
+ * `SHA256("{accountId}|{amount}|{CURRENCY}|{bookingDate}|{payee}")`, lowercase hex, where
+ * - accountId   = lowercase hyphenated UUID
+ * - amount      = |amount| rounded to 4 dp (HALF_EVEN, like rust_decimal `round_dp`), trailing zeros stripped; zero is "0"
+ * - CURRENCY    = trimmed, uppercased
+ * - bookingDate = UTC, truncated to whole seconds, `yyyy-MM-dd'T'HH:mm:ss'Z'`
+ * - payee       = trimmed, lowercased (Locale.ROOT); empty when null
  */
 object HashDedupCalculator {
 
+    private val bookingDateFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC)
+
+    fun canonicalInput(
+        accountId: String,
+        amount: BigDecimal,
+        currency: String,
+        bookingDate: Instant,
+        payee: String?
+    ): String {
+        val normalizedAccount = runCatching { UUID.fromString(accountId.trim()).toString() }
+            .getOrDefault(accountId.trim().lowercase(Locale.ROOT))
+        val rounded = amount.abs().setScale(4, RoundingMode.HALF_EVEN)
+        val normalizedAmount = if (rounded.signum() == 0) "0" else rounded.stripTrailingZeros().toPlainString()
+        val normalizedCurrency = currency.trim().uppercase(Locale.ROOT)
+        val normalizedDate = bookingDateFormatter.format(bookingDate.truncatedTo(ChronoUnit.SECONDS))
+        val normalizedPayee = (payee ?: "").trim().lowercase(Locale.ROOT)
+        return "$normalizedAccount|$normalizedAmount|$normalizedCurrency|$normalizedDate|$normalizedPayee"
+    }
+
+    fun computeTransactionHash(
+        accountId: String,
+        amount: BigDecimal,
+        currency: String,
+        bookingDate: Instant,
+        payee: String?
+    ): String {
+        val composite = canonicalInput(accountId, amount, currency, bookingDate, payee)
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(composite.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Convenience overload for ISO 8601 booking dates as stored in [com.kakei.app.data.remote.dto.TransactionDto]. */
     fun computeTransactionHash(
         accountId: String,
         amount: BigDecimal,
         currency: String,
         bookingDateIso: String,
         payee: String?
-    ): String {
-        val normalizedAmount = amount.setScale(4, RoundingMode.HALF_UP).toPlainString()
-        val normalizedCurrency = currency.trim().uppercase(Locale.ROOT)
-        val normalizedDate = bookingDateIso.take(10) // YYYY-MM-DD
-        val normalizedPayee = (payee ?: "").trim().lowercase(Locale.ROOT)
+    ): String = computeTransactionHash(accountId, amount, currency, parseBookingDate(bookingDateIso), payee)
 
-        val composite = "$accountId|$normalizedAmount|$normalizedCurrency|$normalizedDate|$normalizedPayee"
-        val digest = MessageDigest.getInstance("SHA-256")
-        val bytes = digest.digest(composite.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
+    /** Accepts `...Z` instants, offset date-times and bare `yyyy-MM-dd` dates (midnight UTC). */
+    fun parseBookingDate(iso: String): Instant {
+        val raw = iso.trim()
+        return runCatching { Instant.parse(raw) }
+            .recoverCatching { OffsetDateTime.parse(raw).toInstant() }
+            .recoverCatching { LocalDate.parse(raw.take(10)).atStartOfDay(ZoneOffset.UTC).toInstant() }
+            .getOrThrow()
     }
 }
 
@@ -51,19 +94,6 @@ object CurrencyFormatter {
         "CNY" to "¥",
         "AED" to "د.إ",
         "TRY" to "₺"
-    )
-
-    // Deterministic offline fallback FX rates relative to USD for multi-currency consolidation
-    private val usdRates = mapOf(
-        "USD" to BigDecimal("1.0000"),
-        "EUR" to BigDecimal("0.9200"),
-        "GBP" to BigDecimal("0.7900"),
-        "KZT" to BigDecimal("485.0000"),
-        "RUB" to BigDecimal("92.5000"),
-        "JPY" to BigDecimal("152.0000"),
-        "CNY" to BigDecimal("7.2400"),
-        "AED" to BigDecimal("3.6725"),
-        "TRY" to BigDecimal("34.2000")
     )
 
     val supportedCurrencies = listOf("KZT", "USD", "EUR", "RUB", "GBP", "JPY", "CNY", "AED", "TRY")
@@ -88,15 +118,12 @@ object CurrencyFormatter {
         return "$sign$absFormatted ${symbolFor(currency)}"
     }
 
-    fun convert(amount: BigDecimal, fromCurrency: String, toCurrency: String): BigDecimal {
-        val from = fromCurrency.uppercase(Locale.ROOT)
-        val to = toCurrency.uppercase(Locale.ROOT)
-        if (from == to) return amount.setScale(4, RoundingMode.HALF_UP)
-        val fromRate = usdRates[from] ?: BigDecimal.ONE
-        val toRate = usdRates[to] ?: BigDecimal.ONE
-        val inUsd = amount.divide(fromRate, 6, RoundingMode.HALF_UP)
-        return inUsd.multiply(toRate).setScale(4, RoundingMode.HALF_UP)
-    }
+    /**
+     * Converts [amount] with the server-provided [rates]. Returns null when no rate is
+     * known for the pair: callers must show the original currency instead of guessing.
+     */
+    fun convert(amount: BigDecimal, fromCurrency: String, toCurrency: String, rates: ExchangeRateBook): BigDecimal? =
+        rates.convert(amount, fromCurrency, toCurrency)
 
     fun formatShortDate(isoTimestamp: String): String {
         return try {

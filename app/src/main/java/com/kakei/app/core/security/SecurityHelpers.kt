@@ -8,12 +8,13 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import java.security.InvalidKeyException
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.Security
@@ -28,21 +29,70 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
+/** The Keystore could not be used even after retries (transient failure; data is untouched). */
+class KeystoreUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/**
+ * The wrapped SQLCipher passphrase can never be decrypted again (Keystore key permanently
+ * invalidated, deleted, or data restored onto another device). The local replica is lost;
+ * the caller must run the controlled recovery (wipe local DB + key, resync from server).
+ */
+class DatabaseKeyInvalidatedException(cause: Throwable? = null) :
+    Exception("Database key permanently invalidated", cause)
+
 /**
  * Hardware-backed (AndroidKeyStore) AES-256-GCM wrapping shared by the SQLCipher
  * passphrase manager and [SecurePrefs].
  */
 internal object KeystoreCipher {
     private const val PROVIDER = "AndroidKeyStore"
+    private const val MAX_ATTEMPTS = 3
 
     /** True when the device Keystore is present (false only in plain JVM unit tests). */
     fun isAvailable(): Boolean = Security.getProvider(PROVIDER) != null
 
-    fun getOrCreateKey(alias: String): SecretKey {
+    /**
+     * Failures that retrying cannot fix: the key or the ciphertext is gone for good.
+     * Everything else (KeyStoreException, ProviderException, binder hiccups, a busy
+     * StrongBox) is treated as transient.
+     */
+    fun isPermanentFailure(t: Throwable): Boolean =
+        t is AEADBadTagException ||
+            t is KeyPermanentlyInvalidatedException ||
+            t is UnrecoverableKeyException ||
+            t is IllegalArgumentException // malformed stored payload
+
+    /** Runs [block], retrying transient Keystore failures with a short backoff. */
+    fun <T> withRetry(block: () -> T): T {
+        var last: Throwable? = null
+        repeat(MAX_ATTEMPTS) { attempt ->
+            try {
+                return block()
+            } catch (t: Throwable) {
+                if (isPermanentFailure(t) || t is Error) throw t
+                last = t
+                if (attempt < MAX_ATTEMPTS - 1) Thread.sleep(100L * (attempt + 1))
+            }
+        }
+        throw KeystoreUnavailableException("AndroidKeyStore unavailable after $MAX_ATTEMPTS attempts", last)
+    }
+
+    fun getOrCreateKey(alias: String, preferStrongBox: Boolean = false): SecretKey {
         val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
         val existing = keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry
         if (existing != null) return existing.secretKey
 
+        if (preferStrongBox) {
+            try {
+                return generateKey(alias, strongBox = true)
+            } catch (_: StrongBoxUnavailableException) {
+                // No StrongBox on this device: fall through to the TEE-backed Keystore key.
+            }
+        }
+        return generateKey(alias, strongBox = false)
+    }
+
+    private fun generateKey(alias: String, strongBox: Boolean): SecretKey {
         val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
         val spec = KeyGenParameterSpec.Builder(
             alias,
@@ -51,15 +101,22 @@ internal object KeystoreCipher {
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
+            .setIsStrongBoxBacked(strongBox)
             .build()
         keyGenerator.init(spec)
         return keyGenerator.generateKey()
     }
 
+    fun deleteKey(alias: String) {
+        runCatching {
+            KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(alias)
+        }
+    }
+
     /** Returns `iv:ciphertext` (both Base64). */
-    fun encrypt(alias: String, plain: ByteArray): String {
+    fun encrypt(alias: String, plain: ByteArray, preferStrongBox: Boolean = false): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(alias))
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(alias, preferStrongBox))
         val encrypted = cipher.doFinal(plain)
         val enc = Base64.getEncoder()
         return enc.encodeToString(cipher.iv) + ":" + enc.encodeToString(encrypted)
@@ -81,12 +138,13 @@ internal object KeystoreCipher {
 
 /**
  * Manages the AES-256 SQLCipher passphrase. The random passphrase is wrapped with a
- * hardware-backed AndroidKeyStore key and stored in private SharedPreferences.
+ * hardware-backed AndroidKeyStore key (StrongBox when present) and stored in private
+ * SharedPreferences.
  *
- * There is deliberately no constant fallback passphrase: if the wrapped key cannot
- * be unwrapped (the Keystore key is gone or belongs to another device) the local
- * replica is unreadable anyway, so [onKeyLost] is invoked to discard it and a fresh
- * passphrase is generated. Any other Keystore failure propagates to the caller.
+ * There is deliberately no constant fallback passphrase. Transient Keystore failures are
+ * retried and then reported as [KeystoreUnavailableException]; a passphrase that can
+ * never be unwrapped again is reported as [DatabaseKeyInvalidatedException] so the
+ * database layer can run its controlled recovery ([resetDatabaseKey] + wipe + resync).
  */
 object DatabaseKeyManager {
     private const val KEYSTORE_ALIAS = "kakei_sqlcipher_master_key"
@@ -95,9 +153,29 @@ object DatabaseKeyManager {
     private const val LEGACY_KEY_WRAPPED = "wrapped_passphrase"
     private const val LEGACY_KEY_IV = "wrapped_iv"
 
-    fun getOrCreateDatabasePassphrase(context: Context, onKeyLost: () -> Unit): ByteArray {
+    /**
+     * The constant that builds before 1.0.1 silently used whenever the Keystore failed.
+     * It is ONLY used to detect and re-key such databases to a Keystore-wrapped
+     * passphrase; it is never used to create or open a database for normal use.
+     */
+    internal val LEGACY_FALLBACK_PASSPHRASE: ByteArray
+        get() = "kakei_fallback_local_passphrase_32b".toByteArray(Charsets.UTF_8).copyOf(32)
+
+    fun hasStoredPassphrase(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.contains(KEY_WRAPPED_PASSPHRASE) || prefs.contains(LEGACY_KEY_WRAPPED)
+    }
+
+    /**
+     * Returns the database passphrase, creating and wrapping a fresh random one when
+     * none is stored yet.
+     *
+     * @throws DatabaseKeyInvalidatedException the stored passphrase is permanently unreadable
+     * @throws KeystoreUnavailableException the Keystore kept failing (retry on next launch)
+     */
+    fun getOrCreateDatabasePassphrase(context: Context): ByteArray {
         if (!KeystoreCipher.isAvailable()) {
-            throw IllegalStateException("AndroidKeyStore is not available on this device")
+            throw KeystoreUnavailableException("AndroidKeyStore is not available on this device")
         }
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         migrateLegacyFormat(prefs)
@@ -105,22 +183,34 @@ object DatabaseKeyManager {
         val wrapped = prefs.getString(KEY_WRAPPED_PASSPHRASE, null)
         if (wrapped != null) {
             try {
-                return KeystoreCipher.decrypt(KEYSTORE_ALIAS, wrapped)
-            } catch (_: AEADBadTagException) {
-                onKeyLost()
-            } catch (_: UnrecoverableKeyException) {
-                onKeyLost()
-            } catch (_: InvalidKeyException) {
-                onKeyLost()
+                return KeystoreCipher.withRetry { KeystoreCipher.decrypt(KEYSTORE_ALIAS, wrapped) }
+            } catch (e: KeystoreUnavailableException) {
+                throw e
+            } catch (e: Exception) {
+                if (KeystoreCipher.isPermanentFailure(e)) {
+                    throw DatabaseKeyInvalidatedException(e)
+                }
+                throw KeystoreUnavailableException("Could not unwrap database key", e)
             }
-            prefs.edit().remove(KEY_WRAPPED_PASSPHRASE).apply()
         }
 
         val rawKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        prefs.edit()
-            .putString(KEY_WRAPPED_PASSPHRASE, KeystoreCipher.encrypt(KEYSTORE_ALIAS, rawKey))
-            .apply()
+        val newWrapped = KeystoreCipher.withRetry {
+            KeystoreCipher.encrypt(KEYSTORE_ALIAS, rawKey, preferStrongBox = true)
+        }
+        // commit(): the passphrase must be durable before any database is keyed with it.
+        prefs.edit().putString(KEY_WRAPPED_PASSPHRASE, newWrapped).commit()
         return rawKey
+    }
+
+    /** Forgets the wrapped passphrase and its Keystore key (controlled recovery only). */
+    fun resetDatabaseKey(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .remove(KEY_WRAPPED_PASSPHRASE)
+            .remove(LEGACY_KEY_WRAPPED)
+            .remove(LEGACY_KEY_IV)
+            .commit()
+        KeystoreCipher.deleteKey(KEYSTORE_ALIAS)
     }
 
     /** Converts the pre-v2 two-field layout (`wrapped_iv` + `wrapped_passphrase`) in place. */
@@ -132,7 +222,7 @@ object DatabaseKeyManager {
         if (!prefs.contains(KEY_WRAPPED_PASSPHRASE)) {
             editor.putString(KEY_WRAPPED_PASSPHRASE, "$legacyIv:$legacyWrapped")
         }
-        editor.apply()
+        editor.commit()
     }
 }
 
