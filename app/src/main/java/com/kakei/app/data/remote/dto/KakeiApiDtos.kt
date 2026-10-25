@@ -261,6 +261,17 @@ data class TfaConfirmResponse(
     val recoveryCodes: List<String> = emptyList()
 )
 
+/**
+ * `DELETE /profile/account` requires re-authentication: either [password], or a passkey
+ * assertion ([passkeyResponse]) for the ceremony from `POST /profile/account/delete-challenge`.
+ */
+@Serializable
+data class AccountDeleteRequest(
+    val password: String? = null,
+    val ceremonyId: String? = null,
+    val passkeyResponse: JsonElement? = null
+)
+
 @Serializable
 data class TfaDisableRequest(
     val password: String

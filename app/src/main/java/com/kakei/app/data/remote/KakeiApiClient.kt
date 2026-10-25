@@ -327,8 +327,8 @@ class KakeiApiClient(
     suspend fun updateProfileInfo(req: ProfileInfoUpdateRequest): Result<Unit> =
         requestJson("PUT", "/profile/info", json.encodeToString(req))
 
-    suspend fun deleteAccount(): Result<Unit> =
-        requestJson("DELETE", "/profile/account")
+    suspend fun deleteAccount(req: AccountDeleteRequest): Result<Unit> =
+        requestJson("DELETE", "/profile/account", json.encodeToString(req))
 
     suspend fun changePassword(req: PasswordChangeRequest): Result<Unit> =
         requestJson("POST", "/profile/password-change", json.encodeToString(req))

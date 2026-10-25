@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Unused dependencies `navigation-compose`, `datastore-preferences` and `okhttp logging-interceptor`.
+
+### Changed
+- `keepRules/rules.keep` documents why release R8 is safe (optimization scoped to androidx/kotlin/kotlinx, consumer rules from SQLCipher and kotlinx.serialization) and adds explicit keep rules for SQLCipher JNI and the app's generated serializers.
+
 ### Security
 - Auto Backup is disabled and the encrypted database, Keystore-wrapped key and session tokens are excluded from cloud backup and device transfer.
 - The hard-coded SQLCipher fallback passphrase is gone. If the wrapped key cannot be unwrapped (data restored onto another device), the unreadable local replica is discarded and a fresh key is generated instead of crash-looping.
@@ -15,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `READ_SMS` permission removed (only `RECEIVE_SMS` is needed).
 
 ### Fixed
+- Split bill: shares are allocated in the currency's minor units and add up to the total exactly (100.00 / 3 → 33.34 + 33.33 + 33.33); lending amounts use the currency's own precision (JPY 0, KWD 3) instead of always 2 decimals.
+- Local store: rows whose payload no longer decodes are reported (`KakeiDatabase` log + `undecodableRowCount`) and kept on disk instead of being swallowed silently; the schema has a version constant and an ordered migration registry instead of an empty `onUpgrade`.
+- Profile diagnostics no longer probe system services on the main thread during composition; the check runs on `Dispatchers.IO` and refreshes when the screen resumes.
+- `deleteAccount` sends the re-authentication body (`password`, or `ceremonyId` + `passkeyResponse`) now required by `DELETE /profile/account`.
 - Refresh token survives process restarts; token refresh is single-flight; when the refresh fails the session is cleared and the sign-in screen is shown instead of silently failing every request.
 - Outbox drain inspects per-item HTTP 207 statuses: applied items are deleted, server-rejected items are recorded in a visible "sync errors" list, network failures keep the entry and stop the drain so ordering is preserved.
 - Every local write (accounts, categories, labels, rules, budgets, obligations, lending, savings, group sharing, profile, review, obligation execution) now goes through the Outbox instead of fire-and-forget API calls, so offline changes are no longer lost.

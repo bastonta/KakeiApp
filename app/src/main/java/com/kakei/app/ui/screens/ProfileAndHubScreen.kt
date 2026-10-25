@@ -24,13 +24,19 @@ import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.security.HealthCheckHelper
+import com.kakei.app.core.security.SystemHealthStatus
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.local.SyncMutationEntity
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.data.repository.AppSettingsState
 import com.kakei.app.data.repository.KakeiRepository
 import com.kakei.app.ui.theme.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Tab 5: Profile, Synchronization, Security (2FA/Passkeys/Biometrics), Categories & Smart Merchant Rule Simulator,
@@ -66,8 +72,15 @@ fun ProfileAndHubScreen(
         "Kaspi Gold: Оплата 3 200 ₸ в Yandex Go. Доступно: 604 350 ₸"
     )
 
-    val health = remember(repository.database.isSqlCipherActive) {
-        HealthCheckHelper.inspect(context, repository.database.isSqlCipherActive)
+    // The probe hits Settings / system services: run it off the main thread, and again
+    // each time the screen resumes (the user may have just granted a permission).
+    val sqlCipherActive = repository.database.isSqlCipherActive
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val isResumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    val health by produceState<SystemHealthStatus?>(null, sqlCipherActive, isResumed) {
+        if (isResumed) {
+            value = withContext(Dispatchers.IO) { HealthCheckHelper.inspect(context, sqlCipherActive) }
+        }
     }
 
     LazyColumn(
@@ -467,26 +480,34 @@ fun ProfileAndHubScreen(
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    text = "• SQLCipher AES-256 Hardware Keystore: ${if (health.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE"}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "• NotificationListenerService Bound: ${health.notificationListenerGranted}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "• System Overlay Permission: ${health.overlayPermissionGranted}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "• Battery Optimization Ignored: ${health.batteryOptimizationIgnored}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "• Biometric Hardware Ready: ${health.biometricAvailable}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                val status = health
+                if (status == null) {
+                    Text(
+                        text = "• …",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = "• SQLCipher AES-256 Hardware Keystore: ${if (status.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE"}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• NotificationListenerService Bound: ${status.notificationListenerGranted}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• System Overlay Permission: ${status.overlayPermissionGranted}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• Battery Optimization Ignored: ${status.batteryOptimizationIgnored}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "• Biometric Hardware Ready: ${status.biometricAvailable}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Text(
                     text = "• Home Screen Widgets Registered: 7 AppWidgetProviders + QuickAddTileService",
                     color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -1865,7 +1865,7 @@ class KakeiRepository(
         note: String?
     ) {
         val nowIso = Instant.now().toString()
-        val cleanAmount = principalAmount.setScale(2, RoundingMode.HALF_UP)
+        val cleanAmount = principalAmount.setScale(FinancialCalculators.currencyScale(currency), RoundingMode.HALF_UP)
         val record = LendingRecordDto(
             id = UUID.randomUUID().toString(),
             userId = _settingsState.value.profile.userId,
@@ -1955,10 +1955,11 @@ class KakeiRepository(
     ) {
         val cleanNames = participantNames.map { it.trim() }.filter { it.isNotEmpty() }
         if (cleanNames.isEmpty()) return
-        val divisor = BigDecimal.valueOf((cleanNames.size + if (includeSelf) 1 else 0).toLong())
-        val share = totalAmount.divide(divisor, 2, RoundingMode.HALF_UP)
+        val parts = cleanNames.size + if (includeSelf) 1 else 0
+        // Shares add up to the total exactly; the user's own share (if any) is the last one.
+        val shares = FinancialCalculators.splitEvenly(totalAmount, parts, FinancialCalculators.currencyScale(currency))
 
-        for (person in cleanNames) {
+        for ((person, share) in cleanNames.zip(shares)) {
             createLendingRecord(
                 personName = person,
                 type = "LENT",
@@ -1968,7 +1969,13 @@ class KakeiRepository(
                 note = note ?: "Split bill (${CurrencyFormatter.format(totalAmount, currency)})"
             )
         }
-        postMessage("Split bill created for ${cleanNames.size} participants (${CurrencyFormatter.format(share, currency)} each)")
+        val owed = shares.take(cleanNames.size)
+        val shareText = if (owed.distinct().size == 1) {
+            "${CurrencyFormatter.format(owed.first(), currency)} each"
+        } else {
+            "${CurrencyFormatter.format(owed.min(), currency)}–${CurrencyFormatter.format(owed.max(), currency)} each"
+        }
+        postMessage("Split bill created for ${cleanNames.size} participants ($shareText)")
     }
 
     fun settleAllForPerson(personName: String) {

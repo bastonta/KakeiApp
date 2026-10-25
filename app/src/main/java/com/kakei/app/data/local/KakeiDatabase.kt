@@ -3,6 +3,7 @@ package com.kakei.app.data.local
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.Json
 import net.zetetic.database.DatabaseErrorHandler
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicInteger
 import net.zetetic.database.sqlcipher.SQLiteDatabase as CipherDatabase
 
 /**
@@ -104,13 +106,18 @@ class KakeiDatabase(private val context: Context) {
     private val openHelper: SupportSQLiteOpenHelper
 
     init {
-        val callback = object : SupportSQLiteOpenHelper.Callback(1) {
+        val callback = object : SupportSQLiteOpenHelper.Callback(SCHEMA_VERSION) {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 createSchema(db)
             }
 
             override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                // Schema v1
+                // The open helper already wraps this call in a transaction.
+                for (version in (oldVersion + 1)..newVersion) {
+                    val migration = MIGRATIONS[version]
+                        ?: error("No local schema migration to v$version (from v$oldVersion)")
+                    migration(db)
+                }
             }
         }
 
@@ -303,14 +310,13 @@ class KakeiDatabase(private val context: Context) {
     inline fun <reified T> listItems(collection: String, descending: Boolean = true): List<T> {
         val order = if (descending) "DESC" else "ASC"
         val cursor = readableOpenHelper.readableDatabase.query(
-            "SELECT payload_json FROM kv_store WHERE collection = ? ORDER BY sort_key $order",
+            "SELECT id, payload_json FROM kv_store WHERE collection = ? ORDER BY sort_key $order",
             arrayOf(collection)
         )
         val result = mutableListOf<T>()
         cursor.use { c ->
             while (c.moveToNext()) {
-                val raw = c.getString(0)
-                runCatching { json.decodeFromString<T>(raw) }.getOrNull()?.let { result.add(it) }
+                decodeRow<T>(collection, c.getString(0), c.getString(1))?.let { result.add(it) }
             }
         }
         return result
@@ -322,8 +328,36 @@ class KakeiDatabase(private val context: Context) {
             arrayOf(collection, id)
         )
         return cursor.use { c ->
-            if (c.moveToFirst()) runCatching { json.decodeFromString<T>(c.getString(0)) }.getOrNull() else null
+            if (c.moveToFirst()) decodeRow<T>(collection, id, c.getString(0)) else null
         }
+    }
+
+    /**
+     * Decodes one stored payload. A row that no longer matches its model is skipped but
+     * never silently: it is reported (and kept on disk, so an outbox entry is not lost)
+     * until a schema migration rewrites it or the next sync replaces it.
+     */
+    @PublishedApi
+    internal inline fun <reified T> decodeRow(collection: String, id: String, raw: String): T? =
+        try {
+            json.decodeFromString<T>(raw)
+        } catch (e: IllegalArgumentException) {
+            // SerializationException is an IllegalArgumentException.
+            reportUndecodableRow(collection, id, e)
+            null
+        }
+
+    private val undecodableRows = AtomicInteger()
+
+    /** Count of rows skipped because their payload could not be decoded, since launch. */
+    val undecodableRowCount: Int
+        get() = undecodableRows.get()
+
+    @PublishedApi
+    internal fun reportUndecodableRow(collection: String, id: String, error: Exception) {
+        undecodableRows.incrementAndGet()
+        // Payloads hold financial data: log only where the row is and why it failed.
+        Log.e(TAG, "Skipping undecodable row $collection/$id: ${error::class.simpleName}: ${error.message?.take(200)}")
     }
 
     @PublishedApi
@@ -331,7 +365,20 @@ class KakeiDatabase(private val context: Context) {
         get() = openHelper
 
     companion object {
+        private const val TAG = "KakeiDatabase"
         const val DB_NAME = "kakei_encrypted_ledger.db"
+
+        /**
+         * Version of the local schema (table layout and the JSON shape of stored payloads).
+         * To change either: bump this and register a step in [MIGRATIONS] for the new
+         * version, e.g. rewriting payloads of a collection, or clearing a server-replicated
+         * collection so the next sync rebuilds it. Never clear [COL_MUTATIONS] — it holds
+         * offline changes that exist nowhere else.
+         */
+        const val SCHEMA_VERSION = 1
+
+        /** Upgrade steps keyed by the version they upgrade *to*; applied in order. */
+        private val MIGRATIONS: Map<Int, (SupportSQLiteDatabase) -> Unit> = emptyMap()
         const val COL_ACCOUNTS = "accounts"
         const val COL_CATEGORIES = "categories"
         const val COL_LABELS = "labels"

@@ -1,12 +1,23 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
+# Project R8 rules. AGP combines every file in src/main/keepRules and passes it to R8.
 #
-# For more details, see
-#   https://d.android.com/r/tools/r8/keep-rules
+# Release optimization is scoped to androidx/kotlin/kotlinx (see `optimization.packageScope`
+# in app/build.gradle.kts), and both libraries below ship their own consumer rules
+# (sqlcipher-android: proguard.txt, kotlinx-serialization: META-INF/com.android.tools/r8).
+# The rules here are an explicit safety net in case the scope is widened or a library
+# drops its bundled rules. Verify with `./gradlew assembleRelease` and
+# app/build/outputs/mapping/release/{mapping,usage}.txt.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# SQLCipher: native code looks up these classes, fields and methods by name over JNI.
+-keep class net.zetetic.database.** { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# kotlinx.serialization: generated serializers of the app's @Serializable models
+# (API DTOs and the encrypted local store payloads) are resolved via the companion.
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault,InnerClasses
+-if @kotlinx.serialization.Serializable class com.kakei.app.**
+-keepclassmembers class <1> {
+    static <1>$Companion Companion;
+}
+-keep,includedescriptorclasses class com.kakei.app.**$$serializer { *; }

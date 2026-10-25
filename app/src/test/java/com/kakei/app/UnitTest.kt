@@ -261,4 +261,15 @@ class UnitTest {
         val decrypted = BackupCryptoHelper.decryptBackup(encrypted, "secret-passphrase")
         assertEquals(encoded, decrypted)
     }
+
+    @Test
+    fun splitEvenly_keepsTheRemainder() {
+        val shares = FinancialCalculators.splitEvenly(BigDecimal("100.00"), 3, 2)
+        assertEquals(listOf(BigDecimal("33.34"), BigDecimal("33.33"), BigDecimal("33.33")), shares)
+        assertEquals(BigDecimal("100.00"), shares.fold(BigDecimal.ZERO, BigDecimal::add))
+
+        val yen = FinancialCalculators.splitEvenly(BigDecimal("1000"), 6, FinancialCalculators.currencyScale("JPY"))
+        assertEquals(BigDecimal("1000"), yen.fold(BigDecimal.ZERO, BigDecimal::add))
+        assertTrue(yen.all { it.scale() == 0 })
+    }
 }

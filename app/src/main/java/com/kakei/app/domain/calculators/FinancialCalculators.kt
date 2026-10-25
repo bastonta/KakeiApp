@@ -5,6 +5,7 @@ import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.remote.dto.*
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -22,6 +23,30 @@ import java.util.UUID
  * converted with a guessed rate). The UI surfaces such amounts in their own currency.
  */
 object FinancialCalculators {
+
+    /** Minor-unit scale of an ISO 4217 currency (JPY → 0, USD → 2, KWD → 3); 2 if unknown. */
+    fun currencyScale(currency: String): Int =
+        runCatching { java.util.Currency.getInstance(currency.trim().uppercase(Locale.ROOT)).defaultFractionDigits }
+            .getOrNull()
+            ?.takeIf { it >= 0 }
+            ?: 2
+
+    /**
+     * Splits [total] (rounded to [scale]) into [parts] shares that add up to it exactly.
+     * The indivisible remainder is spread one minor unit at a time over the first shares,
+     * so nothing is lost to rounding: 100.00 / 3 → 33.34, 33.33, 33.33.
+     */
+    fun splitEvenly(total: BigDecimal, parts: Int, scale: Int): List<BigDecimal> {
+        require(parts > 0) { "parts must be positive" }
+        val units = total.setScale(scale, RoundingMode.HALF_UP).unscaledValue()
+        val (base, remainder) = units.divideAndRemainder(BigInteger.valueOf(parts.toLong()))
+        val extra = remainder.signum()
+        val extraCount = remainder.abs().toInt()
+        return List(parts) { i ->
+            val share = if (i < extraCount) base + BigInteger.valueOf(extra.toLong()) else base
+            BigDecimal(share, scale)
+        }
+    }
 
     /**
      * Recomputes spentAmount, remainingAmount, usagePercentage, dailyBurnRateLimit, and alertLevel
