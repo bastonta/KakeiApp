@@ -5,6 +5,7 @@ import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.util.ConvertedTotal
+import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.remote.dto.AccountDto
@@ -271,5 +272,13 @@ class UnitTest {
         val yen = FinancialCalculators.splitEvenly(BigDecimal("1000"), 6, FinancialCalculators.currencyScale("JPY"))
         assertEquals(BigDecimal("1000"), yen.fold(BigDecimal.ZERO, BigDecimal::add))
         assertTrue(yen.all { it.scale() == 0 })
+    }
+
+    @Test
+    fun formatRate_usesAmountSeparatorsAndShortPrecision() {
+        assertEquals("521.74", CurrencyFormatter.formatRate(BigDecimal("521.7391")))
+        assertEquals("480", CurrencyFormatter.formatRate(BigDecimal("480.0000")))
+        assertEquals("1 234.5", CurrencyFormatter.formatRate(BigDecimal("1234.5")))
+        assertEquals("0.0021", CurrencyFormatter.formatRate(BigDecimal("0.00208333")))
     }
 }

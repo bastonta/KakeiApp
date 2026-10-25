@@ -17,6 +17,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kakei.app.core.i18n.AppLanguage
+import com.kakei.app.core.i18n.AppStrings
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.*
@@ -24,6 +26,9 @@ import com.kakei.app.data.repository.KakeiRepository
 import com.kakei.app.ui.theme.*
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.Month
+import java.time.format.TextStyle
+import java.util.Locale
 
 /**
  * Tab 2: Insights, Envelope Budgets & 30-Day Cash Flow Forecast Screen.
@@ -113,13 +118,13 @@ fun InsightsAndBudgetsScreen(
                     OutlinedTextField(
                         value = bName,
                         onValueChange = { bName = it },
-                        label = { Text("Envelope Name") },
+                        label = { Text(s.pick("Название конверта", "Envelope Name")) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = bLimit,
                         onValueChange = { bLimit = it },
-                        label = { Text("Budget Limit ($baseCurrency)") },
+                        label = { Text(s.pick("Лимит ($baseCurrency)", "Budget Limit ($baseCurrency)")) },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -127,7 +132,7 @@ fun InsightsAndBudgetsScreen(
                             FilterChip(
                                 selected = bPeriod == p,
                                 onClick = { bPeriod = p },
-                                label = { Text(p) }
+                                label = { Text(s.period(p)) }
                             )
                         }
                     }
@@ -192,13 +197,13 @@ fun InsightsAndBudgetsScreen(
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text("Title / Payee") },
+                        label = { Text(s.pick("Название / получатель", "Title / Payee")) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("Amount ($baseCurrency)") },
+                        label = { Text("${s.amountLabel} ($baseCurrency)") },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -206,7 +211,7 @@ fun InsightsAndBudgetsScreen(
                             FilterChip(
                                 selected = opType == t,
                                 onClick = { opType = t },
-                                label = { Text(t) }
+                                label = { Text(s.operationType(t)) }
                             )
                         }
                     }
@@ -218,14 +223,14 @@ fun InsightsAndBudgetsScreen(
                             FilterChip(
                                 selected = freq == f,
                                 onClick = { freq = f },
-                                label = { Text(f) }
+                                label = { Text(s.period(f)) }
                             )
                         }
                     }
                     OutlinedTextField(
                         value = dueDays,
                         onValueChange = { dueDays = it },
-                        label = { Text("Due in days from today") },
+                        label = { Text(s.pick("Через сколько дней", "Due in days from today")) },
                         singleLine = true
                     )
                 }
@@ -297,7 +302,9 @@ private fun AnalyticsInsightsSubScreen(
                     ) {
                         Text(s.healthScoreTitle, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "Savings: ${healthScore.savingsRatePercentage}% · Budgets: ${healthScore.budgetCompliancePercentage}% · DTI: ${healthScore.debtToIncomePercentage}%",
+                            text = s.pick("Сбережения", "Savings") + ": ${healthScore.savingsRatePercentage}% · " +
+                                s.pick("Бюджеты", "Budgets") + ": ${healthScore.budgetCompliancePercentage}% · " +
+                                s.pick("Долг/доход", "DTI") + ": ${healthScore.debtToIncomePercentage}%",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -349,18 +356,18 @@ private fun AnalyticsInsightsSubScreen(
                 ) {
                     Text(s.noSpendStreakTitle, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Last 30d zero-spend days: ${streaks.totalNoSpendDaysLast30}/30",
+                        text = s.pick("Дней без трат за 30 дн.", "Last 30d zero-spend days") + ": ${streaks.totalNoSpendDaysLast30}/30",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("${streaks.currentStreakDays}d", style = MaterialTheme.typography.headlineMedium, color = emeraldText())
+                        Text(s.days(streaks.currentStreakDays), style = MaterialTheme.typography.headlineMedium, color = emeraldText())
                         Text(s.currentStreakLabel, style = MaterialTheme.typography.labelSmall)
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("${streaks.longestStreakDays}d", style = MaterialTheme.typography.headlineMedium, color = IndigoAccent)
+                        Text(s.days(streaks.longestStreakDays), style = MaterialTheme.typography.headlineMedium, color = IndigoAccent)
                         Text(s.longestStreakLabel, style = MaterialTheme.typography.labelSmall)
                     }
                 }
@@ -420,7 +427,7 @@ private fun AnalyticsInsightsSubScreen(
                 }
 
                 // 12-Month Matrix Summary
-                Text("365-Day Monthly Matrix", style = MaterialTheme.typography.labelLarge)
+                Text(s.pick("Расходы по месяцам за год", "365-Day Monthly Matrix"), style = MaterialTheme.typography.labelLarge)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -431,7 +438,7 @@ private fun AnalyticsInsightsSubScreen(
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
-                                Text("M${m.month}", style = MaterialTheme.typography.labelSmall)
+                                Text(monthLabel(m.month, s.language), style = MaterialTheme.typography.labelSmall)
                                 Text(
                                     text = CurrencyFormatter.format(m.totalSpent, heatmaps.currency),
                                     style = MaterialTheme.typography.titleMedium
@@ -458,7 +465,7 @@ private fun AnalyticsInsightsSubScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Current Month", style = MaterialTheme.typography.labelSmall)
+                        Text(s.pick("Текущий месяц", "Current Month"), style = MaterialTheme.typography.labelSmall)
                         Text(
                             CurrencyFormatter.format(insights.currentMonthSpent, insights.currency),
                             style = MaterialTheme.typography.titleLarge
@@ -479,12 +486,12 @@ private fun AnalyticsInsightsSubScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        "${s.smallSpendsTitle}: ${insights.smallSpendsCount} tx (${CurrencyFormatter.format(insights.smallSpendsTotal, insights.currency)})",
+                        "${s.smallSpendsTitle}: ${insights.smallSpendsCount} ${s.pick("опер.", "tx")} (${CurrencyFormatter.format(insights.smallSpendsTotal, insights.currency)})",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
                 Text(
-                    "${s.weekdayVsWeekendTitle}: Weekday ${CurrencyFormatter.format(insights.weekdaySpendTotal, insights.currency)} · Weekend ${CurrencyFormatter.format(insights.weekendSpendTotal, insights.currency)}",
+                    "${s.weekdayVsWeekendTitle}: ${s.pick("будни", "weekday")} ${CurrencyFormatter.format(insights.weekdaySpendTotal, insights.currency)} · ${s.pick("выходные", "weekend")} ${CurrencyFormatter.format(insights.weekendSpendTotal, insights.currency)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -506,7 +513,7 @@ private fun AnalyticsInsightsSubScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("${idx + 1}. ${entry.payee} (${entry.transactionCount}x)")
+                        Text("${idx + 1}. ${payeeLabel(entry.payee, s)} (${entry.transactionCount}×)")
                         Text(
                             CurrencyFormatter.format(entry.totalSpent, insights.currency),
                             fontWeight = FontWeight.Bold
@@ -545,6 +552,19 @@ private fun BudgetsSubScreen(
             }
         }
 
+        if (budgets.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    icon = Icons.Default.AccountBalanceWallet,
+                    title = s.pick("Бюджетов пока нет", "No budgets yet"),
+                    hint = s.pick(
+                        "Задайте лимит на категории — приложение покажет остаток и безопасную сумму на день.",
+                        "Set a limit for some categories to track what's left and a safe daily amount."
+                    )
+                )
+            }
+        }
+
         items(budgets, key = { it.id }) { b ->
             val barColor = when (b.alertLevel) {
                 "EXCEEDED_100" -> CoralExpense
@@ -567,7 +587,7 @@ private fun BudgetsSubScreen(
                     Column {
                         Text(b.name, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "${b.periodType} · ${b.alertLevel}",
+                            text = "${s.period(b.periodType)} · ${s.budgetAlert(b.alertLevel)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = barColor
                         )
@@ -602,7 +622,7 @@ private fun BudgetsSubScreen(
                 }
 
                 Text(
-                    text = "${s.dailyBurnLimitLabel}: ${CurrencyFormatter.format(b.dailyBurnRateLimit, b.currency)} / day (${b.remainingDaysInPeriod}d left)",
+                    text = "${s.dailyBurnLimitLabel}: ${CurrencyFormatter.format(b.dailyBurnRateLimit, b.currency)} ${s.pick("/день", "/ day")} (${s.pick("осталось", "left")} ${s.days(b.remainingDaysInPeriod)})",
                     style = MaterialTheme.typography.labelLarge,
                     color = EmeraldLight
                 )
@@ -656,14 +676,14 @@ private fun PlanningForecastSubScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("Current Liquid", style = MaterialTheme.typography.labelSmall)
+                        Text(s.pick("Сейчас доступно", "Current Liquid"), style = MaterialTheme.typography.labelSmall)
                         Text(
                             CurrencyFormatter.format(forecast.currentLiquidBalance, forecast.baseCurrency),
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        Text("Projected in 30d", style = MaterialTheme.typography.labelSmall)
+                        Text(s.pick("Через 30 дней", "Projected in 30d"), style = MaterialTheme.typography.labelSmall)
                         Text(
                             CurrencyFormatter.format(forecast.forecastedEndBalance, forecast.baseCurrency),
                             style = MaterialTheme.typography.titleLarge,
@@ -672,7 +692,7 @@ private fun PlanningForecastSubScreen(
                     }
                 }
                 Text(
-                    text = "Planned +${CurrencyFormatter.format(forecast.plannedIncomeTotal, forecast.baseCurrency)} / -${CurrencyFormatter.format(forecast.plannedExpenseTotal, forecast.baseCurrency)} (Obligation ratio: ${forecast.obligationToLiquidityRatio}%)",
+                    text = "${s.pick("Запланировано", "Planned")} +${CurrencyFormatter.format(forecast.plannedIncomeTotal, forecast.baseCurrency)} / -${CurrencyFormatter.format(forecast.plannedExpenseTotal, forecast.baseCurrency)} (${s.pick("доля обязательств", "obligation ratio")}: ${forecast.obligationToLiquidityRatio}%)",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -688,6 +708,19 @@ private fun PlanningForecastSubScreen(
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(s.createObligationButton)
+            }
+        }
+
+        if (obligations.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    icon = Icons.Default.EventRepeat,
+                    title = s.pick("Регулярных платежей нет", "No planned payments"),
+                    hint = s.pick(
+                        "Добавьте аренду, подписки или зарплату, чтобы прогноз учитывал их.",
+                        "Add rent, subscriptions or salary so the forecast accounts for them."
+                    )
+                )
             }
         }
 
@@ -707,7 +740,7 @@ private fun PlanningForecastSubScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(ob.title, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "${ob.frequency} · Due: ${ob.nextDueDate}",
+                            text = "${s.period(ob.frequency)} · ${s.pick("Срок", "Due")}: ${ob.nextDueDate}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -736,3 +769,13 @@ private fun PlanningForecastSubScreen(
         }
     }
 }
+
+/** Short month name for the yearly matrix, e.g. "окт." / "Oct". */
+private fun monthLabel(month: Int, language: AppLanguage): String {
+    val locale = if (language == AppLanguage.RU) Locale.forLanguageTag("ru") else Locale.ENGLISH
+    return Month.of(month.coerceIn(1, 12)).getDisplayName(TextStyle.SHORT_STANDALONE, locale)
+}
+
+/** The server reports records without a payee as "Unknown Merchant"; show that in the UI language. */
+private fun payeeLabel(payee: String, s: AppStrings): String =
+    if (payee.isBlank() || payee == "Unknown Merchant") s.pick("Без получателя", "Unknown Merchant") else payee

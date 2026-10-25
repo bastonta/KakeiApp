@@ -261,7 +261,7 @@ fun ExchangeRatesCard(
             val rate = book.rate(cur, base) ?: return@forEach
             val manual = book.overrides.containsKey(cur to base) || book.overrides.containsKey(base to cur)
             Text(
-                text = "1 $cur = ${rate.setScale(4, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()} $base" +
+                text = "1 $cur = ${CurrencyFormatter.formatRate(rate)} $base" +
                     if (manual) " · ${s.exchangeRateManualBadge}" else "",
                 color = if (manual) emeraldText() else MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -276,7 +276,7 @@ fun ExchangeRatesCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "1 ${ov.fromCurrency} = ${ov.rate.stripTrailingZeros().toPlainString()} ${ov.toCurrency} · ${s.exchangeRateManualBadge}",
+                        text = "1 ${ov.fromCurrency} = ${CurrencyFormatter.formatRate(ov.rate)} ${ov.toCurrency} · ${s.exchangeRateManualBadge}",
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = { repository.resetExchangeRateOverride(ov.fromCurrency, ov.toCurrency) }) {

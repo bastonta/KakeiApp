@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
@@ -186,12 +188,13 @@ fun ProfileAndHubScreen(
                             onClick = { repository.setThemeMode(mode) },
                             modifier = Modifier.weight(1f),
                             label = {
+                                // Three chips share the row: shrink long labels ("Системная") instead of cutting them.
                                 Text(
                                     text = modeTitle,
                                     modifier = Modifier.fillMaxWidth(),
                                     textAlign = TextAlign.Center,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp)
                                 )
                             }
                         )
@@ -256,7 +259,7 @@ fun ProfileAndHubScreen(
                 )
                 val syncErrors by repository.syncErrors.collectAsState()
                 Text(
-                    text = "${s.pendingMutationsLabel}: ${pendingMutations.size} · Server: ${settings.serverVersion ?: if (isRu) "Не подключен" else "Not connected"}",
+                    text = "${s.pendingMutationsLabel}: ${pendingMutations.size} · ${s.pick("Сервер", "Server")}: ${settings.serverVersion ?: s.pick("не подключён", "not connected")}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -284,17 +287,19 @@ fun ProfileAndHubScreen(
                             containerColor = EmeraldBrand,
                             contentColor = Color.White
                         ),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(s.syncNowButton, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.syncNowButton, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp))
                     }
                     OutlinedButton(
                         onClick = { repository.logout() },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text(s.logoutButton, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.logoutButton, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp))
                     }
                 }
             }
@@ -528,22 +533,22 @@ fun ProfileAndHubScreen(
             SmartMerchantMatcher.classify(simulatorInput, null, rules, categories)
         }
         val simCategoryName = categories.firstOrNull { it.id == simResult.categoryId }
-            ?.localizedName(settings.language.code) ?: "None"
+            ?.localizedName(settings.language.code) ?: s.pick("нет", "None")
 
         AlertDialog(
             onDismissRequest = { showCategoriesDialog = false },
             title = { Text(s.categoriesAndRulesTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Smart Rule Simulator:", fontWeight = FontWeight.Bold)
+                    Text(s.pick("Проверка правил:", "Smart Rule Simulator:"), fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = simulatorInput,
                         onValueChange = { simulatorInput = it },
-                        label = { Text("Test Merchant Text") },
+                        label = { Text(s.pick("Текст для проверки", "Test Merchant Text")) },
                         singleLine = true
                     )
                     Text(
-                        text = "➔ Category: $simCategoryName (${simResult.confidenceLabel})",
+                        text = "➔ ${s.categoryLabel}: $simCategoryName (${simResult.confidenceLabel})",
                         color = emeraldText(),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -551,7 +556,7 @@ fun ProfileAndHubScreen(
                     OutlinedTextField(
                         value = newRulePattern,
                         onValueChange = { newRulePattern = it },
-                        label = { Text("New Rule Pattern (e.g. Wolt)") },
+                        label = { Text(s.pick("Шаблон правила (например, Wolt)", "New Rule Pattern (e.g. Wolt)")) },
                         singleLine = true
                     )
                     Row(
@@ -562,7 +567,15 @@ fun ProfileAndHubScreen(
                             FilterChip(
                                 selected = newRuleMatchType == mt,
                                 onClick = { newRuleMatchType = mt },
-                                label = { Text(mt) }
+                                label = {
+                                    Text(
+                                        when (mt) {
+                                            "EXACT" -> s.pick("Совпадает", "Exact")
+                                            "PREFIX" -> s.pick("Начинается с", "Prefix")
+                                            else -> s.pick("Содержит", "Contains")
+                                        }
+                                    )
+                                }
                             )
                         }
                     }
@@ -574,12 +587,12 @@ fun ProfileAndHubScreen(
                             }
                         }
                     ) {
-                        Text("+ Add Smart Rule")
+                        Text(s.pick("+ Добавить правило", "+ Add Smart Rule"))
                     }
                     OutlinedTextField(
                         value = newCatName,
                         onValueChange = { newCatName = it },
-                        label = { Text("New Category Name") },
+                        label = { Text(s.pick("Название категории", "New Category Name")) },
                         singleLine = true
                     )
                     OutlinedButton(
@@ -590,12 +603,12 @@ fun ProfileAndHubScreen(
                             }
                         }
                     ) {
-                        Text("+ Add Category")
+                        Text(s.pick("+ Добавить категорию", "+ Add Category"))
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showCategoriesDialog = false }) { Text("Done") }
+                TextButton(onClick = { showCategoriesDialog = false }) { Text(s.pick("Готово", "Done")) }
             }
         )
     }
@@ -614,7 +627,7 @@ fun ProfileAndHubScreen(
                     OutlinedTextField(
                         value = memberEmail,
                         onValueChange = { memberEmail = it },
-                        label = { Text("Family Member Email") },
+                        label = { Text(s.pick("Email участника", "Family Member Email")) },
                         singleLine = true
                     )
                     Row(
@@ -625,7 +638,7 @@ fun ProfileAndHubScreen(
                             FilterChip(
                                 selected = permLevel == p,
                                 onClick = { permLevel = p },
-                                label = { Text(p) }
+                                label = { Text(s.permissionLevel(p)) }
                             )
                         }
                     }
@@ -636,7 +649,7 @@ fun ProfileAndHubScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${m.memberEmail} (${m.permissionLevel})",
+                                text = "${m.memberEmail} (${s.permissionLevel(m.permissionLevel)})",
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { repository.removeGroupMember(m) }) {
@@ -655,11 +668,11 @@ fun ProfileAndHubScreen(
                         }
                     }
                 ) {
-                    Text("Invite Member")
+                    Text(s.pick("Пригласить", "Invite Member"))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSharingDialog = false }) { Text("Close") }
+                TextButton(onClick = { showSharingDialog = false }) { Text(s.pick("Закрыть", "Close")) }
             }
         )
     }
@@ -691,7 +704,7 @@ fun ProfileAndHubScreen(
                     OutlinedTextField(
                         value = csvInput,
                         onValueChange = { csvInput = it },
-                        label = { Text("Statement Content (CSV / OFX 2.2)") },
+                        label = { Text(s.pick("Содержимое выписки (CSV / OFX 2.2)", "Statement Content (CSV / OFX 2.2)")) },
                         maxLines = 5
                     )
                     OutlinedButton(
@@ -701,11 +714,11 @@ fun ProfileAndHubScreen(
                                 type = "text/csv"
                                 putExtra(Intent.EXTRA_TEXT, exported)
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, "Export CSV Report"))
+                            context.startActivity(Intent.createChooser(sendIntent, s.pick("Экспорт CSV", "Export CSV Report")))
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Export Ledger to CSV")
+                        Text(s.pick("Экспорт операций в CSV", "Export Ledger to CSV"))
                     }
                 }
             },
@@ -723,7 +736,7 @@ fun ProfileAndHubScreen(
                         }
                     }
                 ) {
-                    Text("Import & Deduplicate")
+                    Text(s.pick("Импортировать без дублей", "Import & Deduplicate"))
                 }
             },
             dismissButton = {
@@ -739,13 +752,13 @@ fun ProfileAndHubScreen(
 
         AlertDialog(
             onDismissRequest = { showBackupDialog = false },
-            title = { Text("Encrypted Backup (AES-256-GCM)") },
+            title = { Text(s.pick("Зашифрованный бэкап (AES-256-GCM)", "Encrypted Backup (AES-256-GCM)")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text("Backup Passphrase") },
+                        label = { Text(s.pick("Пароль бэкапа", "Backup Passphrase")) },
                         singleLine = true
                     )
                     Button(
@@ -754,13 +767,13 @@ fun ProfileAndHubScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Generate Encrypted Snapshot")
+                        Text(s.pick("Создать зашифрованный снимок", "Generate Encrypted Snapshot"))
                     }
                     if (cipherText.isNotBlank()) {
                         OutlinedTextField(
                             value = cipherText,
                             onValueChange = { cipherText = it },
-                            label = { Text("Encrypted Base64 Payload") },
+                            label = { Text(s.pick("Зашифрованные данные (Base64)", "Encrypted Base64 Payload")) },
                             maxLines = 4
                         )
                         FilledTonalButton(
@@ -770,13 +783,13 @@ fun ProfileAndHubScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Restore from Payload")
+                            Text(s.pick("Восстановить из данных", "Restore from Payload"))
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showBackupDialog = false }) { Text("Close") }
+                TextButton(onClick = { showBackupDialog = false }) { Text(s.pick("Закрыть", "Close")) }
             }
         )
     }

@@ -272,7 +272,10 @@ class KakeiRepository(
         _settingsState.value = _settingsState.value.copy(
             isAuthenticated = false,
             syncInProgress = false,
-            statusMessage = "Session expired. Please sign in again; pending changes are kept in the outbox."
+            statusMessage = tr(
+                "Сессия истекла. Войдите снова — несинхронизированные изменения сохранены.",
+                "Session expired. Please sign in again; pending changes are kept in the outbox."
+            )
         )
     }
 
@@ -329,6 +332,10 @@ class KakeiRepository(
         _settingsState.value = _settingsState.value.copy(statusMessage = msg)
     }
 
+    /** Picks the RU or EN variant of a user-facing status message for the current UI language. */
+    private fun tr(ru: String, en: String): String =
+        if (_settingsState.value.language == AppLanguage.RU) ru else en
+
     fun setLanguage(language: AppLanguage) {
         prefs.edit().putString("lang_code", language.code).apply()
         _settingsState.value = _settingsState.value.copy(
@@ -351,10 +358,10 @@ class KakeiRepository(
             apiClient.getVersion().onSuccess { ver ->
                 _settingsState.value = _settingsState.value.copy(
                     serverVersion = "${ver.version} (${if (ver.debug) "debug" else "release"})",
-                    statusMessage = "Connected to Kakei Server v${ver.version}"
+                    statusMessage = tr("Подключено к Kakei Server v${ver.version}", "Connected to Kakei Server v${ver.version}")
                 )
             }.onFailure { err ->
-                postMessage("Server check failed: ${err.message}")
+                postMessage(tr("Сервер недоступен: ${err.message}", "Server check failed: ${err.message}"))
             }
         }
     }
@@ -393,7 +400,7 @@ class KakeiRepository(
         reloadFromLocalDatabase()
         _settingsState.value = _settingsState.value.copy(
             isOfflineAutonomousMode = true,
-            statusMessage = "Offline-First SQLCipher mode active"
+            statusMessage = tr("Работа без сервера: данные хранятся на устройстве", "Offline-First SQLCipher mode active")
         )
     }
 
@@ -406,7 +413,7 @@ class KakeiRepository(
                         syncInProgress = false,
                         pending2faUserId = resp.userId,
                         pending2faToken = resp.token,
-                        statusMessage = "Enter 2FA code"
+                        statusMessage = tr("Введите код 2FA", "Enter 2FA code")
                     )
                 } else {
                     completeLoginSession(resp.userId, email.trim(), resp.token)
@@ -414,7 +421,7 @@ class KakeiRepository(
             }.onFailure { err ->
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
-                    statusMessage = "Sign-in error: ${err.message}"
+                    statusMessage = tr("Ошибка входа: ${err.message}", "Sign-in error: ${err.message}")
                 )
             }
         }
@@ -437,7 +444,7 @@ class KakeiRepository(
             }.onFailure { err ->
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
-                    statusMessage = "2FA verification error: ${err.message}"
+                    statusMessage = tr("Ошибка проверки 2FA: ${err.message}", "2FA verification error: ${err.message}")
                 )
             }
         }
@@ -462,12 +469,12 @@ class KakeiRepository(
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
                     pendingEmailConfirmUserId = resp.userId,
-                    statusMessage = "Verification code sent to $email"
+                    statusMessage = tr("Код подтверждения отправлен на $email", "Verification code sent to $email")
                 )
             }.onFailure { err ->
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
-                    statusMessage = "Registration error: ${err.message}"
+                    statusMessage = tr("Ошибка регистрации: ${err.message}", "Registration error: ${err.message}")
                 )
             }
         }
@@ -480,7 +487,7 @@ class KakeiRepository(
                 .onSuccess { resp ->
                     completeLoginSession(userId, _settingsState.value.profile.email, resp.token)
                 }.onFailure { err ->
-                    postMessage("Email confirmation failed: ${err.message}")
+                    postMessage(tr("Не удалось подтвердить email: ${err.message}", "Email confirmation failed: ${err.message}"))
                 }
         }
     }
@@ -518,7 +525,7 @@ class KakeiRepository(
             _settingsState.value = _settingsState.value.copy(
                 isAuthenticated = false,
                 isOfflineAutonomousMode = false,
-                statusMessage = "Signed out"
+                statusMessage = tr("Вы вышли из аккаунта", "Signed out")
             )
         }
     }
@@ -537,7 +544,7 @@ class KakeiRepository(
         _settingsState.value = _settingsState.value.copy(
             profile = updatedProfile,
             language = language,
-            statusMessage = "Profile updated"
+            statusMessage = tr("Профиль обновлён", "Profile updated")
         )
         recomputeDerivedAnalytics()
         enqueueMutation(
@@ -1082,10 +1089,13 @@ class KakeiRepository(
             if (!_settingsState.value.isAuthenticated) return
             val pendingLeft = database.listIds(KakeiDatabase.COL_MUTATIONS).size
             val summary = buildString {
-                append(if (drained && pullFailures == 0) "Synchronized with Kakei Server" else "Sync finished with issues")
-                if (rejectedCount > 0) append(" · $rejectedCount change(s) rejected by server")
-                if (pendingLeft > 0) append(" · $pendingLeft change(s) still pending")
-                if (pullFailures > 0) append(" · $pullFailures pull error(s)")
+                append(
+                    if (drained && pullFailures == 0) tr("Синхронизировано с Kakei Server", "Synchronized with Kakei Server")
+                    else tr("Синхронизация завершена с ошибками", "Sync finished with issues")
+                )
+                if (rejectedCount > 0) append(tr(" · отклонено сервером: $rejectedCount", " · $rejectedCount change(s) rejected by server"))
+                if (pendingLeft > 0) append(tr(" · ждут отправки: $pendingLeft", " · $pendingLeft change(s) still pending"))
+                if (pullFailures > 0) append(tr(" · ошибок загрузки: $pullFailures", " · $pullFailures pull error(s)"))
             }
             _settingsState.value = _settingsState.value.copy(
                 syncInProgress = false,
@@ -1202,7 +1212,7 @@ class KakeiRepository(
         scope.launch {
             apiClient.getExchangeRates()
                 .onSuccess { storeExchangeRates(it) }
-                .onFailure { postMessage("Exchange rates refresh failed: ${it.message}") }
+                .onFailure { postMessage(tr("Не удалось обновить курсы: ${it.message}", "Exchange rates refresh failed: ${it.message}")) }
         }
     }
 
@@ -1212,7 +1222,7 @@ class KakeiRepository(
         val to = toCurrency.trim().uppercase(Locale.ROOT)
         if (from == to || rate <= BigDecimal.ZERO) return
         if (!_settingsState.value.isAuthenticated) {
-            postMessage("Sign in to Kakei Server to set exchange rates")
+            postMessage(tr("Войдите в Kakei Server, чтобы задавать курсы", "Sign in to Kakei Server to set exchange rates"))
             return
         }
         scope.launch {
@@ -1227,14 +1237,15 @@ class KakeiRepository(
                         } + saved
                     )
                 )
-                postMessage("Rate saved: 1 $from = ${saved.rate.stripTrailingZeros().toPlainString()} $to")
-            }.onFailure { postMessage("Could not save rate: ${it.message}") }
+                val rateText = "1 $from = ${CurrencyFormatter.formatRate(saved.rate)} $to"
+                postMessage(tr("Курс сохранён: $rateText", "Rate saved: $rateText"))
+            }.onFailure { postMessage(tr("Не удалось сохранить курс: ${it.message}", "Could not save rate: ${it.message}")) }
         }
     }
 
     fun resetExchangeRateOverride(fromCurrency: String, toCurrency: String) {
         if (!_settingsState.value.isAuthenticated) {
-            postMessage("Sign in to Kakei Server to change exchange rates")
+            postMessage(tr("Войдите в Kakei Server, чтобы менять курсы", "Sign in to Kakei Server to change exchange rates"))
             return
         }
         scope.launch {
@@ -1247,7 +1258,7 @@ class KakeiRepository(
                         }
                     )
                 )
-            }.onFailure { postMessage("Could not reset rate: ${it.message}") }
+            }.onFailure { postMessage(tr("Не удалось сбросить курс: ${it.message}", "Could not reset rate: ${it.message}")) }
         }
     }
 
@@ -1975,7 +1986,7 @@ class KakeiRepository(
         } else {
             "${CurrencyFormatter.format(owed.min(), currency)}–${CurrencyFormatter.format(owed.max(), currency)} each"
         }
-        postMessage("Split bill created for ${cleanNames.size} participants ($shareText)")
+        postMessage(tr("Счёт разделён на участников: ${cleanNames.size} ($shareText)", "Split bill created for ${cleanNames.size} participants ($shareText)"))
     }
 
     fun settleAllForPerson(personName: String) {
@@ -1992,7 +2003,7 @@ class KakeiRepository(
             database.putItem(KakeiDatabase.COL_LENDING, settled.id, settled.createdAt, database.json.encodeToString(settled))
         }
         reloadFromLocalDatabase()
-        postMessage("Settled ${records.size} records with $personName")
+        postMessage(tr("Взаимозачёт с $personName: записей ${records.size}", "Settled ${records.size} records with $personName"))
         if (records.isNotEmpty()) {
             enqueueMutation(
                 "LENDING", personName.trim(), "SETTLE_ALL",
@@ -2141,7 +2152,12 @@ class KakeiRepository(
         // Imported rows reach the server as individual RECORD CREATE outbox entries
         // (idempotent by client id and dedup hash); posting the raw statement as well
         // would import everything twice.
-        postMessage("Imported ${summary.importedCount} records (${summary.duplicateSkippedCount} duplicates skipped)")
+        postMessage(
+            tr(
+                "Импортировано: ${summary.importedCount} (пропущено дублей: ${summary.duplicateSkippedCount})",
+                "Imported ${summary.importedCount} records (${summary.duplicateSkippedCount} duplicates skipped)"
+            )
+        )
         return summary
     }
 
@@ -2184,10 +2200,10 @@ class KakeiRepository(
             snapshot.lending.forEach { database.putItem(KakeiDatabase.COL_LENDING, it.id, it.createdAt, database.json.encodeToString(it)) }
             snapshot.savings.forEach { database.putItem(KakeiDatabase.COL_SAVINGS, it.id, it.title, database.json.encodeToString(it)) }
             reloadFromLocalDatabase()
-            postMessage("Restored encrypted backup (${snapshot.transactions.size} records)")
+            postMessage(tr("Бэкап восстановлен (записей: ${snapshot.transactions.size})", "Restored encrypted backup (${snapshot.transactions.size} records)"))
             true
         }.getOrElse {
-            postMessage("Backup restore failed: ${it.message}")
+            postMessage(tr("Не удалось восстановить бэкап: ${it.message}", "Backup restore failed: ${it.message}"))
             false
         }
     }
@@ -2325,7 +2341,12 @@ class KakeiRepository(
     fun filePendingCapture(capture: PendingCaptureEntity, accountId: String, rememberSender: Boolean) {
         val account = _accounts.value.firstOrNull { it.id == accountId } ?: return
         if (!account.currency.equals(capture.currency, ignoreCase = true)) {
-            postMessage("${account.name} is in ${account.currency}, the alert is in ${capture.currency}")
+            postMessage(
+                tr(
+                    "Счёт ${account.name} в ${account.currency}, а уведомление в ${capture.currency}",
+                    "${account.name} is in ${account.currency}, the alert is in ${capture.currency}"
+                )
+            )
             return
         }
         val classification = SmartMerchantMatcher.classify(
@@ -2444,7 +2465,7 @@ class KakeiRepository(
     fun loadDemoDataForDevelopment() {
         if (!canLoadDemoData) return
         if (database.listIds(KakeiDatabase.COL_ACCOUNTS).isNotEmpty()) {
-            postMessage("Demo data is only loaded into an empty offline replica")
+            postMessage(tr("Демо-данные загружаются только в пустую локальную базу", "Demo data is only loaded into an empty offline replica"))
             return
         }
         val seed = buildDemoSeed(Instant.now().toString(), LocalDate.now())
@@ -2566,11 +2587,21 @@ class KakeiRepository(
         when (database.openState) {
             KakeiDatabase.OpenState.OK -> Unit
             KakeiDatabase.OpenState.MIGRATED_FROM_LEGACY_KEY ->
-                postMessage("Local database re-encrypted with a hardware-backed key")
+                postMessage(tr("Локальная база перешифрована аппаратным ключом", "Local database re-encrypted with a hardware-backed key"))
             KakeiDatabase.OpenState.RECOVERED_AFTER_KEY_LOSS ->
-                postMessage("Local encrypted data could not be unlocked and was reset; it will be restored from Kakei Server after sign-in")
+                postMessage(
+                    tr(
+                        "Не удалось расшифровать локальные данные, они сброшены и восстановятся с Kakei Server после входа",
+                        "Local encrypted data could not be unlocked and was reset; it will be restored from Kakei Server after sign-in"
+                    )
+                )
             KakeiDatabase.OpenState.KEYSTORE_UNAVAILABLE ->
-                postMessage("Secure storage is temporarily unavailable: changes made now are not kept after restart. Please restart the app later.")
+                postMessage(
+                    tr(
+                        "Защищённое хранилище временно недоступно: изменения не сохранятся после перезапуска. Перезапустите приложение позже.",
+                        "Secure storage is temporarily unavailable: changes made now are not kept after restart. Please restart the app later."
+                    )
+                )
         }
     }
 

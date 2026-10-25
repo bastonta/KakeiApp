@@ -119,6 +119,19 @@ object CurrencyFormatter {
     }
 
     /**
+     * Formats an exchange rate with the same separators as [format]: two decimals for
+     * rates of 1 and above, four for smaller ones, trailing zeros dropped ("521.74", "0.0021").
+     */
+    fun formatRate(rate: BigDecimal): String {
+        val dfSymbols = DecimalFormatSymbols(Locale.US).apply {
+            groupingSeparator = ' '
+            decimalSeparator = '.'
+        }
+        val pattern = if (rate.abs() >= BigDecimal.ONE) "#,##0.##" else "#,##0.####"
+        return DecimalFormat(pattern, dfSymbols).apply { roundingMode = RoundingMode.HALF_UP }.format(rate)
+    }
+
+    /**
      * Converts [amount] with the server-provided [rates]. Returns null when no rate is
      * known for the pair: callers must show the original currency instead of guessing.
      */

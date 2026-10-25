@@ -156,7 +156,66 @@ data class AppStrings(
     val pendingCaptureCurrencyMismatch: String,
     val dismissButton: String,
     val loadDemoDataButton: String
-)
+) {
+    /** Picks the RU or EN variant of a one-off screen label that has no dedicated field. */
+    fun pick(ru: String, en: String): String = if (language == AppLanguage.RU) ru else en
+
+    /** Short day count, e.g. "5 дн." / "5d". */
+    fun days(count: Long): String = pick("$count дн.", "${count}d")
+
+    /** Display name for an account type code (CASH, CHECKING, ...). Unknown codes are shown as-is. */
+    fun accountType(code: String): String = when (code) {
+        "CASH" -> pick("Наличные", "Cash")
+        "CHECKING" -> pick("Карта", "Checking")
+        "CREDIT" -> pick("Кредитка", "Credit")
+        "DEBT" -> pick("Долг", "Debt")
+        "INVESTMENT" -> pick("Инвестиции", "Investment")
+        "SAVINGS" -> pick("Накопления", "Savings")
+        else -> code
+    }
+
+    /** Display name for a group permission level (ADMIN, TRACK_READ, READ_ONLY). */
+    fun permissionLevel(code: String): String = when (code) {
+        "ADMIN" -> pick("Владелец", "Owner")
+        "TRACK_READ" -> pick("Учёт", "Track")
+        "READ_ONLY" -> pick("Просмотр", "Read-only")
+        else -> code
+    }
+
+    /** Display name for a record clearing status (UNCLEARED, CLEARED, RECONCILED). */
+    fun clearingStatus(code: String): String = when (code) {
+        "UNCLEARED" -> pick("В обработке", "Pending")
+        "CLEARED" -> pick("Проведена", "Cleared")
+        "RECONCILED" -> pick("Сверена", "Reconciled")
+        else -> code
+    }
+
+    /** Display name for a record / obligation type (EXPENSE, INCOME, TRANSFER). */
+    fun operationType(code: String): String = when (code) {
+        "EXPENSE" -> expenseLabel
+        "INCOME" -> incomeLabel
+        "TRANSFER" -> transferLabel
+        else -> code
+    }
+
+    /** Display name for a budget or obligation period (WEEKLY, MONTHLY, YEARLY, ONE_OFF). */
+    fun period(code: String): String = when (code) {
+        "WEEKLY" -> pick("Неделя", "Weekly")
+        "MONTHLY" -> pick("Месяц", "Monthly")
+        "YEARLY" -> pick("Год", "Yearly")
+        "ONE_OFF" -> pick("Разово", "One-off")
+        else -> code
+    }
+
+    /** Display name for a budget alert level (SAFE, WARNING_75, WARNING_90, EXCEEDED_100). */
+    fun budgetAlert(code: String): String = when (code) {
+        "SAFE" -> pick("В норме", "On track")
+        "WARNING_75" -> pick("Использовано 75%", "75% used")
+        "WARNING_90" -> pick("Использовано 90%", "90% used")
+        "EXCEEDED_100", "CRITICAL_100" -> pick("Лимит превышен", "Over limit")
+        else -> code
+    }
+}
 
 fun stringsFor(language: AppLanguage): AppStrings = when (language) {
     AppLanguage.RU -> AppStrings(
@@ -177,7 +236,7 @@ fun stringsFor(language: AppLanguage): AppStrings = when (language) {
         authServerUrlLabel = "URL сервера Kakei API",
         authSignInButton = "Войти в Kakei",
         authSignUpButton = "Создать аккаунт",
-        authContinueOffline = "Автономный режим (Offline-First)",
+        authContinueOffline = "Работать без сервера",
         auth2faTitle = "Двухфакторная аутентификация (2FA)",
         auth2faCodeLabel = "Код TOTP или резервный код",
         authEmailConfirmTitle = "Подтверждение Email",
@@ -203,9 +262,9 @@ fun stringsFor(language: AppLanguage): AppStrings = when (language) {
         accountLabel = "Счёт списания / зачисления",
         targetAccountLabel = "Целевой счёт (для перевода)",
         statusLabel = "Статус клиринга",
-        splitsTitle = "Разбиение чека (Splits)",
+        splitsTitle = "Разбиение чека",
         addSplitButton = "+ Добавить часть",
-        labelsTitle = "Теги (Labels)",
+        labelsTitle = "Теги",
         saveButton = "Сохранить",
         cancelButton = "Отмена",
         deleteButton = "Удалить",
@@ -213,13 +272,13 @@ fun stringsFor(language: AppLanguage): AppStrings = when (language) {
         tabBudgets = "Бюджеты",
         tabPlanning = "План и Прогноз",
         healthScoreTitle = "Индекс финансового здоровья",
-        noSpendStreakTitle = "Стрик без трат (No-Spend Streak)",
+        noSpendStreakTitle = "Стрик без трат",
         currentStreakLabel = "Текущий стрик",
         longestStreakLabel = "Рекорд",
         spendingHeatmapTitle = "Тепловая карта расходов",
         monthComparisonTitle = "Сравнение с прошлым месяцем",
         monthEndProjectionTitle = "Прогноз расходов к концу месяца",
-        smallSpendsTitle = "Микро-траты (Small Spends)",
+        smallSpendsTitle = "Микро-траты",
         weekdayVsWeekendTitle = "Будни против выходных",
         topPayeesTitle = "Топ получателей",
         createBudgetButton = "Новый конвертный бюджет",
@@ -250,9 +309,9 @@ fun stringsFor(language: AppLanguage): AppStrings = when (language) {
         syncStatusTitle = "Синхронизация с Kakei Server",
         syncNowButton = "Синхронизировать",
         offlineModeBadge = "Офлайн-режим",
-        pendingMutationsLabel = "Очередь отправки (Outbox)",
+        pendingMutationsLabel = "Очередь отправки",
         categoriesAndRulesTitle = "Категории, Теги и Умные правила",
-        groupSharingTitle = "Семейный доступ (Group Sharing)",
+        groupSharingTitle = "Семейный доступ",
         importExportTitle = "Импорт и Экспорт (CSV / OFX / XLSX / PDF)",
         automationAndSmsTitle = "Перехват SMS, Push и Виджеты",
         securityAndBiometricsTitle = "Безопасность, 2FA, Passkeys и Биометрия",
@@ -354,7 +413,7 @@ fun stringsFor(language: AppLanguage): AppStrings = when (language) {
         spendingHeatmapTitle = "Spending Heatmap",
         monthComparisonTitle = "Month-over-Month Comparison",
         monthEndProjectionTitle = "Month-End Projected Spend",
-        smallSpendsTitle = "Micro-Spending (Small Spends)",
+        smallSpendsTitle = "Micro-Spending",
         weekdayVsWeekendTitle = "Weekday vs. Weekend",
         topPayeesTitle = "Top Merchants",
         createBudgetButton = "New Envelope Budget",

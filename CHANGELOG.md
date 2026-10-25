@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `READ_SMS` permission removed (only `RECEIVE_SMS` is needed).
 
 ### Fixed
+- Russian UI no longer mixes in English: analytics, planning, lending, goals and profile labels, dialog fields, account types, clearing statuses, budget periods/alerts and sync/status snackbars are localized (`AppStrings.pick` and code-label helpers).
+- Home: the debug `rev #N` label is gone from account cards, the account name no longer pushes the type label off the card, and transaction cards drop the empty delete row and no longer repeat the category when there is no payee.
+- Truncated buttons ("Разделить счёт", "Синхронизировать", "Выйти из аккаунта", theme "Системная") now fit.
+- Budgets, planned payments, debts and goals show an empty-state hint instead of a blank screen.
+- Exchange rates are shown with two decimals (four below 1) and the same separators as amounts (`CurrencyFormatter.formatRate`).
 - Split bill: shares are allocated in the currency's minor units and add up to the total exactly (100.00 / 3 → 33.34 + 33.33 + 33.33); lending amounts use the currency's own precision (JPY 0, KWD 3) instead of always 2 decimals.
 - Local store: rows whose payload no longer decodes are reported (`KakeiDatabase` log + `undecodableRowCount`) and kept on disk instead of being swallowed silently; the schema has a version constant and an ordered migration registry instead of an empty `onUpgrade`.
 - Profile diagnostics no longer probe system services on the main thread during composition; the check runs on `Dispatchers.IO` and refreshes when the screen resumes.

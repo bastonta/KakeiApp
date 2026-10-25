@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
@@ -165,7 +166,7 @@ fun HomeScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp)) {
                             Text(
-                                text = if (s.language == AppLanguage.RU) "Прогноз 30д" else "30d Forecast",
+                                text = s.pick("Прогноз 30д", "30d Forecast"),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -223,7 +224,7 @@ fun HomeScreen(
                         ) {
                             Icon(Icons.Default.Bolt, contentDescription = null, tint = AmberWarning)
                             Text(
-                                text = "${instantCapturedRecord.payee ?: "Bank Alert"} · ${CurrencyFormatter.format(instantCapturedRecord.amount, instantCapturedRecord.currency)}",
+                                text = "${instantCapturedRecord.payee ?: s.pick("Банковское уведомление", "Bank Alert")} · ${CurrencyFormatter.format(instantCapturedRecord.amount, instantCapturedRecord.currency)}",
                                 style = MaterialTheme.typography.titleMedium
                             )
                         }
@@ -291,7 +292,7 @@ fun HomeScreen(
                     ) {
                         Text(s.allAccountsFilter, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            text = "${activeAccounts.size} active",
+                            text = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -325,12 +326,17 @@ fun HomeScreen(
                             Text(
                                 text = acc.name,
                                 style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 6.dp)
                             )
                             Text(
-                                text = acc.accountType,
+                                text = s.accountType(acc.accountType),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
                         }
                         Text(
@@ -338,21 +344,15 @@ fun HomeScreen(
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "${acc.currency} · ${acc.permissionLevel}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "rev #${acc.syncRevision}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        // Permission is only worth showing on accounts shared with the user.
+                        Text(
+                            text = listOfNotNull(
+                                acc.currency,
+                                acc.permissionLevel.takeIf { it != "ADMIN" }?.let { s.permissionLevel(it) }
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -388,7 +388,7 @@ fun HomeScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${item.payee ?: "Merchant"} · ${CurrencyFormatter.format(item.amount, item.currency)}",
+                                    text = "${item.payee ?: s.pick("Без получателя", "Merchant")} · ${CurrencyFormatter.format(item.amount, item.currency)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -454,14 +454,16 @@ fun HomeScreen(
                             .weight(1f)
                             .padding(end = 8.dp)
                     ) {
+                        val catName = cat?.localizedName(settings.language.code)
                         Text(
-                            text = tx.payee ?: cat?.localizedName(settings.language.code) ?: tx.type,
+                            text = tx.payee ?: catName ?: s.operationType(tx.type),
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
+                            // Without a payee the category is already the title; don't repeat it.
                             text = listOfNotNull(
                                 acc?.name,
-                                cat?.localizedName(settings.language.code),
+                                catName.takeIf { tx.payee != null },
                                 CurrencyFormatter.formatShortDate(tx.bookingDate)
                             ).joinToString(" · "),
                             style = MaterialTheme.typography.bodyMedium,
@@ -475,9 +477,22 @@ fun HomeScreen(
                             color = txColor
                         )
                         Text(
-                            text = tx.status,
+                            text = s.clearingStatus(tx.status),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = { repository.deleteRecord(tx) },
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = s.deleteButton,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -490,25 +505,27 @@ fun HomeScreen(
                     )
                 }
 
-                // Splits & Labels badges + Review/Delete actions
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // Splits & Labels badges + Review action (only when there is something to show)
+                val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
+                if (tx.splits.isNotEmpty() || txLabels.isNotEmpty() || tx.needsReview) {
                     Row(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         if (tx.splits.isNotEmpty()) {
                             SuggestionChip(
                                 onClick = {},
-                                label = { Text("${tx.splits.size} splits", style = MaterialTheme.typography.labelSmall) }
+                                label = {
+                                    Text(
+                                        s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits"),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
                             )
                         }
-                        tx.labelIds.mapNotNull { labelMap[it] }.forEach { lbl ->
+                        txLabels.forEach { lbl ->
                             SuggestionChip(
                                 onClick = {},
                                 label = { Text("#${lbl.name}", style = MaterialTheme.typography.labelSmall) }
@@ -517,20 +534,9 @@ fun HomeScreen(
                         if (tx.needsReview) {
                             AssistChip(
                                 onClick = { reviewTargetRecord = tx },
-                                label = { Text("Needs Review", color = AmberWarning) }
+                                label = { Text(s.pick("Нужна проверка", "Needs Review"), color = AmberWarning) }
                             )
                         }
-                    }
-                    IconButton(
-                        onClick = { repository.deleteRecord(tx) },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.DeleteOutline,
-                            contentDescription = s.deleteButton,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
                     }
                 }
             }
@@ -553,7 +559,7 @@ fun HomeScreen(
                     OutlinedTextField(
                         value = accName,
                         onValueChange = { accName = it },
-                        label = { Text("Account Name") },
+                        label = { Text(s.pick("Название счёта", "Account Name")) },
                         singleLine = true
                     )
                     Row(
@@ -564,7 +570,7 @@ fun HomeScreen(
                             FilterChip(
                                 selected = accType == t,
                                 onClick = { accType = t },
-                                label = { Text(t) }
+                                label = { Text(s.accountType(t)) }
                             )
                         }
                     }
@@ -583,12 +589,12 @@ fun HomeScreen(
                     OutlinedTextField(
                         value = accBalance,
                         onValueChange = { accBalance = it },
-                        label = { Text("Initial Balance") },
+                        label = { Text(s.pick("Начальный баланс", "Initial Balance")) },
                         singleLine = true
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = excluded, onCheckedChange = { excluded = it })
-                        Text("Exclude from Net Worth stats")
+                        Text(s.pick("Не учитывать в чистом капитале", "Exclude from Net Worth stats"))
                     }
                 }
             },
@@ -624,7 +630,7 @@ fun HomeScreen(
             title = { Text(s.confirmCategory) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${reviewItem.payee ?: "Record"} · ${CurrencyFormatter.format(reviewItem.amount, reviewItem.currency)}")
+                    Text("${reviewItem.payee ?: s.pick("Операция", "Record")} · ${CurrencyFormatter.format(reviewItem.amount, reviewItem.currency)}")
                     categories.forEach { cat ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
