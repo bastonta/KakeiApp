@@ -279,9 +279,10 @@ fun HomeScreen(
             ) {
                 item {
                     val selected = selectedAccountFilter == null
+                    // Mirrors the account card layout below so both cards share the same size.
                     Column(
                         modifier = Modifier
-                            .width(165.dp)
+                            .width(195.dp)
                             .frostedGlassCard(
                                 cornerRadius = 16.dp,
                                 accentColor = if (selected) EmeraldBrand else IndigoAccent
@@ -290,16 +291,35 @@ fun HomeScreen(
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(s.allAccountsFilter, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = s.allAccountsFilter,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 6.dp)
+                            )
+                            Text(
+                                text = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
                         Text(
                             text = CurrencyFormatter.format(netWorth, baseCurrency),
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.headlineMedium,
                             color = emeraldText()
+                        )
+                        Text(
+                            text = baseCurrency,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
