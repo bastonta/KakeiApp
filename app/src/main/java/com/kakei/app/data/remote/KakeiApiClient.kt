@@ -16,6 +16,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class ApiException(
     val statusCode: Int,
@@ -24,16 +26,26 @@ class ApiException(
 ) : IOException(message)
 
 /**
+ * Persists the `refresh_token` cookie between process restarts. Backed by the
+ * Keystore-encrypted `SecurePrefs` in production.
+ */
+interface RefreshCookieStorage {
+    fun load(): String?
+    fun save(serializedCookie: String?)
+}
+
+/**
  * Full-featured HTTP client for Kakei REST API (`/api` prefix) supporting:
  * - Dynamic Base URL configuration
- * - Bearer JWT authentication
- * - Persistent in-memory/prefs CookieJar for `refresh_token` rotation
+ * - Bearer JWT authentication with single-flight refresh on 401
+ * - Persistent (encrypted) CookieJar for `refresh_token` rotation
  * - RFC 7807 / 9457 ProblemDetails error parsing
  * - HTTP 207 Multi-Status batch responses
  */
 class KakeiApiClient(
     initialBaseUrl: String = "http://10.0.2.2:5144",
-    initialToken: String? = null
+    initialToken: String? = null,
+    private val refreshCookieStorage: RefreshCookieStorage? = null
 ) {
     val json = Json {
         ignoreUnknownKeys = true
@@ -49,6 +61,19 @@ class KakeiApiClient(
     @Volatile
     var accessToken: String? = initialToken
 
+    /**
+     * Invoked (at most once per expired session) when a request got 401 and the
+     * refresh token could not be used. The owner must drop the session state.
+     */
+    @Volatile
+    var onSessionExpired: (() -> Unit)? = null
+
+    /** Called whenever a new access token is obtained through refresh. */
+    @Volatile
+    var onAccessTokenRefreshed: ((String) -> Unit)? = null
+
+    private val refreshLock = ReentrantLock()
+
     private val cookieStore = ConcurrentHashMap<String, List<Cookie>>()
 
     private val cookieJar = object : CookieJar {
@@ -57,6 +82,7 @@ class KakeiApiClient(
             for (cookie in cookies) {
                 existing.removeAll { it.name == cookie.name }
                 existing.add(cookie)
+                if (cookie.name == REFRESH_COOKIE_NAME) persistRefreshCookie(cookie)
             }
             cookieStore[url.host] = existing
         }
@@ -67,6 +93,43 @@ class KakeiApiClient(
         }
     }
 
+    init {
+        restoreRefreshCookie()
+    }
+
+    private fun persistRefreshCookie(cookie: Cookie) {
+        val storage = refreshCookieStorage ?: return
+        // An expired/empty cookie is how the server revokes the session.
+        val expired = cookie.expiresAt <= System.currentTimeMillis() || cookie.value.isBlank()
+        storage.save(if (expired) null else cookie.toString())
+    }
+
+    private fun restoreRefreshCookie() {
+        val raw = refreshCookieStorage?.load() ?: return
+        val url = baseUrl.toHttpUrlOrNull() ?: return
+        val cookie = Cookie.parse(url, raw) ?: return
+        if (cookie.expiresAt <= System.currentTimeMillis()) {
+            refreshCookieStorage.save(null)
+            return
+        }
+        cookieStore[url.host] = listOf(cookie)
+    }
+
+    /** True when a refresh token is on hand, i.e. a session can outlive the access JWT. */
+    fun hasRefreshToken(): Boolean {
+        val host = baseUrl.toHttpUrlOrNull()?.host ?: return false
+        return cookieStore[host]?.any {
+            it.name == REFRESH_COOKIE_NAME && it.expiresAt > System.currentTimeMillis()
+        } == true
+    }
+
+    /** Forgets every session credential (used on sign-out and expiry). */
+    fun clearSession() {
+        accessToken = null
+        cookieStore.clear()
+        refreshCookieStorage?.save(null)
+    }
+
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .connectTimeout(12, TimeUnit.SECONDS)
@@ -74,31 +137,68 @@ class KakeiApiClient(
         .writeTimeout(20, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val original = chain.request()
+            val tokenUsed = accessToken
             val builder = original.newBuilder()
                 .header("Accept", "application/json")
-            val token = accessToken
-            if (!token.isNullOrBlank() && original.header("Authorization") == null) {
-                builder.header("Authorization", "Bearer $token")
+            val isRefreshCall = original.url.encodedPath.endsWith("/identity/token/refresh")
+            if (!tokenUsed.isNullOrBlank() && !isRefreshCall && original.header("Authorization") == null) {
+                builder.header("Authorization", "Bearer $tokenUsed")
             }
             val response = chain.proceed(builder.build())
-            if (response.code == 401 && !original.url.encodedPath.contains("/identity/")) {
-                response.close()
-                val refreshed = tryRefreshTokenSync()
-                if (!refreshed.isNullOrBlank()) {
-                    accessToken = refreshed
-                    val retryReq = original.newBuilder()
-                        .header("Accept", "application/json")
-                        .header("Authorization", "Bearer $refreshed")
-                        .build()
-                    return@addInterceptor chain.proceed(retryReq)
-                }
+            if (response.code != 401 || original.url.encodedPath.contains("/identity/")) {
+                return@addInterceptor response
             }
-            response
+
+            // The first response stays open until we know whether a retry happens, so a
+            // failed refresh still hands the caller a readable 401 body.
+            val refreshed = refreshAccessTokenSingleFlight(tokenUsed)
+            if (refreshed.isNullOrBlank()) {
+                return@addInterceptor response
+            }
+            response.close()
+            val retryReq = original.newBuilder()
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer $refreshed")
+                .build()
+            chain.proceed(retryReq)
         }
         .build()
 
+    /**
+     * Refreshes the access token once even when many requests hit 401 concurrently:
+     * callers that arrive while a refresh is in flight wait for it and reuse the result.
+     */
+    private fun refreshAccessTokenSingleFlight(tokenThatFailed: String?): String? {
+        refreshLock.withLock {
+            val current = accessToken
+            if (!current.isNullOrBlank() && current != tokenThatFailed) {
+                return current // another thread already refreshed
+            }
+            if (!hasRefreshToken()) {
+                expireSession()
+                return null
+            }
+            val refreshed = tryRefreshTokenSync()
+            if (refreshed.isNullOrBlank()) {
+                expireSession()
+                return null
+            }
+            accessToken = refreshed
+            onAccessTokenRefreshed?.invoke(refreshed)
+            return refreshed
+        }
+    }
+
+    private fun expireSession() {
+        if (accessToken == null && !hasRefreshToken()) return
+        clearSession()
+        onSessionExpired?.invoke()
+    }
+
     fun updateBaseUrl(newUrl: String) {
         baseUrl = normalizeBaseUrl(newUrl)
+        // The stored cookie is bound to the server host; re-attach it for the new base URL.
+        restoreRefreshCookie()
     }
 
     private fun normalizeBaseUrl(raw: String): String {
@@ -156,11 +256,17 @@ class KakeiApiClient(
             okHttpClient.newCall(request).execute().use { response ->
                 val rawBody = response.body?.string().orEmpty()
                 if (response.code in 200..299) {
-                    if (T::class == Unit::class || rawBody.isBlank()) {
-                        @Suppress("UNCHECKED_CAST")
-                        Unit as T
-                    } else {
-                        json.decodeFromString<T>(rawBody)
+                    when {
+                        T::class == Unit::class -> {
+                            @Suppress("UNCHECKED_CAST")
+                            Unit as T
+                        }
+                        rawBody.isBlank() -> throw ApiException(
+                            statusCode = response.code,
+                            problem = null,
+                            message = "Empty response body for $method $path"
+                        )
+                        else -> json.decodeFromString<T>(rawBody)
                     }
                 } else {
                     val problem = runCatching {
@@ -212,7 +318,7 @@ class KakeiApiClient(
         requestJson("POST", "/identity/password-reset", json.encodeToString(req))
 
     suspend fun revokeToken(): Result<Unit> =
-        requestJson<Unit>("POST", "/identity/token/revoke").also { accessToken = null }
+        requestJson<Unit>("POST", "/identity/token/revoke").also { clearSession() }
 
     // 2. Profile
     suspend fun getProfileInfo(): Result<ProfileInfoResponse> =
@@ -296,6 +402,7 @@ class KakeiApiClient(
         categoryId: String? = null,
         payeeQuery: String? = null,
         minSyncRevision: Long? = null,
+        offset: Int = 0,
         limit: Int = 200
     ): Result<Pagination<TransactionDto>> =
         requestJson(
@@ -306,6 +413,7 @@ class KakeiApiClient(
                 "categoryId" to categoryId,
                 "payeeQuery" to payeeQuery,
                 "minSyncRevision" to minSyncRevision?.toString(),
+                "offset" to offset.toString(),
                 "limit" to limit.toString()
             )
         )
@@ -453,4 +561,8 @@ class KakeiApiClient(
 
     suspend fun getInsights(): Result<InsightsSummaryDto> =
         requestJson("GET", "/analytics/insights")
+
+    companion object {
+        const val REFRESH_COOKIE_NAME = "refresh_token"
+    }
 }

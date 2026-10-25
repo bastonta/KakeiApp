@@ -165,10 +165,8 @@ data class PasswordResetValidationRequest(
 @Serializable
 data class PasswordResetValidationResponse(
     val email: String,
+    /** Short-lived token that authorises exactly one password-reset call. */
     val token: String,
-    val authToken: String? = null,
-    val userId: String? = null,
-    val need2fa: Boolean = false,
     val hasPassword: Boolean = true,
     val hasPasskeys: Boolean = false
 )
@@ -417,6 +415,8 @@ data class TransactionDto(
     val needsReview: Boolean = false,
     val transferPairId: String? = null,
     val transferTargetAccountId: String? = null,
+    /** true on the mirror (credit) leg of a transfer */
+    val isTransferCredit: Boolean = false,
     val externalId: String? = null,
     val hashDedup: String? = null,
     val syncRevision: Long = 1L,
@@ -428,6 +428,8 @@ data class TransactionDto(
 
 @Serializable
 data class CreateRecordItem(
+    /** Client-generated UUID used as the server record id (idempotent create). */
+    val clientId: String? = null,
     val accountId: String,
     val categoryId: String? = null,
     val type: String,
@@ -451,6 +453,7 @@ data class BatchCreateRecordsRequest(
 @Serializable
 data class RecordBatchCreateItemResult(
     val index: Int,
+    val clientId: String? = null,
     val status: Int,
     val record: TransactionDto? = null,
     val duplicateHash: String? = null,

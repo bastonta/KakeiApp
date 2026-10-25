@@ -7,11 +7,15 @@ import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
+import com.kakei.app.core.security.SecurePrefs
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.HashDedupCalculator
 import com.kakei.app.data.local.KakeiDatabase
+import com.kakei.app.data.local.SyncErrorEntity
 import com.kakei.app.data.local.SyncMutationEntity
+import com.kakei.app.data.remote.ApiException
 import com.kakei.app.data.remote.KakeiApiClient
+import com.kakei.app.data.remote.RefreshCookieStorage
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.domain.calculators.FinancialCalculators
 import com.kakei.app.ui.theme.ThemeMode
@@ -22,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.math.BigDecimal
@@ -74,6 +79,21 @@ data class EncryptedSnapshotPayload(
     val savings: List<SavingsGoalDto>
 )
 
+/** Outbox payload for group-sharing mutations (member creation / removal). */
+@Serializable
+data class GroupMemberMutationPayload(
+    val accountId: String,
+    val memberEmail: String? = null,
+    val memberUserId: String? = null,
+    val permissionLevel: String? = null
+)
+
+/** Persists the refresh cookie in the Keystore-encrypted [SecurePrefs]. */
+private class SecurePrefsCookieStorage(private val securePrefs: SecurePrefs) : RefreshCookieStorage {
+    override fun load(): String? = securePrefs.getString(SecurePrefs.KEY_REFRESH_COOKIE)
+    override fun save(serializedCookie: String?) = securePrefs.putString(SecurePrefs.KEY_REFRESH_COOKIE, serializedCookie)
+}
+
 /**
  * Central Offline-First Repository coordinating:
  * - Encrypted SQLCipher persistence (`KakeiDatabase`)
@@ -84,11 +104,15 @@ data class EncryptedSnapshotPayload(
 class KakeiRepository(
     private val appContext: Context,
     val database: KakeiDatabase,
-    val apiClient: KakeiApiClient = KakeiApiClient()
+    val apiClient: KakeiApiClient = KakeiApiClient(
+        refreshCookieStorage = SecurePrefsCookieStorage(SecurePrefs(appContext))
+    )
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefs = appContext.getSharedPreferences("kakei_app_prefs", Context.MODE_PRIVATE)
+    private val securePrefs = SecurePrefs(appContext)
     private val dedupHelper = NotificationDeduplicationHelper()
+    private val syncMutex = Mutex()
 
     private val _settingsState = MutableStateFlow(loadInitialSettings())
     val settingsState: StateFlow<AppSettingsState> = _settingsState.asStateFlow()
@@ -140,6 +164,10 @@ class KakeiRepository(
     private val _pendingMutations = MutableStateFlow<List<SyncMutationEntity>>(emptyList())
     val pendingMutations: StateFlow<List<SyncMutationEntity>> = _pendingMutations.asStateFlow()
 
+    private val _syncErrors = MutableStateFlow<List<SyncErrorEntity>>(emptyList())
+    /** Mutations the server rejected (per-item 4xx in HTTP 207 responses). */
+    val syncErrors: StateFlow<List<SyncErrorEntity>> = _syncErrors.asStateFlow()
+
     private val _healthScore = MutableStateFlow(
         FinancialHealthScoreDto(
             overallScore = 85,
@@ -188,16 +216,55 @@ class KakeiRepository(
 
     init {
         apiClient.updateBaseUrl(_settingsState.value.serverBaseUrl)
-        apiClient.accessToken = prefs.getString("jwt_token", null)
-        ensureDefaultSeedDataIfEmpty()
+        apiClient.accessToken = loadAccessToken()
+        // A persisted refresh cookie alone is enough to keep the session alive.
+        if (!_settingsState.value.isAuthenticated && apiClient.hasRefreshToken()) {
+            _settingsState.value = _settingsState.value.copy(isAuthenticated = true)
+        }
+        apiClient.onAccessTokenRefreshed = { token ->
+            securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)
+        }
+        apiClient.onSessionExpired = { handleSessionExpired() }
+        // Demo data only belongs to the explicit offline/autonomous mode; a signed-in
+        // user must never see fabricated accounts or have real SMS routed into them.
+        if (_settingsState.value.isOfflineAutonomousMode && !_settingsState.value.isAuthenticated) {
+            ensureDefaultSeedDataIfEmpty()
+        }
         reloadFromLocalDatabase()
+        if (_settingsState.value.isAuthenticated) {
+            scheduleSync()
+        }
+    }
+
+    /** Reads the access token from encrypted storage, migrating the legacy plaintext entry once. */
+    private fun loadAccessToken(): String? {
+        securePrefs.getString(SecurePrefs.KEY_ACCESS_TOKEN)?.let { return it }
+        val legacy = prefs.getString("jwt_token", null)
+        if (!legacy.isNullOrBlank()) {
+            securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, legacy)
+            prefs.edit().remove("jwt_token").apply()
+        }
+        return legacy
+    }
+
+    private fun handleSessionExpired() {
+        securePrefs.remove(SecurePrefs.KEY_ACCESS_TOKEN)
+        securePrefs.remove(SecurePrefs.KEY_REFRESH_COOKIE)
+        _settingsState.value = _settingsState.value.copy(
+            isAuthenticated = false,
+            syncInProgress = false,
+            statusMessage = "Session expired. Please sign in again; pending changes are kept in the outbox."
+        )
+    }
+
+    private fun scheduleSync() {
         if (_settingsState.value.isAuthenticated) {
             scope.launch { synchronizeWithServer() }
         }
     }
 
     private fun loadInitialSettings(): AppSettingsState {
-        val token = prefs.getString("jwt_token", null)
+        val token = loadAccessToken()
         val offline = prefs.getBoolean("offline_mode", false)
         val serverUrl = prefs.getString("server_url", "http://10.0.2.2:5144") ?: "http://10.0.2.2:5144"
         val lang = AppLanguage.fromCode(prefs.getString("lang_code", "ru"))
@@ -209,7 +276,7 @@ class KakeiRepository(
         val userEmail = prefs.getString("user_email", "user@kakei.app") ?: "user@kakei.app"
 
         return AppSettingsState(
-            isAuthenticated = !token.isNullOrBlank(),
+            isAuthenticated = !token.isNullOrBlank() || apiClient.hasRefreshToken(),
             isOfflineAutonomousMode = offline,
             serverBaseUrl = serverUrl,
             language = lang,
@@ -397,8 +464,9 @@ class KakeiRepository(
     }
 
     private suspend fun completeLoginSession(userId: String, email: String, token: String) {
+        securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)
         prefs.edit()
-            .putString("jwt_token", token)
+            .remove("jwt_token")
             .putString("user_id", userId)
             .putString("user_email", email)
             .putBoolean("offline_mode", false)
@@ -418,6 +486,9 @@ class KakeiRepository(
     fun logout() {
         scope.launch {
             runCatching { apiClient.revokeToken() }
+            apiClient.clearSession()
+            securePrefs.remove(SecurePrefs.KEY_ACCESS_TOKEN)
+            securePrefs.remove(SecurePrefs.KEY_REFRESH_COOKIE)
             prefs.edit()
                 .remove("jwt_token")
                 .putBoolean("offline_mode", false)
@@ -447,164 +518,527 @@ class KakeiRepository(
             statusMessage = "Profile updated"
         )
         recomputeDerivedAnalytics()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.updateProfileInfo(
-                    ProfileInfoUpdateRequest(
-                        name = name.trim(),
-                        defaultCurrency = defaultCurrency,
-                        language = language.code
-                    )
+        enqueueMutation(
+            entityType = "PROFILE",
+            entityId = updatedProfile.userId,
+            operation = "UPDATE",
+            payloadJson = database.json.encodeToString(
+                ProfileInfoUpdateRequest(
+                    name = name.trim(),
+                    defaultCurrency = defaultCurrency,
+                    language = language.code
                 )
-            }
-        }
+            )
+        )
     }
 
     // ========================================================================
     // Bidirectional Synchronization with Kakei Server (HTTP 207 Multi-Status)
     // ========================================================================
 
+    private enum class Outcome { APPLIED, REJECTED, RETRY, UNAUTHORIZED }
+
+    private data class MutationResult(
+        val outcome: Outcome,
+        val status: Int = 0,
+        val error: String? = null
+    )
+
+    private fun applied() = MutationResult(Outcome.APPLIED)
+
+    private fun rejected(status: Int, error: String?) =
+        MutationResult(Outcome.REJECTED, status, error ?: "HTTP $status")
+
+    private fun failure(t: Throwable): MutationResult = when {
+        t is ApiException && t.statusCode == 401 -> MutationResult(Outcome.UNAUTHORIZED, 401, t.message)
+        t is ApiException && t.statusCode in 400..499 -> rejected(t.statusCode, t.message)
+        else -> MutationResult(Outcome.RETRY, (t as? ApiException)?.statusCode ?: 0, t.message)
+    }
+
+    private inline fun <reified T> putDto(collection: String, id: String, sortKey: String, dto: T) {
+        database.putItem(collection, id, sortKey, database.json.encodeToString(dto))
+    }
+
+    /**
+     * Queues a mutation in the Outbox. Every local write goes through here so that an
+     * offline change survives until the server has acknowledged it.
+     */
+    private fun enqueueMutation(
+        entityType: String,
+        entityId: String,
+        operation: String,
+        payloadJson: String,
+        expectedSyncRevision: Long? = null
+    ) {
+        val mut = SyncMutationEntity(
+            id = UUID.randomUUID().toString(),
+            entityType = entityType,
+            entityId = entityId,
+            operation = operation,
+            payloadJson = payloadJson,
+            expectedSyncRevision = expectedSyncRevision,
+            createdAt = Instant.now().toString()
+        )
+        // Sort key = enqueue time so the drain is strictly FIFO.
+        putDto(KakeiDatabase.COL_MUTATIONS, mut.id, mut.createdAt, mut)
+        _pendingMutations.value = database.listItems(KakeiDatabase.COL_MUTATIONS, descending = false)
+        scheduleSync()
+    }
+
+    /** Local id of a client-created entity has been replaced by the server-assigned one. */
+    private inline fun <reified T> adoptServerEntity(
+        collection: String,
+        localId: String,
+        serverId: String,
+        sortKey: String,
+        dto: T
+    ) {
+        database.replaceIdReferences(localId, serverId)
+        putDto(collection, serverId, sortKey, dto)
+    }
+
+    private fun recordSyncError(mut: SyncMutationEntity, result: MutationResult) {
+        val err = SyncErrorEntity(
+            id = UUID.randomUUID().toString(),
+            entityType = mut.entityType,
+            operation = mut.operation,
+            entityId = mut.entityId,
+            status = result.status,
+            error = result.error ?: "Rejected by server",
+            createdAt = Instant.now().toString()
+        )
+        putDto(KakeiDatabase.COL_SYNC_ERRORS, err.id, err.createdAt, err)
+    }
+
+    fun dismissSyncErrors() {
+        database.clearCollection(KakeiDatabase.COL_SYNC_ERRORS)
+        _syncErrors.value = emptyList()
+    }
+
+    /** Sends one Outbox entry and maps the server answer (incl. HTTP 207 item statuses). */
+    private suspend fun processMutation(mut: SyncMutationEntity): MutationResult {
+        val j = database.json
+        return when (mut.entityType to mut.operation) {
+            // ---- Ledger records: batch endpoints with per-item status ----
+            "RECORD" to "CREATE" -> {
+                val item = j.decodeFromString<CreateRecordItem>(mut.payloadJson).copy(clientId = mut.entityId)
+                apiClient.batchCreateRecords(BatchCreateRecordsRequest(listOf(item))).fold(
+                    onSuccess = { resp ->
+                        val r = resp.results.firstOrNull() ?: return rejected(0, "Empty batch response")
+                        when (r.status) {
+                            200, 201 -> {
+                                r.record?.let { putDto(KakeiDatabase.COL_TRANSACTIONS, it.id, it.bookingDate, it) }
+                                applied()
+                            }
+                            // Equivalent record already exists on the server (dedup hash).
+                            409 -> if (r.duplicateHash != null) applied() else rejected(r.status, r.error)
+                            else -> rejected(r.status, r.error)
+                        }
+                    },
+                    onFailure = { failure(it) }
+                )
+            }
+            "RECORD" to "UPDATE" -> {
+                val item = j.decodeFromString<UpdateRecordItem>(mut.payloadJson)
+                apiClient.batchUpdateRecords(BatchUpdateRecordsRequest(listOf(item))).fold(
+                    onSuccess = { resp ->
+                        val r = resp.results.firstOrNull() ?: return rejected(0, "Empty batch response")
+                        when (r.status) {
+                            200 -> {
+                                r.record?.let { putDto(KakeiDatabase.COL_TRANSACTIONS, it.id, it.bookingDate, it) }
+                                applied()
+                            }
+                            // Revision conflict: the server copy wins and is pulled right after.
+                            409 -> rejected(r.status, r.error ?: "Sync revision conflict")
+                            else -> rejected(r.status, r.error)
+                        }
+                    },
+                    onFailure = { failure(it) }
+                )
+            }
+            "RECORD" to "DELETE" -> {
+                apiClient.batchDeleteRecords(BatchDeleteRecordsRequest(listOf(mut.entityId))).fold(
+                    onSuccess = { resp ->
+                        val r = resp.results.firstOrNull() ?: return rejected(0, "Empty batch response")
+                        when (r.status) {
+                            200, 404 -> applied() // already gone is fine
+                            else -> rejected(r.status, r.error)
+                        }
+                    },
+                    onFailure = { failure(it) }
+                )
+            }
+            "RECORD" to "REVIEW" -> {
+                val req = j.decodeFromString<ConfirmReviewRequest>(mut.payloadJson)
+                apiClient.confirmRecordReview(mut.entityId, req).fold(
+                    onSuccess = { tx -> putDto(KakeiDatabase.COL_TRANSACTIONS, tx.id, tx.bookingDate, tx); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+
+            // ---- Accounts ----
+            "ACCOUNT" to "CREATE" -> {
+                val req = j.decodeFromString<CreateAccountRequest>(mut.payloadJson)
+                apiClient.createAccount(req).fold(
+                    onSuccess = { acc -> adoptServerEntity(KakeiDatabase.COL_ACCOUNTS, mut.entityId, acc.id, acc.name, acc); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "ACCOUNT" to "UPDATE" -> {
+                val item = j.decodeFromString<AccountMutationItem>(mut.payloadJson)
+                apiClient.batchUpdateAccounts(BatchUpdateAccountsRequest(listOf(item))).fold(
+                    onSuccess = { resp ->
+                        val r = resp.results.firstOrNull() ?: return rejected(0, "Empty batch response")
+                        when (r.status) {
+                            200 -> {
+                                r.account?.let { putDto(KakeiDatabase.COL_ACCOUNTS, it.id, it.name, it) }
+                                applied()
+                            }
+                            409 -> rejected(r.status, r.error ?: "Sync revision conflict")
+                            else -> rejected(r.status, r.error)
+                        }
+                    },
+                    onFailure = { failure(it) }
+                )
+            }
+            "ACCOUNT" to "DELETE" -> simpleDelete { apiClient.deleteAccountById(mut.entityId) }
+
+            // ---- Categories, labels, rules ----
+            "CATEGORY" to "CREATE" -> {
+                val req = j.decodeFromString<UpsertCategoryRequest>(mut.payloadJson)
+                apiClient.createCategory(req).fold(
+                    onSuccess = { c -> adoptServerEntity(KakeiDatabase.COL_CATEGORIES, mut.entityId, c.id, c.name, c); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "CATEGORY" to "DELETE" -> simpleDelete { apiClient.deleteCategory(mut.entityId) }
+            "LABEL" to "CREATE" -> {
+                val req = j.decodeFromString<CreateLabelRequest>(mut.payloadJson)
+                apiClient.createLabel(req).fold(
+                    onSuccess = { l -> adoptServerEntity(KakeiDatabase.COL_LABELS, mut.entityId, l.id, l.name, l); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "LABEL" to "DELETE" -> simpleDelete { apiClient.deleteLabel(mut.entityId) }
+            "RULE" to "CREATE" -> {
+                val req = j.decodeFromString<CreateRuleRequest>(mut.payloadJson)
+                apiClient.createRule(req).fold(
+                    onSuccess = { r -> adoptServerEntity(KakeiDatabase.COL_RULES, mut.entityId, r.id, r.counterpartyPattern, r); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "RULE" to "DELETE" -> simpleDelete { apiClient.deleteRule(mut.entityId) }
+
+            // ---- Budgets ----
+            "BUDGET" to "CREATE" -> {
+                val req = j.decodeFromString<UpsertBudgetRequest>(mut.payloadJson)
+                apiClient.createBudget(req).fold(
+                    onSuccess = { b -> adoptServerEntity(KakeiDatabase.COL_BUDGETS, mut.entityId, b.id, b.name, b); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "BUDGET" to "DELETE" -> simpleDelete { apiClient.deleteBudget(mut.entityId) }
+
+            // ---- Planning ----
+            "OBLIGATION" to "CREATE" -> {
+                val req = j.decodeFromString<UpsertObligationRequest>(mut.payloadJson)
+                apiClient.createObligation(req).fold(
+                    onSuccess = { o -> adoptServerEntity(KakeiDatabase.COL_OBLIGATIONS, mut.entityId, o.id, o.nextDueDate, o); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "OBLIGATION" to "EXECUTE" -> {
+                apiClient.executeObligation(mut.entityId).fold(
+                    onSuccess = { resp ->
+                        putDto(KakeiDatabase.COL_OBLIGATIONS, resp.obligation.id, resp.obligation.nextDueDate, resp.obligation)
+                        putDto(KakeiDatabase.COL_TRANSACTIONS, resp.postedRecord.id, resp.postedRecord.bookingDate, resp.postedRecord)
+                        applied()
+                    },
+                    onFailure = { failure(it) }
+                )
+            }
+            "OBLIGATION" to "DELETE" -> simpleDelete { apiClient.deleteObligation(mut.entityId) }
+
+            // ---- Lending ----
+            "LENDING" to "CREATE" -> {
+                val req = j.decodeFromString<CreateLendingRequest>(mut.payloadJson)
+                apiClient.createLending(req).fold(
+                    onSuccess = { l -> adoptServerEntity(KakeiDatabase.COL_LENDING, mut.entityId, l.id, l.createdAt, l); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "LENDING" to "REPAYMENT" -> {
+                val req = j.decodeFromString<CreateRepaymentRequest>(mut.payloadJson)
+                apiClient.createRepayment(mut.entityId, req).fold(
+                    onSuccess = { l -> putDto(KakeiDatabase.COL_LENDING, l.id, l.createdAt, l); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "LENDING" to "FORGIVE" -> {
+                apiClient.forgiveLending(mut.entityId).fold(
+                    onSuccess = { l -> putDto(KakeiDatabase.COL_LENDING, l.id, l.createdAt, l); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "LENDING" to "SETTLE_ALL" -> {
+                val req = j.decodeFromString<SettleAllRequest>(mut.payloadJson)
+                apiClient.settleAll(req).fold(onSuccess = { applied() }, onFailure = { failure(it) })
+            }
+
+            // ---- Savings ----
+            "SAVINGS" to "CREATE" -> {
+                val req = j.decodeFromString<UpsertSavingsGoalRequest>(mut.payloadJson)
+                apiClient.createSavingsGoal(req).fold(
+                    onSuccess = { g -> adoptServerEntity(KakeiDatabase.COL_SAVINGS, mut.entityId, g.id, g.title, g); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "SAVINGS" to "CONTRIBUTION" -> {
+                val req = j.decodeFromString<AddContributionRequest>(mut.payloadJson)
+                apiClient.addSavingsContribution(mut.entityId, req).fold(
+                    onSuccess = { g -> putDto(KakeiDatabase.COL_SAVINGS, g.id, g.title, g); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "SAVINGS" to "DELETE" -> simpleDelete { apiClient.deleteSavingsGoal(mut.entityId) }
+
+            // ---- Group sharing ----
+            "GROUP_MEMBER" to "CREATE" -> {
+                val p = j.decodeFromString<GroupMemberMutationPayload>(mut.payloadJson)
+                apiClient.upsertGroupMember(
+                    p.accountId,
+                    UpsertGroupMemberRequest(memberEmail = p.memberEmail, permissionLevel = p.permissionLevel ?: "READ_ONLY")
+                ).fold(
+                    onSuccess = { m -> adoptServerEntity(KakeiDatabase.COL_GROUP_MEMBERS, mut.entityId, m.id, m.createdAt, m); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "GROUP_MEMBER" to "DELETE" -> {
+                val p = j.decodeFromString<GroupMemberMutationPayload>(mut.payloadJson)
+                val memberUserId = p.memberUserId ?: return rejected(400, "Member id unknown")
+                simpleDelete { apiClient.removeGroupMember(p.accountId, memberUserId) }
+            }
+
+            // ---- Profile ----
+            "PROFILE" to "UPDATE" -> {
+                val req = j.decodeFromString<ProfileInfoUpdateRequest>(mut.payloadJson)
+                apiClient.updateProfileInfo(req).fold(onSuccess = { applied() }, onFailure = { failure(it) })
+            }
+
+            else -> rejected(0, "Unknown mutation ${mut.entityType}/${mut.operation}")
+        }
+    }
+
+    private suspend fun simpleDelete(call: suspend () -> Result<Unit>): MutationResult =
+        call().fold(
+            onSuccess = { applied() },
+            onFailure = { t ->
+                if (t is ApiException && t.statusCode == 404) applied() else failure(t)
+            }
+        )
+
+    /**
+     * Drains the Outbox in FIFO order. Returns false when the drain must stop early
+     * (network failure keeps ordering intact for the remaining entries; 401 ends the session).
+     */
+    private suspend fun drainOutbox(): Pair<Boolean, Int> {
+        var rejectedCount = 0
+        val queued = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
+        for (mut in queued) {
+            val result = runCatching { processMutation(mut) }.getOrElse { failure(it) }
+            when (result.outcome) {
+                Outcome.APPLIED -> database.deleteItem(KakeiDatabase.COL_MUTATIONS, mut.id)
+                Outcome.REJECTED -> {
+                    rejectedCount++
+                    recordSyncError(mut, result)
+                    database.deleteItem(KakeiDatabase.COL_MUTATIONS, mut.id)
+                }
+                Outcome.RETRY -> {
+                    val updated = mut.copy(attempts = mut.attempts + 1, lastError = result.error)
+                    putDto(KakeiDatabase.COL_MUTATIONS, updated.id, updated.createdAt, updated)
+                    return false to rejectedCount
+                }
+                Outcome.UNAUTHORIZED -> return false to rejectedCount
+            }
+        }
+        return true to rejectedCount
+    }
+
     suspend fun synchronizeWithServer() {
         if (!_settingsState.value.isAuthenticated) {
             recomputeDerivedAnalytics()
             return
         }
-        _settingsState.value = _settingsState.value.copy(syncInProgress = true)
+        if (!syncMutex.tryLock()) return // a sync is already running
+        try {
+            _settingsState.value = _settingsState.value.copy(syncInProgress = true)
 
-        // 1. Flush Outbox mutations (POST/PATCH/DELETE /records & PATCH /accounts)
-        val queued = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
-        for (mut in queued) {
-            val handled = runCatching {
-                when (mut.entityType to mut.operation) {
-                    "RECORD" to "CREATE" -> {
-                        val item = database.json.decodeFromString<CreateRecordItem>(mut.payloadJson)
-                        apiClient.batchCreateRecords(BatchCreateRecordsRequest(listOf(item))).isSuccess
-                    }
-                    "RECORD" to "UPDATE" -> {
-                        val item = database.json.decodeFromString<UpdateRecordItem>(mut.payloadJson)
-                        apiClient.batchUpdateRecords(BatchUpdateRecordsRequest(listOf(item))).isSuccess
-                    }
-                    "RECORD" to "DELETE" -> {
-                        apiClient.batchDeleteRecords(BatchDeleteRecordsRequest(listOf(mut.entityId))).isSuccess
-                    }
-                    "ACCOUNT" to "UPDATE" -> {
-                        val item = database.json.decodeFromString<AccountMutationItem>(mut.payloadJson)
-                        apiClient.batchUpdateAccounts(BatchUpdateAccountsRequest(listOf(item))).isSuccess
-                    }
-                    else -> true
+            // 1. Flush Outbox mutations (per-item HTTP 207 statuses decide the fate of each entry)
+            val (drained, rejectedCount) = drainOutbox()
+            if (!_settingsState.value.isAuthenticated) return // session expired during the drain
+
+            // Entities that still have queued mutations are local-only and must survive the pull.
+            val remaining = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
+            val protectedIds = remaining.map { it.entityId }.toSet()
+            var pullFailures = 0
+
+            // 2. Pull fresh state and merge it over the local replica
+            apiClient.getVersion().onSuccess { ver ->
+                _settingsState.value = _settingsState.value.copy(
+                    serverVersion = "${ver.version} (${if (ver.debug) "debug" else "release"})"
+                )
+            }
+
+            apiClient.getProfileInfo().onSuccess { prof ->
+                _settingsState.value = _settingsState.value.copy(
+                    profile = prof,
+                    language = AppLanguage.fromCode(prof.language)
+                )
+            }.onFailure { pullFailures++ }
+
+            val j = database.json
+            apiClient.listAccounts().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_ACCOUNTS,
+                    resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            apiClient.listCategories().onSuccess { resp ->
+                if (resp.items.isNotEmpty()) {
+                    database.mergeCollection(
+                        KakeiDatabase.COL_CATEGORIES,
+                        resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
+                        protectedIds
+                    )
                 }
-            }.getOrDefault(false)
+            }.onFailure { pullFailures++ }
 
-            if (handled) {
-                database.deleteItem(KakeiDatabase.COL_MUTATIONS, mut.id)
+            apiClient.listLabels().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_LABELS,
+                    resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            apiClient.listRules().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_RULES,
+                    resp.items.map { Triple(it.id, it.counterpartyPattern, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            // Records: walk every page so the merge sees the complete server ledger.
+            val allRecords = mutableListOf<TransactionDto>()
+            var offset = 0
+            var recordsOk = true
+            while (true) {
+                val page = apiClient.listRecords(offset = offset, limit = RECORDS_PAGE_SIZE).getOrElse {
+                    recordsOk = false
+                    null
+                } ?: break
+                allRecords += page.items
+                if (!page.more || page.items.isEmpty() || allRecords.size >= MAX_PULLED_RECORDS) break
+                offset += page.items.size
             }
-        }
+            if (recordsOk) {
+                database.mergeCollection(
+                    KakeiDatabase.COL_TRANSACTIONS,
+                    allRecords.map { Triple(it.id, it.bookingDate, j.encodeToString(it)) },
+                    protectedIds
+                )
+            } else {
+                pullFailures++
+            }
 
-        // 2. Pull fresh state from Kakei API endpoints
-        apiClient.getVersion().onSuccess { ver ->
+            apiClient.listBudgets().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_BUDGETS,
+                    resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            apiClient.listObligations().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_OBLIGATIONS,
+                    resp.items.map { Triple(it.id, it.nextDueDate, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            apiClient.listLending().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_LENDING,
+                    resp.items.map { Triple(it.id, it.createdAt, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            apiClient.listSavingsGoals().onSuccess { resp ->
+                database.mergeCollection(
+                    KakeiDatabase.COL_SAVINGS,
+                    resp.items.map { Triple(it.id, it.title, j.encodeToString(it)) },
+                    protectedIds
+                )
+            }.onFailure { pullFailures++ }
+
+            // Group members: shares granted to me plus members of my own accounts.
+            val members = mutableListOf<GroupMemberDto>()
+            var membersOk = true
+            apiClient.listSharedWithMe().onSuccess { members += it.items }.onFailure { membersOk = false }
+            val ownAccounts = database.listItems<AccountDto>(KakeiDatabase.COL_ACCOUNTS, descending = false)
+                .filter { it.permissionLevel == "ADMIN" && it.userId == _settingsState.value.profile.userId }
+            for (acc in ownAccounts) {
+                apiClient.listGroupMembers(acc.id).onSuccess { members += it.items }.onFailure { membersOk = false }
+            }
+            if (membersOk) {
+                database.mergeCollection(
+                    KakeiDatabase.COL_GROUP_MEMBERS,
+                    members.distinctBy { it.id }.map { Triple(it.id, it.createdAt, j.encodeToString(it)) },
+                    protectedIds
+                )
+            } else {
+                pullFailures++
+            }
+
+            apiClient.listPasskeys().onSuccess { list ->
+                _passkeys.value = list
+            }
+
+            val nowIso = Instant.now().toString()
+            prefs.edit().putString("last_sync", nowIso).apply()
+            reloadFromLocalDatabase()
+
+            // Override analytics with server values if available
+            apiClient.getHealthScore().onSuccess { _healthScore.value = it }
+            apiClient.getStreaks().onSuccess { _streaks.value = it }
+            apiClient.getHeatmaps(LocalDate.now().year, LocalDate.now().monthValue).onSuccess { _heatmaps.value = it }
+            apiClient.getInsights().onSuccess { _insights.value = it }
+            apiClient.getForecast(30).onSuccess { _forecast.value = it }
+
+            if (!_settingsState.value.isAuthenticated) return
+            val pendingLeft = database.listIds(KakeiDatabase.COL_MUTATIONS).size
+            val summary = buildString {
+                append(if (drained && pullFailures == 0) "Synchronized with Kakei Server" else "Sync finished with issues")
+                if (rejectedCount > 0) append(" · $rejectedCount change(s) rejected by server")
+                if (pendingLeft > 0) append(" · $pendingLeft change(s) still pending")
+                if (pullFailures > 0) append(" · $pullFailures pull error(s)")
+            }
             _settingsState.value = _settingsState.value.copy(
-                serverVersion = "${ver.version} (${if (ver.debug) "debug" else "release"})"
+                syncInProgress = false,
+                lastSyncTimestamp = nowIso,
+                statusMessage = summary
             )
-        }
-
-        apiClient.getProfileInfo().onSuccess { prof ->
-            _settingsState.value = _settingsState.value.copy(
-                profile = prof,
-                language = AppLanguage.fromCode(prof.language)
-            )
-        }
-
-        apiClient.listAccounts().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_ACCOUNTS)
-            resp.items.forEach { acc ->
-                database.putItem(KakeiDatabase.COL_ACCOUNTS, acc.id, acc.name, database.json.encodeToString(acc))
+        } finally {
+            if (_settingsState.value.syncInProgress) {
+                _settingsState.value = _settingsState.value.copy(syncInProgress = false)
             }
+            syncMutex.unlock()
         }
-
-        apiClient.listCategories().onSuccess { resp ->
-            if (resp.items.isNotEmpty()) {
-                database.clearCollection(KakeiDatabase.COL_CATEGORIES)
-                resp.items.forEach { cat ->
-                    database.putItem(KakeiDatabase.COL_CATEGORIES, cat.id, cat.name, database.json.encodeToString(cat))
-                }
-            }
-        }
-
-        apiClient.listLabels().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_LABELS)
-            resp.items.forEach { lbl ->
-                database.putItem(KakeiDatabase.COL_LABELS, lbl.id, lbl.name, database.json.encodeToString(lbl))
-            }
-        }
-
-        apiClient.listRules().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_RULES)
-            resp.items.forEach { rule ->
-                database.putItem(KakeiDatabase.COL_RULES, rule.id, rule.counterpartyPattern, database.json.encodeToString(rule))
-            }
-        }
-
-        apiClient.listRecords(limit = 300).onSuccess { page ->
-            database.clearCollection(KakeiDatabase.COL_TRANSACTIONS)
-            page.items.forEach { tx ->
-                database.putItem(KakeiDatabase.COL_TRANSACTIONS, tx.id, tx.bookingDate, database.json.encodeToString(tx))
-            }
-        }
-
-        apiClient.listBudgets().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_BUDGETS)
-            resp.items.forEach { b ->
-                database.putItem(KakeiDatabase.COL_BUDGETS, b.id, b.name, database.json.encodeToString(b))
-            }
-        }
-
-        apiClient.listObligations().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_OBLIGATIONS)
-            resp.items.forEach { ob ->
-                database.putItem(KakeiDatabase.COL_OBLIGATIONS, ob.id, ob.nextDueDate, database.json.encodeToString(ob))
-            }
-        }
-
-        apiClient.listLending().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_LENDING)
-            resp.items.forEach { l ->
-                database.putItem(KakeiDatabase.COL_LENDING, l.id, l.createdAt, database.json.encodeToString(l))
-            }
-        }
-
-        apiClient.listSavingsGoals().onSuccess { resp ->
-            database.clearCollection(KakeiDatabase.COL_SAVINGS)
-            resp.items.forEach { g ->
-                database.putItem(KakeiDatabase.COL_SAVINGS, g.id, g.title, database.json.encodeToString(g))
-            }
-        }
-
-        apiClient.listSharedWithMe().onSuccess { resp ->
-            resp.items.forEach { m ->
-                database.putItem(KakeiDatabase.COL_GROUP_MEMBERS, m.id, m.createdAt, database.json.encodeToString(m))
-            }
-        }
-
-        apiClient.listPasskeys().onSuccess { list ->
-            _passkeys.value = list
-        }
-
-        val nowIso = Instant.now().toString()
-        prefs.edit().putString("last_sync", nowIso).apply()
-        reloadFromLocalDatabase()
-
-        // Override analytics with server values if available
-        apiClient.getHealthScore().onSuccess { _healthScore.value = it }
-        apiClient.getStreaks().onSuccess { _streaks.value = it }
-        apiClient.getHeatmaps(LocalDate.now().year, LocalDate.now().monthValue).onSuccess { _heatmaps.value = it }
-        apiClient.getInsights().onSuccess { _insights.value = it }
-        apiClient.getForecast(30).onSuccess { _forecast.value = it }
-
-        _settingsState.value = _settingsState.value.copy(
-            syncInProgress = false,
-            lastSyncTimestamp = nowIso,
-            statusMessage = "Synchronized with Kakei Server"
-        )
     }
 
     // ========================================================================
@@ -623,6 +1057,7 @@ class KakeiRepository(
         val savItems = database.listItems<SavingsGoalDto>(KakeiDatabase.COL_SAVINGS, descending = false)
         val grpItems = database.listItems<GroupMemberDto>(KakeiDatabase.COL_GROUP_MEMBERS, descending = false)
         val muts = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
+        val errs = database.listItems<SyncErrorEntity>(KakeiDatabase.COL_SYNC_ERRORS, descending = true)
 
         _accounts.value = accs
         _categories.value = cats
@@ -633,6 +1068,7 @@ class KakeiRepository(
         _savingsGoals.value = savItems
         _groupMembers.value = grpItems
         _pendingMutations.value = muts
+        _syncErrors.value = errs
 
         recomputeDerivedAnalytics()
         KakeiWidgetUpdater.refreshAllWidgets(appContext)
@@ -708,29 +1144,20 @@ class KakeiRepository(
             database.json.encodeToString(localAccount)
         )
         reloadFromLocalDatabase()
-
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createAccount(
-                    CreateAccountRequest(
-                        name = localAccount.name,
-                        accountType = localAccount.accountType,
-                        currency = localAccount.currency,
-                        initialBalance = localAccount.initialBalance,
-                        isExcludedFromStats = localAccount.isExcludedFromStats
-                    )
-                ).onSuccess { serverAcc ->
-                    database.deleteItem(KakeiDatabase.COL_ACCOUNTS, localAccount.id)
-                    database.putItem(
-                        KakeiDatabase.COL_ACCOUNTS,
-                        serverAcc.id,
-                        serverAcc.name,
-                        database.json.encodeToString(serverAcc)
-                    )
-                    reloadFromLocalDatabase()
-                }
-            }
-        }
+        enqueueMutation(
+            entityType = "ACCOUNT",
+            entityId = localAccount.id,
+            operation = "CREATE",
+            payloadJson = database.json.encodeToString(
+                CreateAccountRequest(
+                    name = localAccount.name,
+                    accountType = localAccount.accountType,
+                    currency = localAccount.currency,
+                    initialBalance = localAccount.initialBalance,
+                    isExcludedFromStats = localAccount.isExcludedFromStats
+                )
+            )
+        )
     }
 
     fun toggleArchiveAccount(account: AccountDto) {
@@ -752,25 +1179,17 @@ class KakeiRepository(
     fun deleteAccount(accountId: String) {
         database.deleteItem(KakeiDatabase.COL_ACCOUNTS, accountId)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteAccountById(accountId) }
-        }
+        enqueueMutation("ACCOUNT", accountId, "DELETE", "{}")
     }
 
     private fun enqueueOrSendAccountMutation(item: AccountMutationItem) {
-        val mut = SyncMutationEntity(
-            id = UUID.randomUUID().toString(),
+        enqueueMutation(
             entityType = "ACCOUNT",
             entityId = item.id,
             operation = "UPDATE",
             payloadJson = database.json.encodeToString(item),
-            expectedSyncRevision = item.expectedSyncRevision,
-            createdAt = Instant.now().toString()
+            expectedSyncRevision = item.expectedSyncRevision
         )
-        database.putItem(KakeiDatabase.COL_MUTATIONS, mut.id, mut.createdAt, database.json.encodeToString(mut))
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { synchronizeWithServer() }
-        }
     }
 
     // ========================================================================
@@ -796,27 +1215,26 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_CATEGORIES, cat.id, cat.name, database.json.encodeToString(cat))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createCategory(
-                    UpsertCategoryRequest(
-                        parentId = parentId,
-                        name = cat.name,
-                        translations = cat.translations,
-                        iconKey = iconKey,
-                        colorHex = colorHex
-                    )
+        enqueueMutation(
+            entityType = "CATEGORY",
+            entityId = cat.id,
+            operation = "CREATE",
+            payloadJson = database.json.encodeToString(
+                UpsertCategoryRequest(
+                    parentId = parentId,
+                    name = cat.name,
+                    translations = cat.translations,
+                    iconKey = iconKey,
+                    colorHex = colorHex
                 )
-            }
-        }
+            )
+        )
     }
 
     fun deleteCategory(id: String) {
         database.deleteItem(KakeiDatabase.COL_CATEGORIES, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteCategory(id) }
-        }
+        enqueueMutation("CATEGORY", id, "DELETE", "{}")
     }
 
     fun createLabel(name: String, colorHex: String) {
@@ -828,17 +1246,16 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_LABELS, lbl.id, lbl.name, database.json.encodeToString(lbl))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.createLabel(CreateLabelRequest(name = lbl.name, colorHex = colorHex)) }
-        }
+        enqueueMutation(
+            "LABEL", lbl.id, "CREATE",
+            database.json.encodeToString(CreateLabelRequest(name = lbl.name, colorHex = colorHex))
+        )
     }
 
     fun deleteLabel(id: String) {
         database.deleteItem(KakeiDatabase.COL_LABELS, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteLabel(id) }
-        }
+        enqueueMutation("LABEL", id, "DELETE", "{}")
     }
 
     fun createSmartRule(pattern: String, matchType: String, categoryId: String) {
@@ -851,25 +1268,22 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_RULES, rule.id, rule.counterpartyPattern, database.json.encodeToString(rule))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createRule(
-                    CreateRuleRequest(
-                        counterpartyPattern = rule.counterpartyPattern,
-                        matchType = matchType,
-                        categoryId = categoryId
-                    )
+        enqueueMutation(
+            "RULE", rule.id, "CREATE",
+            database.json.encodeToString(
+                CreateRuleRequest(
+                    counterpartyPattern = rule.counterpartyPattern,
+                    matchType = matchType,
+                    categoryId = categoryId
                 )
-            }
-        }
+            )
+        )
     }
 
     fun deleteSmartRule(id: String) {
         database.deleteItem(KakeiDatabase.COL_RULES, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteRule(id) }
-        }
+        enqueueMutation("RULE", id, "DELETE", "{}")
     }
 
     // ========================================================================
@@ -961,7 +1375,8 @@ class KakeiRepository(
                 val mirrorTx = record.copy(
                     id = UUID.randomUUID().toString(),
                     accountId = targetAcc.id,
-                    type = "INCOME",
+                    type = "TRANSFER",
+                    isTransferCredit = true,
                     amount = targetAmount,
                     currency = targetAcc.currency,
                     payee = "Transfer from ${account.name}",
@@ -987,8 +1402,9 @@ class KakeiRepository(
             }
         }
 
-        // Queue Outbox mutation
+        // Queue Outbox mutation; the local id doubles as the server id (idempotent create)
         val createReqItem = CreateRecordItem(
+            clientId = record.id,
             accountId = accountId,
             categoryId = categoryId,
             type = type,
@@ -1002,21 +1418,14 @@ class KakeiRepository(
             labelIds = labelIds,
             skipIfDuplicateHash = true
         )
-        val mut = SyncMutationEntity(
-            id = UUID.randomUUID().toString(),
+        reloadFromLocalDatabase()
+        enqueueMutation(
             entityType = "RECORD",
             entityId = record.id,
             operation = "CREATE",
             payloadJson = database.json.encodeToString(createReqItem),
-            expectedSyncRevision = 1L,
-            createdAt = bookingDateIso
+            expectedSyncRevision = 1L
         )
-        database.putItem(KakeiDatabase.COL_MUTATIONS, mut.id, mut.createdAt, database.json.encodeToString(mut))
-
-        reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { synchronizeWithServer() }
-        }
         return record
     }
 
@@ -1045,53 +1454,49 @@ class KakeiRepository(
         } else {
             reloadFromLocalDatabase()
         }
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.confirmRecordReview(
-                    record.id,
-                    ConfirmReviewRequest(categoryId = categoryId, createSmartRule = createRule)
-                )
-            }
-        }
+        enqueueMutation(
+            "RECORD", record.id, "REVIEW",
+            database.json.encodeToString(ConfirmReviewRequest(categoryId = categoryId, createSmartRule = createRule))
+        )
     }
 
     fun dismissInstantCapturedBanner() {
         _instantCapturedRecord.value = null
     }
 
-    fun deleteRecord(record: TransactionDto) {
+    /** Signed effect a record has on its own account balance (mirrors the server rule). */
+    private fun balanceEffect(record: TransactionDto): BigDecimal = when (record.type) {
+        "INCOME" -> record.amount
+        "EXPENSE" -> record.amount.negate()
+        "TRANSFER" -> if (record.isTransferCredit) record.amount else record.amount.negate()
+        else -> BigDecimal.ZERO
+    }
+
+    private fun removeRecordLocally(record: TransactionDto) {
         database.deleteItem(KakeiDatabase.COL_TRANSACTIONS, record.id)
-        val account = _accounts.value.firstOrNull { it.id == record.accountId }
-        if (account != null) {
-            val reverseDelta = when (record.type) {
-                "INCOME" -> record.amount.negate()
-                "EXPENSE", "TRANSFER" -> record.amount
-                else -> BigDecimal.ZERO
-            }
-            val updatedAcc = account.copy(
-                currentBalance = (account.currentBalance + reverseDelta).setScale(4, RoundingMode.HALF_UP)
-            )
-            database.putItem(
-                KakeiDatabase.COL_ACCOUNTS,
-                updatedAcc.id,
-                updatedAcc.name,
-                database.json.encodeToString(updatedAcc)
-            )
+        val account = _accounts.value.firstOrNull { it.id == record.accountId } ?: return
+        val updatedAcc = account.copy(
+            currentBalance = (account.currentBalance - balanceEffect(record)).setScale(4, RoundingMode.HALF_UP)
+        )
+        database.putItem(KakeiDatabase.COL_ACCOUNTS, updatedAcc.id, updatedAcc.name, database.json.encodeToString(updatedAcc))
+    }
+
+    fun deleteRecord(record: TransactionDto) {
+        removeRecordLocally(record)
+        // A transfer is removed as a whole: drop the paired leg too (the server does the same).
+        if (record.transferPairId != null) {
+            _transactions.value
+                .filter { it.transferPairId == record.transferPairId && it.id != record.id }
+                .forEach { removeRecordLocally(it) }
         }
-        val mut = SyncMutationEntity(
-            id = UUID.randomUUID().toString(),
+        reloadFromLocalDatabase()
+        enqueueMutation(
             entityType = "RECORD",
             entityId = record.id,
             operation = "DELETE",
             payloadJson = "{}",
-            expectedSyncRevision = record.syncRevision,
-            createdAt = Instant.now().toString()
+            expectedSyncRevision = record.syncRevision
         )
-        database.putItem(KakeiDatabase.COL_MUTATIONS, mut.id, mut.createdAt, database.json.encodeToString(mut))
-        reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { synchronizeWithServer() }
-        }
     }
 
     // ========================================================================
@@ -1125,29 +1530,26 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_BUDGETS, budget.id, budget.name, database.json.encodeToString(budget))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createBudget(
-                    UpsertBudgetRequest(
-                        name = budget.name,
-                        limitAmount = budget.limitAmount,
-                        currency = budget.currency,
-                        periodType = budget.periodType,
-                        startDate = budget.startDate,
-                        notifyThreshold = notifyThreshold,
-                        categoryIds = categoryIds
-                    )
+        enqueueMutation(
+            "BUDGET", budget.id, "CREATE",
+            database.json.encodeToString(
+                UpsertBudgetRequest(
+                    name = budget.name,
+                    limitAmount = budget.limitAmount,
+                    currency = budget.currency,
+                    periodType = budget.periodType,
+                    startDate = budget.startDate,
+                    notifyThreshold = notifyThreshold,
+                    categoryIds = categoryIds
                 )
-            }
-        }
+            )
+        )
     }
 
     fun deleteBudget(id: String) {
         database.deleteItem(KakeiDatabase.COL_BUDGETS, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteBudget(id) }
-        }
+        enqueueMutation("BUDGET", id, "DELETE", "{}")
     }
 
     // ========================================================================
@@ -1186,29 +1588,34 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_OBLIGATIONS, ob.id, ob.nextDueDate, database.json.encodeToString(ob))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createObligation(
-                    UpsertObligationRequest(
-                        accountId = accountId,
-                        categoryId = categoryId,
-                        title = ob.title,
-                        type = type,
-                        amount = ob.amount,
-                        currency = currency,
-                        frequency = frequency,
-                        nextDueDate = nextDueDate,
-                        payee = ob.payee,
-                        autoPost = autoPost,
-                        isActive = true
-                    )
+        enqueueMutation(
+            "OBLIGATION", ob.id, "CREATE",
+            database.json.encodeToString(
+                UpsertObligationRequest(
+                    accountId = accountId,
+                    categoryId = categoryId,
+                    title = ob.title,
+                    type = type,
+                    amount = ob.amount,
+                    currency = currency,
+                    frequency = frequency,
+                    nextDueDate = nextDueDate,
+                    payee = ob.payee,
+                    autoPost = autoPost,
+                    isActive = true
                 )
-            }
-        }
+            )
+        )
     }
 
     fun executeObligationNow(obligation: PlannedObligationDto) {
-        // Post transaction immediately & advance nextDueDate
+        if (_settingsState.value.isAuthenticated) {
+            // The server posts the ledger record and advances the schedule itself; posting a
+            // local record as well would duplicate it. The response is applied on sync.
+            enqueueMutation("OBLIGATION", obligation.id, "EXECUTE", "{}")
+            return
+        }
+        // Offline autonomous mode: post locally & advance nextDueDate
         createRecord(
             accountId = obligation.accountId,
             type = obligation.type,
@@ -1238,17 +1645,12 @@ class KakeiRepository(
             database.json.encodeToString(updatedOb)
         )
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.executeObligation(obligation.id) }
-        }
     }
 
     fun deleteObligation(id: String) {
         database.deleteItem(KakeiDatabase.COL_OBLIGATIONS, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteObligation(id) }
-        }
+        enqueueMutation("OBLIGATION", id, "DELETE", "{}")
     }
 
     // ========================================================================
@@ -1284,20 +1686,19 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_LENDING, record.id, record.createdAt, database.json.encodeToString(record))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createLending(
-                    CreateLendingRequest(
-                        personName = record.personName,
-                        type = type,
-                        principalAmount = cleanAmount,
-                        currency = currency,
-                        dueDate = dueDate,
-                        note = record.note
-                    )
+        enqueueMutation(
+            "LENDING", record.id, "CREATE",
+            database.json.encodeToString(
+                CreateLendingRequest(
+                    personName = record.personName,
+                    type = type,
+                    principalAmount = cleanAmount,
+                    currency = currency,
+                    dueDate = dueDate,
+                    note = record.note
                 )
-            }
-        }
+            )
+        )
     }
 
     fun recordRepayment(lending: LendingRecordDto, amount: BigDecimal, note: String?) {
@@ -1322,18 +1723,16 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_LENDING, updated.id, updated.createdAt, database.json.encodeToString(updated))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createRepayment(
-                    lending.id,
-                    CreateRepaymentRequest(
-                        amount = repayAmount,
-                        repaymentDate = repayment.repaymentDate,
-                        note = repayment.note
-                    )
+        enqueueMutation(
+            "LENDING", lending.id, "REPAYMENT",
+            database.json.encodeToString(
+                CreateRepaymentRequest(
+                    amount = repayAmount,
+                    repaymentDate = repayment.repaymentDate,
+                    note = repayment.note
                 )
-            }
-        }
+            )
+        )
     }
 
     fun forgiveDebt(lending: LendingRecordDto) {
@@ -1345,9 +1744,7 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_LENDING, updated.id, updated.createdAt, database.json.encodeToString(updated))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.forgiveLending(lending.id) }
-        }
+        enqueueMutation("LENDING", lending.id, "FORGIVE", "{}")
     }
 
     fun splitExpenseAcrossParticipants(
@@ -1390,8 +1787,11 @@ class KakeiRepository(
         }
         reloadFromLocalDatabase()
         postMessage("Settled ${records.size} records with $personName")
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.settleAll(SettleAllRequest(personName = personName.trim())) }
+        if (records.isNotEmpty()) {
+            enqueueMutation(
+                "LENDING", personName.trim(), "SETTLE_ALL",
+                database.json.encodeToString(SettleAllRequest(personName = personName.trim()))
+            )
         }
     }
 
@@ -1429,19 +1829,18 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_SAVINGS, goal.id, goal.title, database.json.encodeToString(goal))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.createSavingsGoal(
-                    UpsertSavingsGoalRequest(
-                        title = goal.title,
-                        targetAmount = cleanTarget,
-                        currency = currency,
-                        deadlineDate = deadlineDate,
-                        colorHex = colorHex
-                    )
+        enqueueMutation(
+            "SAVINGS", goal.id, "CREATE",
+            database.json.encodeToString(
+                UpsertSavingsGoalRequest(
+                    title = goal.title,
+                    targetAmount = cleanTarget,
+                    currency = currency,
+                    deadlineDate = deadlineDate,
+                    colorHex = colorHex
                 )
-            }
-        }
+            )
+        )
     }
 
     fun addSavingsContribution(goal: SavingsGoalDto, amount: BigDecimal) {
@@ -1471,22 +1870,16 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_SAVINGS, updated.id, updated.title, database.json.encodeToString(updated))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.addSavingsContribution(
-                    goal.id,
-                    AddContributionRequest(amount = addAmt, contributionDate = contrib.contributionDate)
-                )
-            }
-        }
+        enqueueMutation(
+            "SAVINGS", goal.id, "CONTRIBUTION",
+            database.json.encodeToString(AddContributionRequest(amount = addAmt, contributionDate = contrib.contributionDate))
+        )
     }
 
     fun deleteSavingsGoal(id: String) {
         database.deleteItem(KakeiDatabase.COL_SAVINGS, id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.deleteSavingsGoal(id) }
-        }
+        enqueueMutation("SAVINGS", id, "DELETE", "{}")
     }
 
     private fun computeGoalPacing(
@@ -1539,10 +1932,10 @@ class KakeiRepository(
                 bookingDateIso = item.bookingDate ?: Instant.now().toString()
             )
         }
+        // Imported rows reach the server as individual RECORD CREATE outbox entries
+        // (idempotent by client id and dedup hash); posting the raw statement as well
+        // would import everything twice.
         postMessage("Imported ${summary.importedCount} records (${summary.duplicateSkippedCount} duplicates skipped)")
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.importStatement(req) }
-        }
         return summary
     }
 
@@ -1602,7 +1995,7 @@ class KakeiRepository(
         val member = GroupMemberDto(
             id = UUID.randomUUID().toString(),
             ownerId = _settingsState.value.profile.userId,
-            memberUserId = UUID.randomUUID().toString(),
+            memberUserId = "pending-${UUID.randomUUID()}",
             memberName = memberEmail.substringBefore("@"),
             memberEmail = memberEmail.trim(),
             accountId = acc.id,
@@ -1612,22 +2005,37 @@ class KakeiRepository(
         )
         database.putItem(KakeiDatabase.COL_GROUP_MEMBERS, member.id, member.createdAt, database.json.encodeToString(member))
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch {
-                apiClient.upsertGroupMember(
-                    accountId,
-                    UpsertGroupMemberRequest(memberEmail = memberEmail.trim(), permissionLevel = permissionLevel)
+        enqueueMutation(
+            "GROUP_MEMBER", member.id, "CREATE",
+            database.json.encodeToString(
+                GroupMemberMutationPayload(
+                    accountId = acc.id,
+                    memberEmail = memberEmail.trim(),
+                    permissionLevel = permissionLevel
                 )
-            }
-        }
+            )
+        )
     }
 
     fun removeGroupMember(member: GroupMemberDto) {
         database.deleteItem(KakeiDatabase.COL_GROUP_MEMBERS, member.id)
         reloadFromLocalDatabase()
-        if (_settingsState.value.isAuthenticated) {
-            scope.launch { apiClient.removeGroupMember(member.accountId, member.memberUserId) }
+        // The member's real user id is only known once the share was created on the server;
+        // a locally pending share still carries a placeholder and is simply dropped.
+        val pendingLocally = _pendingMutations.value.any { it.entityType == "GROUP_MEMBER" && it.entityId == member.id }
+        if (pendingLocally) {
+            _pendingMutations.value
+                .filter { it.entityType == "GROUP_MEMBER" && it.entityId == member.id }
+                .forEach { database.deleteItem(KakeiDatabase.COL_MUTATIONS, it.id) }
+            reloadFromLocalDatabase()
+            return
         }
+        enqueueMutation(
+            "GROUP_MEMBER", member.id, "DELETE",
+            database.json.encodeToString(
+                GroupMemberMutationPayload(accountId = member.accountId, memberUserId = member.memberUserId)
+            )
+        )
     }
 
     // ========================================================================
@@ -1700,6 +2108,11 @@ class KakeiRepository(
             "SPLIT_BILL" -> "Tap to split bill"
             else -> "Tap to add record"
         }
+    }
+
+    companion object {
+        private const val RECORDS_PAGE_SIZE = 500
+        private const val MAX_PULLED_RECORDS = 20_000
     }
 
     // ========================================================================

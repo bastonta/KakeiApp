@@ -13,9 +13,13 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import java.security.InvalidKeyException
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Security
+import java.security.UnrecoverableKeyException
 import java.util.Base64
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -25,51 +29,23 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Manages the AES-256 SQLCipher encryption key backed by the hardware AndroidKeyStore.
+ * Hardware-backed (AndroidKeyStore) AES-256-GCM wrapping shared by the SQLCipher
+ * passphrase manager and [SecurePrefs].
  */
-object DatabaseKeyManager {
-    private const val KEYSTORE_ALIAS = "kakei_sqlcipher_master_key"
-    private const val PREFS_NAME = "kakei_secure_db_key"
-    private const val KEY_WRAPPED_PASSPHRASE = "wrapped_passphrase"
-    private const val KEY_IV = "wrapped_iv"
+internal object KeystoreCipher {
+    private const val PROVIDER = "AndroidKeyStore"
 
-    fun getOrCreateDatabasePassphrase(context: Context): ByteArray {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val wrappedB64 = prefs.getString(KEY_WRAPPED_PASSPHRASE, null)
-        val ivB64 = prefs.getString(KEY_IV, null)
+    /** True when the device Keystore is present (false only in plain JVM unit tests). */
+    fun isAvailable(): Boolean = Security.getProvider(PROVIDER) != null
 
-        return try {
-            val secretKey = getOrCreateHardwareSecretKey()
-            if (wrappedB64 != null && ivB64 != null) {
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                val iv = Base64.getDecoder().decode(ivB64)
-                cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
-                cipher.doFinal(Base64.getDecoder().decode(wrappedB64))
-            } else {
-                val rawKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-                val encrypted = cipher.doFinal(rawKey)
-                prefs.edit()
-                    .putString(KEY_WRAPPED_PASSPHRASE, Base64.getEncoder().encodeToString(encrypted))
-                    .putString(KEY_IV, Base64.getEncoder().encodeToString(cipher.iv))
-                    .apply()
-                rawKey
-            }
-        } catch (_: Exception) {
-            // Fallback for JVM test environments without AndroidKeyStore
-            "kakei_fallback_local_passphrase_32b".toByteArray(Charsets.UTF_8).copyOf(32)
-        }
-    }
-
-    private fun getOrCreateHardwareSecretKey(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val existing = keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry
+    fun getOrCreateKey(alias: String): SecretKey {
+        val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
+        val existing = keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry
         if (existing != null) return existing.secretKey
 
-        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
         val spec = KeyGenParameterSpec.Builder(
-            KEYSTORE_ALIAS,
+            alias,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -78,6 +54,134 @@ object DatabaseKeyManager {
             .build()
         keyGenerator.init(spec)
         return keyGenerator.generateKey()
+    }
+
+    /** Returns `iv:ciphertext` (both Base64). */
+    fun encrypt(alias: String, plain: ByteArray): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(alias))
+        val encrypted = cipher.doFinal(plain)
+        val enc = Base64.getEncoder()
+        return enc.encodeToString(cipher.iv) + ":" + enc.encodeToString(encrypted)
+    }
+
+    /**
+     * Decrypts a value produced by [encrypt]. Throws [AEADBadTagException] when the
+     * Keystore key no longer matches (e.g. data restored onto another device).
+     */
+    fun decrypt(alias: String, payload: String): ByteArray {
+        val parts = payload.split(":", limit = 2)
+        require(parts.size == 2) { "Malformed encrypted payload" }
+        val dec = Base64.getDecoder()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(alias), GCMParameterSpec(128, dec.decode(parts[0])))
+        return cipher.doFinal(dec.decode(parts[1]))
+    }
+}
+
+/**
+ * Manages the AES-256 SQLCipher passphrase. The random passphrase is wrapped with a
+ * hardware-backed AndroidKeyStore key and stored in private SharedPreferences.
+ *
+ * There is deliberately no constant fallback passphrase: if the wrapped key cannot
+ * be unwrapped (the Keystore key is gone or belongs to another device) the local
+ * replica is unreadable anyway, so [onKeyLost] is invoked to discard it and a fresh
+ * passphrase is generated. Any other Keystore failure propagates to the caller.
+ */
+object DatabaseKeyManager {
+    private const val KEYSTORE_ALIAS = "kakei_sqlcipher_master_key"
+    private const val PREFS_NAME = "kakei_secure_db_key"
+    private const val KEY_WRAPPED_PASSPHRASE = "wrapped_passphrase_v2"
+    private const val LEGACY_KEY_WRAPPED = "wrapped_passphrase"
+    private const val LEGACY_KEY_IV = "wrapped_iv"
+
+    fun getOrCreateDatabasePassphrase(context: Context, onKeyLost: () -> Unit): ByteArray {
+        if (!KeystoreCipher.isAvailable()) {
+            throw IllegalStateException("AndroidKeyStore is not available on this device")
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        migrateLegacyFormat(prefs)
+
+        val wrapped = prefs.getString(KEY_WRAPPED_PASSPHRASE, null)
+        if (wrapped != null) {
+            try {
+                return KeystoreCipher.decrypt(KEYSTORE_ALIAS, wrapped)
+            } catch (_: AEADBadTagException) {
+                onKeyLost()
+            } catch (_: UnrecoverableKeyException) {
+                onKeyLost()
+            } catch (_: InvalidKeyException) {
+                onKeyLost()
+            }
+            prefs.edit().remove(KEY_WRAPPED_PASSPHRASE).apply()
+        }
+
+        val rawKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        prefs.edit()
+            .putString(KEY_WRAPPED_PASSPHRASE, KeystoreCipher.encrypt(KEYSTORE_ALIAS, rawKey))
+            .apply()
+        return rawKey
+    }
+
+    /** Converts the pre-v2 two-field layout (`wrapped_iv` + `wrapped_passphrase`) in place. */
+    private fun migrateLegacyFormat(prefs: android.content.SharedPreferences) {
+        val legacyWrapped = prefs.getString(LEGACY_KEY_WRAPPED, null)
+        val legacyIv = prefs.getString(LEGACY_KEY_IV, null)
+        if (legacyWrapped == null || legacyIv == null) return
+        val editor = prefs.edit().remove(LEGACY_KEY_WRAPPED).remove(LEGACY_KEY_IV)
+        if (!prefs.contains(KEY_WRAPPED_PASSPHRASE)) {
+            editor.putString(KEY_WRAPPED_PASSPHRASE, "$legacyIv:$legacyWrapped")
+        }
+        editor.apply()
+    }
+}
+
+/**
+ * Small encrypted key/value store for session secrets (access JWT, refresh cookie).
+ * Values are AES-256-GCM encrypted with a hardware-backed Keystore key, so a copy of
+ * the preferences file is useless off-device. Without a Keystore (JVM unit tests)
+ * values are kept in memory only.
+ */
+class SecurePrefs(context: Context) {
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val memoryFallback = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun getString(key: String): String? {
+        if (!KeystoreCipher.isAvailable()) return memoryFallback[key]
+        val payload = prefs.getString(key, null) ?: return null
+        return try {
+            String(KeystoreCipher.decrypt(KEY_ALIAS, payload), Charsets.UTF_8)
+        } catch (_: Exception) {
+            // Unreadable (key rotated or data from another device): drop it.
+            prefs.edit().remove(key).apply()
+            null
+        }
+    }
+
+    fun putString(key: String, value: String?) {
+        if (value == null) {
+            remove(key)
+            return
+        }
+        if (!KeystoreCipher.isAvailable()) {
+            memoryFallback[key] = value
+            return
+        }
+        prefs.edit()
+            .putString(key, KeystoreCipher.encrypt(KEY_ALIAS, value.toByteArray(Charsets.UTF_8)))
+            .apply()
+    }
+
+    fun remove(key: String) {
+        memoryFallback.remove(key)
+        prefs.edit().remove(key).apply()
+    }
+
+    companion object {
+        private const val PREFS_NAME = "kakei_secure_store"
+        private const val KEY_ALIAS = "kakei_secure_store_key"
+        const val KEY_ACCESS_TOKEN = "access_token"
+        const val KEY_REFRESH_COOKIE = "refresh_cookie"
     }
 }
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Auto Backup is disabled and the encrypted database, Keystore-wrapped key and session tokens are excluded from cloud backup and device transfer.
+- The hard-coded SQLCipher fallback passphrase is gone. If the wrapped key cannot be unwrapped (data restored onto another device), the unreadable local replica is discarded and a fresh key is generated instead of crash-looping.
+- Access JWT and refresh cookie are stored in `SecurePrefs` (AES-256-GCM, hardware-backed Keystore) instead of plaintext SharedPreferences.
+
+### Fixed
+- Refresh token survives process restarts; token refresh is single-flight; when the refresh fails the session is cleared and the sign-in screen is shown instead of silently failing every request.
+- Outbox drain inspects per-item HTTP 207 statuses: applied items are deleted, server-rejected items are recorded in a visible "sync errors" list, network failures keep the entry and stop the drain so ordering is preserved.
+- Every local write (accounts, categories, labels, rules, budgets, obligations, lending, savings, group sharing, profile, review, obligation execution) now goes through the Outbox instead of fire-and-forget API calls, so offline changes are no longer lost.
+- Server pulls merge into the local replica (entities with pending mutations are preserved) instead of wiping collections; the ledger pull walks every page instead of the first 300 records.
+- Records are created with a client id that the server adopts, so queued updates/deletes reference an id the server knows; client-created entities are remapped to server ids across all local references once acknowledged.
+- Demo seed data is created only in explicit offline mode, never for signed-in users; bank SMS can no longer be routed into a fabricated account.
+- Deleting a transfer removes both legs locally and reverses both balances using the leg direction.
+- Executing an obligation while signed in no longer posts a local record in addition to the server-posted one.
+
 ### Added
 - Standardized project guidelines and AI assistant rules in `AGENTS.md`.
 - Comprehensive project documentation in `README.md`.

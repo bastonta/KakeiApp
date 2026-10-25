@@ -240,11 +240,23 @@ fun ProfileAndHubScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                val syncErrors by repository.syncErrors.collectAsState()
                 Text(
                     text = "${s.pendingMutationsLabel}: ${pendingMutations.size} · Server: ${settings.serverVersion ?: if (isRu) "Не подключен" else "Not connected"}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (syncErrors.isNotEmpty()) {
+                    Text(
+                        text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
+                            "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    TextButton(onClick = { repository.dismissSyncErrors() }) {
+                        Text(if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors")
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
