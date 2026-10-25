@@ -1,6 +1,6 @@
 # Kakei Android Client Application — Project Rules & Guidelines
 
-Welcome to **Kakei Android App** (家計), the native client tier of the Kakei personal and family fintech platform and financial operating system. KakeiApp provides an autonomous, offline-first mobile experience with bank SMS & push notification interception, instant overlay category pickers, 7 desktop widgets, encrypted local SQLCipher storage, bidirectional REST synchronization with the Kakei backend (including RFC 4918 / HTTP 207 Multi-Status Outbox), envelope budgeting with dynamic burn rates, and predictive cash flow forecasting.
+Welcome to **Kakei Android App** (家計), the native client tier of the Kakei personal and family fintech platform and financial operating system. KakeiApp provides an autonomous, offline-first mobile experience with bank SMS & push notification interception, 7 text home screen widgets, encrypted local SQLCipher storage, an Outbox that syncs with the Kakei REST API (per-item HTTP 207 statuses on batch endpoints), envelope budgeting with dynamic burn rates, and predictive cash flow forecasting.
 
 This document serves as the single source of truth for architecture, conventions, and operational rules for both human developers and AI assistants working in this repository.
 
@@ -20,9 +20,9 @@ KakeiApp/
 │   │   │   │   ├── MainActivity.kt                   # Single-activity Jetpack Compose host
 │   │   │   │   ├── automation/                       # Mobile automation & background capture tier
 │   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
-│   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, Overlay, QS Tile, Widgets
+│   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
-│   │   │   │   │   ├── i18n/AppStrings.kt            # Trilingual string localization (RU, KK, EN)
+│   │   │   │   │   ├── i18n/AppStrings.kt            # String localization (RU, EN)
 │   │   │   │   │   ├── security/SecurityHelpers.kt   # AndroidKeyStore, biometric auth, AES-256-GCM backup crypto
 │   │   │   │   │   └── util/                         # HashDedupCalculator, CurrencyFormatter
 │   │   │   │   ├── data/                             # Data persistence & network synchronization
@@ -108,27 +108,23 @@ The project strictly manages all dependencies through the **Gradle Version Catal
    - `NotificationDeduplicationHelper` deduplicates notifications received across both SMS and Push channels within a 5-minute sliding window.
 3. **Smart Merchant Categorization**:
    - `SmartMerchantMatcher` evaluates deterministic user rules (`CounterpartyRuleDto`) using prefix, suffix, and contains matching, falling back to keyword heuristics or flagging the record as `needsReview`.
-4. **Instant Category Overlay (`InstantPopupService`)**:
-   - If enabled and granted `SYSTEM_ALERT_WINDOW`, pops up a lightweight, non-intrusive floating category picker immediately upon card transactions for instant 1-tap assignment.
+4. **Instant Category Overlay (`InstantPopupService`) — not implemented**:
+   - The service is declared in the manifest but calls `stopSelf()` immediately in `onStartCommand` (`AndroidAutomationServices.kt`); no overlay window is shown. `SYSTEM_ALERT_WINDOW` is requested and its status is shown in settings, but nothing uses it yet. Captured alerts are reviewed inside the app (Home screen card / pending-capture list).
 5. **Quick Settings Tile (`QuickAddTileService`)**:
    - Allows users to open the rapid transaction creation sheet directly from the Android Quick Settings shade.
-6. **7 Home Screen Desktop Widgets**:
-   - `BudgetRingWidget`: Active budget envelope utilization ring.
-   - `GoalsRingWidget`: Progress towards savings goals.
-   - `TodaySpendWidget`: Real-time daily spend total.
-   - `DebtBalanceWidget`: Summary of active lent and borrowed balances.
-   - `QuickAddWidget`: Fast-access launcher for new transaction entries.
-   - `SplitBillWidget`: Quick calculator for group bill splitting.
-   - `NetWorthWidget`: Consolidated net worth across all active liquid accounts.
-   - Widgets are updated via `KakeiWidgetUpdater` and automatically reset at midnight via `MidnightWidgetResetWorker`.
+6. **7 Home Screen Widgets**:
+   - All seven providers extend `BaseKakeiWidgetProvider` and render the same layout (`res/layout/widget_kakei_card.xml`): a title and a one-line text summary from `KakeiRepository.getWidgetMetricSummary(action)`. Tapping opens `MainActivity` with the widget action. There are no rings, charts, or an in-widget calculator.
+   - Providers and their actions: `BudgetRingWidget` (`BUDGET_RING`), `GoalsRingWidget` (`GOALS_RING`), `TodaySpendWidget` (`TODAY_SPEND`), `DebtBalanceWidget` (`DEBT_BALANCE`), `QuickAddWidget` (`QUICK_ADD`), `SplitBillWidget` (`SPLIT_BILL`, opens the in-app split screen), `NetWorthWidget` (`NET_WORTH`).
+   - Widgets are refreshed via `KakeiWidgetUpdater`. Despite its name, `MidnightWidgetResetWorker` is a 12-hour periodic WorkManager job counted from first scheduling at app start, not a midnight reset.
 
-### D. Centralized Server Scheduling & Bidirectional Sync (HTTP 207)
+### D. Centralized Server Scheduling & Outbox Sync
 
 - **Server-Side Generation**: Recurring scheduled payments are generated on the Kakei server backend. KakeiApp displays them as virtual projections until confirmed by the server.
 - **Revision Control & Multi-Status (RFC 4918 / HTTP 207)**:
   - Every mutating record tracks `sync_revision` (`Long`).
-  - Outbox mutations are batched and posted to `/api/v1/sync/batch`, returning an HTTP 207 Multi-Status response with individual item statuses.
-  - Conflict resolution follows Last-Write-Wins based on server timestamp and higher revision.
+  - There is no `/sync/batch` endpoint (and no `/api/v1` prefix: the client calls `<server>/api`, or `/v1/api` if configured). `KakeiRepository.synchronizeWithServer()` drains the Outbox one entry per request: ledger records go to the batch endpoints `POST/PATCH/DELETE /records` and accounts to `PATCH /accounts` with a single-item list, and the per-item status in the HTTP 207 response decides whether the entry is applied, rejected, or retried. Other entities use their regular REST endpoints.
+  - No Last-Write-Wins: updates send `expectedSyncRevision`; on a `409` revision conflict the mutation is recorded as rejected and the server copy is pulled.
+- **Background Sync**: `SyncWorker` runs every 30 minutes via WorkManager without a network constraint, so it also fires while offline (the drain then stops on the first network failure).
 - **Offline Autonomous Mode**: The app operates fully without an active backend connection, buffering mutations in SQLite.
 
 ### E. Financial Calculators & Domain Engines (`FinancialCalculators`)

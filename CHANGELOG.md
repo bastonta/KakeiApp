@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deleting a transfer deletes both legs in one transaction, reverting each leg on its own account in its own currency, and queues a single server delete.
 - No demo data is created on install or in offline mode (debug builds can load it explicitly); untouched demo rows from older builds are removed on upgrade. Bank alerts are filed only into the account mapped to the sender or the chosen default capture account, otherwise they wait in a "needs an account" list; records the server rejects with 404 are parked there instead of being dropped.
 
+### Changed
+- Documentation (`README.md`, `AGENTS.md`, this changelog) corrected to match the code: there is no `/api/v1/sync/batch` endpoint and no Last-Write-Wins (the Outbox sends one entry per request to the regular endpoints and treats `409` as a revision conflict), `InstantPopupService` shows no overlay, the 7 widgets are identical text cards, `MidnightWidgetResetWorker` runs every 12 hours, `SyncWorker` has no network constraint, and the UI is localized in Russian and English only.
+
 ### Added
 - Auto-capture settings: runtime SMS / notification permission requests, shortcuts to notification-listener and overlay settings with live status, default capture account, pending-capture review.
 - Exchange-rate settings: effective rates and manual per-pair overrides (set / reset).
@@ -51,10 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Autonomous bank transaction capture: regex parser for SMS and Push notifications (`BankSmsPatterns`) supporting Kaspi, Halyk, Freedom, Forte, Jusan, BCC, Sber, T-Bank, Revolut, Wise, and Google Pay.
 - 5-minute sliding notification deduplication across SMS and Push channels (`NotificationDeduplicationHelper`).
 - Deterministic merchant rule matcher with longest-prefix priority (`SmartMerchantMatcher`).
-- Instant category overlay window (`InstantPopupService`) with `SYSTEM_ALERT_WINDOW`.
+- `InstantPopupService` declared with `SYSTEM_ALERT_WINDOW` as a placeholder (stops itself immediately; no overlay is shown).
 - Quick Settings tile (`QuickAddTileService`) for instant transaction entry.
-- 7 interactive home screen desktop widgets (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`).
-- Periodic background workers via WorkManager: `MidnightWidgetResetWorker`, `NotificationListenerWatchdogWorker`, and `SyncWorker`.
+- 7 home screen widget providers (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`) sharing one text-card layout.
+- Periodic background workers via WorkManager: `MidnightWidgetResetWorker` (every 12 h), `NotificationListenerWatchdogWorker` (every 15 min), and `SyncWorker` (every 30 min, no network constraint).
 - Modified single-entry ledger supporting `EXPENSE`, `INCOME`, `TRANSFER` with counterflow pairing (`transferPairId`), splits (`splits`), and clearing status lifecycle (`UNCLEARED`, `CLEARED`, `RECONCILED`).
 - Composite SHA-256 transaction deduplication hash calculation (`HashDedupCalculator`).
 - Envelope budgeting engine with dynamic daily burn rates and multi-threshold alerts (`WARNING_75`, `WARNING_90`, `CRITICAL_100`).
@@ -62,5 +65,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Financial Health Score (0-100) and No-Spend Streak calculations.
 - Universal bank statement import gateway supporting CSV and structured OFX 2.2 formats.
 - Encrypted full-database snapshot exports using AES-256-GCM and PBKDF2 (`BackupCryptoHelper`).
-- Trilingual localization supporting English, Russian, and Kazakh (`AppStrings`).
+- Localization in Russian and English (`AppStrings`).
 - Biometric authentication gate using `androidx.biometric.BiometricPrompt`.

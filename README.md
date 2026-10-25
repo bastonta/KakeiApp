@@ -8,7 +8,7 @@
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-31-blue.svg)](https://developer.android.com/)
 [![Security](https://img.shields.io/badge/Encryption-SQLCipher%20AES--256-blueviolet.svg)](https://www.zetetic.net/sqlcipher/)
 
-**Kakei Android Client** (Japanese: 家計 — *household finance / family budget*) is the native mobile tier of the Kakei fintech platform and financial operating system. Engineered as an autonomous, offline-first personal finance hub, KakeiApp features background bank transaction interception from SMS and push notifications, instant 1-tap categorization overlays, 7 interactive home screen desktop widgets, an encrypted SQLCipher ledger, and seamless bidirectional synchronization with the Kakei backend.
+**Kakei Android Client** (Japanese: 家計 — *household finance / family budget*) is the native mobile tier of the Kakei fintech platform and financial operating system. Engineered as an autonomous, offline-first personal finance hub, KakeiApp features background bank transaction interception from SMS and push notifications, 7 text home screen widgets, an encrypted SQLCipher ledger, and Outbox-based synchronization with the Kakei backend.
 
 ---
 
@@ -20,18 +20,10 @@
   - Intelligent OTP & verification code filter: authentication codes and password reset messages are automatically ignored.
   - **5-Minute Deduplication Window** (`NotificationDeduplicationHelper`): prevents duplicate entries when a bank sends both a push notification and an SMS alert for the same transaction.
   - Strict privacy protection: messaging applications (**WhatsApp**, **Telegram**, **Signal**, **Facebook Messenger**, **Instagram**, **Discord**, **Viber**) are explicitly filtered out and never inspected.
-- **⚡ Instant Category Overlay (`InstantPopupService`)**:
-  - System alert window (`SYSTEM_ALERT_WINDOW`) displaying a lightweight floating category selector immediately upon completing a purchase.
-  - Enables 1-tap expense categorization on the go without having to unlock and open the full app.
-- **📲 7 Interactive Desktop Home Screen Widgets**:
-  1. `BudgetRingWidget` — Real-time circular visualizer of envelope budget consumption.
-  2. `GoalsRingWidget` — Target progress towards active savings piggybanks.
-  3. `TodaySpendWidget` — Running tally of expenses booked today.
-  4. `DebtBalanceWidget` — Consolidated summary of active lent and borrowed balances.
-  5. `QuickAddWidget` — 1-tap launcher to record a new transaction immediately.
-  6. `SplitBillWidget` — Interactive calculator for dividing group restaurant and utility checks.
-  7. `NetWorthWidget` — Real-time aggregate net worth across all active liquid accounts.
-  - Automatic midnight metric reset via `MidnightWidgetResetWorker`.
+- **📲 7 Home Screen Widgets**:
+  - Seven widget providers (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`) share one text-card layout: a title plus a one-line metric summary. Tapping a widget opens the matching screen in the app.
+  - No ring visuals or in-widget split-bill calculator.
+  - Widgets are refreshed every 12 hours by `MidnightWidgetResetWorker` (a periodic job, not a midnight reset).
 - **🔘 Android Quick Settings Tile (`QuickAddTileService`)**:
   - Access fast expense entry directly by pulling down the Android notification shade from any screen or lockscreen.
 - **🔒 Zero-Trust Offline-First Storage & SQLCipher**:
@@ -62,9 +54,9 @@
 - **📥 Universal Statement Import & Export**:
   - Batch import of bank statements from **CSV** and structured **OFX 2.2** files with automatic SHA-256 deduplication.
   - Export of transaction records to CSV and full encrypted database snapshots (AES-256-GCM + PBKDF2).
-- **🌍 Multi-Currency & Trilingual UI**:
+- **🌍 Multi-Currency & Bilingual UI**:
   - ISO 4217 currencies (`KZT`, `USD`, `EUR`, `RUB`, `GBP`, `JPY`) with real-time base currency conversion.
-  - Complete trilingual localization in **English**, **Russian**, and **Kazakh** (`AppStrings`).
+  - Localization in **Russian** (default) and **English** (`AppStrings`).
 - **🛡️ Biometric Security**:
   - App launch protection powered by `androidx.biometric.BiometricPrompt`.
 
@@ -82,9 +74,9 @@ KakeiApp/
 │   │   │   │   ├── MainActivity.kt                   # Single-activity Jetpack Compose host
 │   │   │   │   ├── automation/                       # Mobile automation & background capture tier
 │   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
-│   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, Overlay, QS Tile, Widgets
+│   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
-│   │   │   │   │   ├── i18n/AppStrings.kt            # Trilingual string localization (RU, KK, EN)
+│   │   │   │   │   ├── i18n/AppStrings.kt            # String localization (RU, EN)
 │   │   │   │   │   ├── security/SecurityHelpers.kt   # AndroidKeyStore, biometric auth, AES-256-GCM backup crypto
 │   │   │   │   │   └── util/                         # HashDedupCalculator, CurrencyFormatter
 │   │   │   │   ├── data/                             # Data persistence & network synchronization
@@ -199,14 +191,14 @@ Kakei is engineered around a **privacy-first zero-trust architecture**:
 | :--- | :--- | :--- |
 | `RECEIVE_SMS` | Capturing transactional bank notifications | Processed strictly on-device; personal messages and OTPs are ignored |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Intercepting bank push notifications | Messengers (WhatsApp, Telegram, etc.) are strictly blacklisted |
-| `SYSTEM_ALERT_WINDOW` | Instant floating category overlay | Displays only upon incoming bank transactions for 1-tap tagging |
+| `SYSTEM_ALERT_WINDOW` | Reserved for a future category overlay (`InstantPopupService` is currently a no-op) | Nothing is drawn over other apps yet |
 | `USE_BIOMETRIC` | Biometric fingerprint/face lock | Managed entirely by secure hardware enclave via AndroidKeyStore |
 
 ---
 
 ## 🔗 Related Projects
 
-- **[Kakei Server & Web Application](../kakei)**: Main transactional backend written in Rust (Axum, PostgreSQL, Redis) and React 19 web frontend.
+- **[Kakei Server & Web Application](../kakei)**: Main transactional backend written in Rust (Axum, PostgreSQL) and React 19 web frontend.
 
 ---
 
