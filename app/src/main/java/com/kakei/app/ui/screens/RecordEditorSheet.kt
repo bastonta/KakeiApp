@@ -246,7 +246,7 @@ fun RecordEditorDialog(
                         )
                     }
                 }
-                if (isCrossCurrency && targetCurrency != null) {
+                if (isCrossCurrency) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)

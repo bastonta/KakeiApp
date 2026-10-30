@@ -361,3 +361,6 @@ obj/
 
 # Release signing (written by CI)
 keystore.properties
+
+# Local release build output
+/app/release/

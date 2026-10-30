@@ -394,7 +394,7 @@ class KakeiDatabase(private val context: Context) {
         const val COL_EXCHANGE_RATES = "exchange_rates"
         const val COL_PENDING_CAPTURES = "pending_captures"
 
-        private val NO_OP_ERROR_HANDLER = DatabaseErrorHandler { }
+        private val NO_OP_ERROR_HANDLER = DatabaseErrorHandler { _, _ -> }
 
         /** Removes the encrypted database and its journal files. */
         fun deleteDatabaseFiles(context: Context) {
