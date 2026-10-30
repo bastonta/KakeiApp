@@ -7,22 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-30
+
 ### Added
+- Initial implementation of the offline-first Kakei native Android client.
+- SQLCipher AES-256 encrypted local SQLite database with AndroidKeyStore key management (`KakeiDatabase`).
+- Autonomous bank transaction capture: regex parser for SMS and Push notifications (`BankSmsPatterns`) supporting Kaspi, Halyk, Freedom, Forte, Jusan, BCC, Sber, T-Bank, Revolut, Wise, and Google Pay.
+- 5-minute sliding notification deduplication across SMS and Push channels (`NotificationDeduplicationHelper`).
+- Deterministic merchant rule matcher with longest-prefix priority (`SmartMerchantMatcher`).
+- `InstantPopupService` declared with `SYSTEM_ALERT_WINDOW` as a placeholder (stops itself immediately; no overlay is shown).
+- Quick Settings tile (`QuickAddTileService`) for instant transaction entry.
+- 7 home screen widget providers (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`) sharing one text-card layout.
+- Periodic background workers via WorkManager: `MidnightWidgetResetWorker` (every 12 h), `NotificationListenerWatchdogWorker` (every 15 min), and `SyncWorker` (every 30 min, no network constraint).
+- Modified single-entry ledger supporting `EXPENSE`, `INCOME`, `TRANSFER` with counterflow pairing (`transferPairId`), splits (`splits`), and clearing status lifecycle (`UNCLEARED`, `CLEARED`, `RECONCILED`).
+- Composite SHA-256 transaction deduplication hash calculation (`HashDedupCalculator`).
+- Envelope budgeting engine with dynamic daily burn rates and multi-threshold alerts (`WARNING_75`, `WARNING_90`, `CRITICAL_100`).
+- Predictive cash flow runway forecasting for 7 to 30 days horizon with liquidity deficit warnings.
+- Financial Health Score (0-100) and No-Spend Streak calculations.
+- Universal bank statement import gateway supporting CSV and structured OFX 2.2 formats.
+- Encrypted full-database snapshot exports using AES-256-GCM and PBKDF2 (`BackupCryptoHelper`).
+- Localization in Russian and English (`AppStrings`).
+- Biometric authentication gate using `androidx.biometric.BiometricPrompt`.
+- Kakei 2.0 redesign: dark/light theme tokens, type scale and shapes, shared design-system components (buttons, chips, segmented control, rings, progress bars, settings and transaction rows), bottom navigation with four tabs around a raised quick-add button, redesigned Auth, Home, quick-add calculator sheet, Analytics, Debts, Savings and Profile screens, new adaptive app icon, branded splash and widget background.
 - GitHub Actions release workflow (`release.yml`): on `v*` tags it runs the unit tests, builds a release APK signed from repository secrets and publishes it to a GitHub release with notes from `CHANGELOG.md`.
 - Release signing config in `app/build.gradle.kts`, read from an untracked `keystore.properties`.
-
-### Removed
-- Unused dependencies `navigation-compose`, `datastore-preferences` and `okhttp logging-interceptor`.
+- Auto-capture settings: runtime SMS / notification permission requests, shortcuts to notification-listener and overlay settings with live status, default capture account, pending-capture review.
+- Exchange-rate settings: effective rates and manual per-pair overrides (set / reset).
+- Standardized project guidelines and AI assistant rules in `AGENTS.md`.
+- Comprehensive project documentation in `README.md`.
+- Standardized release automation skill in `.agents/skills/release`.
 
 ### Changed
 - `keepRules/rules.keep` documents why release R8 is safe (optimization scoped to androidx/kotlin/kotlinx, consumer rules from SQLCipher and kotlinx.serialization) and adds explicit keep rules for SQLCipher JNI and the app's generated serializers.
+- Documentation (`README.md`, `AGENTS.md`, this changelog) corrected to match the code: there is no `/api/v1/sync/batch` endpoint and no Last-Write-Wins (the Outbox sends one entry per request to the regular endpoints and treats `409` as a revision conflict), `InstantPopupService` shows no overlay, the 7 widgets are identical text cards, `MidnightWidgetResetWorker` runs every 12 hours, `SyncWorker` has no network constraint, and the UI is localized in Russian and English only.
 
-### Security
-- Auto Backup is disabled and the encrypted database, Keystore-wrapped key and session tokens are excluded from cloud backup and device transfer.
-- The hard-coded SQLCipher fallback passphrase is gone. If the wrapped key cannot be unwrapped (data restored onto another device), the unreadable local replica is discarded and a fresh key is generated instead of crash-looping.
-- Access JWT and refresh cookie are stored in `SecurePrefs` (AES-256-GCM, hardware-backed Keystore) instead of plaintext SharedPreferences.
-- Database key: transient Keystore failures are retried; the key prefers StrongBox and falls back to the TEE Keystore. A permanently invalidated key triggers a controlled reset (local DB + wrapped key wiped, resync from server); databases created by old builds with the constant fallback passphrase are re-keyed in place. A Keystore that stays unavailable runs the session on an in-memory database without touching the file.
-- `READ_SMS` permission removed (only `RECEIVE_SMS` is needed).
+### Removed
+- Unused dependencies `navigation-compose`, `datastore-preferences` and `okhttp logging-interceptor`.
 
 ### Fixed
 - Russian UI no longer mixes in English: analytics, planning, lending, goals and profile labels, dialog fields, account types, clearing statuses, budget periods/alerts and sync/status snackbars are localized (`AppStrings.pick` and code-label helpers).
@@ -44,35 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardcoded FX table removed: rates come from `GET /profile/exchange-rates` and are cached locally; amounts without a known rate are shown in their own currency instead of being converted with rate 1. Cross-currency transfers credit the target exactly the received amount the user entered (or the effective rate) and send `targetAmount` to the server; saving is blocked when no rate is known.
 - Deleting a transfer deletes both legs in one transaction, reverting each leg on its own account in its own currency, and queues a single server delete.
 - No demo data is created on install or in offline mode (debug builds can load it explicitly); untouched demo rows from older builds are removed on upgrade. Bank alerts are filed only into the account mapped to the sender or the chosen default capture account, otherwise they wait in a "needs an account" list; records the server rejects with 404 are parked there instead of being dropped.
+- Focused text fields stay visible above the keyboard on the auth screen and in tab content (edge-to-edge mode disabled `adjustResize`).
+- The All Accounts card on Home matches the size of the account cards.
 
-### Changed
-- Documentation (`README.md`, `AGENTS.md`, this changelog) corrected to match the code: there is no `/api/v1/sync/batch` endpoint and no Last-Write-Wins (the Outbox sends one entry per request to the regular endpoints and treats `409` as a revision conflict), `InstantPopupService` shows no overlay, the 7 widgets are identical text cards, `MidnightWidgetResetWorker` runs every 12 hours, `SyncWorker` has no network constraint, and the UI is localized in Russian and English only.
-
-### Added
-- Auto-capture settings: runtime SMS / notification permission requests, shortcuts to notification-listener and overlay settings with live status, default capture account, pending-capture review.
-- Exchange-rate settings: effective rates and manual per-pair overrides (set / reset).
-- Standardized project guidelines and AI assistant rules in `AGENTS.md`.
-- Comprehensive project documentation in `README.md`.
-- Standardized release automation skill in `.agents/skills/release`.
-
-## [1.0.0] - 2026-10-18
-
-### Added
-- Initial implementation of the offline-first Kakei native Android client.
-- SQLCipher AES-256 encrypted local SQLite database with AndroidKeyStore key management (`KakeiDatabase`).
-- Autonomous bank transaction capture: regex parser for SMS and Push notifications (`BankSmsPatterns`) supporting Kaspi, Halyk, Freedom, Forte, Jusan, BCC, Sber, T-Bank, Revolut, Wise, and Google Pay.
-- 5-minute sliding notification deduplication across SMS and Push channels (`NotificationDeduplicationHelper`).
-- Deterministic merchant rule matcher with longest-prefix priority (`SmartMerchantMatcher`).
-- `InstantPopupService` declared with `SYSTEM_ALERT_WINDOW` as a placeholder (stops itself immediately; no overlay is shown).
-- Quick Settings tile (`QuickAddTileService`) for instant transaction entry.
-- 7 home screen widget providers (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`) sharing one text-card layout.
-- Periodic background workers via WorkManager: `MidnightWidgetResetWorker` (every 12 h), `NotificationListenerWatchdogWorker` (every 15 min), and `SyncWorker` (every 30 min, no network constraint).
-- Modified single-entry ledger supporting `EXPENSE`, `INCOME`, `TRANSFER` with counterflow pairing (`transferPairId`), splits (`splits`), and clearing status lifecycle (`UNCLEARED`, `CLEARED`, `RECONCILED`).
-- Composite SHA-256 transaction deduplication hash calculation (`HashDedupCalculator`).
-- Envelope budgeting engine with dynamic daily burn rates and multi-threshold alerts (`WARNING_75`, `WARNING_90`, `CRITICAL_100`).
-- Predictive cash flow runway forecasting for 7 to 30 days horizon with liquidity deficit warnings.
-- Financial Health Score (0-100) and No-Spend Streak calculations.
-- Universal bank statement import gateway supporting CSV and structured OFX 2.2 formats.
-- Encrypted full-database snapshot exports using AES-256-GCM and PBKDF2 (`BackupCryptoHelper`).
-- Localization in Russian and English (`AppStrings`).
-- Biometric authentication gate using `androidx.biometric.BiometricPrompt`.
+### Security
+- Auto Backup is disabled and the encrypted database, Keystore-wrapped key and session tokens are excluded from cloud backup and device transfer.
+- The hard-coded SQLCipher fallback passphrase is gone. If the wrapped key cannot be unwrapped (data restored onto another device), the unreadable local replica is discarded and a fresh key is generated instead of crash-looping.
+- Access JWT and refresh cookie are stored in `SecurePrefs` (AES-256-GCM, hardware-backed Keystore) instead of plaintext SharedPreferences.
+- Database key: transient Keystore failures are retried; the key prefers StrongBox and falls back to the TEE Keystore. A permanently invalidated key triggers a controlled reset (local DB + wrapped key wiped, resync from server); databases created by old builds with the constant fallback passphrase are re-keyed in place. A Keystore that stays unavailable runs the session on an in-memory database without touching the file.
+- `READ_SMS` permission removed (only `RECEIVE_SMS` is needed).
