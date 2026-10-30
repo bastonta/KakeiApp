@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
 ### Added
-- Biometric app lock: when enabled, `MainActivity` shows `AppLockScreen` and a `BiometricPrompt` (biometrics or device credential) on cold start and after 30 seconds in the background.
+- Biometric app lock: when enabled, `MainActivity` shows `AppLockScreen` and a `BiometricPrompt` (biometrics or device credential) on cold start and after the app has been in the background longer than the relock timeout.
+- Configurable relock timeout in Profile under the biometric unlock toggle (Immediately, 30 sec, 1, 5, 15 or 30 min; default 1 min).
 - Profile lists the passkeys registered on the Kakei account.
 
 ### Changed
+- Toolchain and libraries upgraded: AGP 9.5.0, Kotlin 2.4.21, Compose BOM 2026.09.00, core-ktx 1.19.1, lifecycle 2.11.0, activity-compose 1.13.0, kotlinx-serialization 1.12.0, coroutines 1.11.0, WorkManager 2.12.0, sqlite-ktx 2.7.1, SQLCipher 4.20.0, OkHttp 5.5.1.
 - The biometric lock toggle refuses to turn on when no biometric or screen lock is set up on the device.
 - `SharedPreferences` writes use the KTX `edit { }` extension.
 
