@@ -3,25 +3,27 @@ package com.kakei.app.ui.screens
 import android.content.Intent
 import com.kakei.app.BuildConfig
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
@@ -32,18 +34,24 @@ import com.kakei.app.data.local.SyncMutationEntity
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.data.repository.AppSettingsState
 import com.kakei.app.data.repository.KakeiRepository
-import com.kakei.app.ui.theme.*
+import com.kakei.app.ui.components.*
+import com.kakei.app.ui.theme.KakeiTheme
+import com.kakei.app.ui.theme.ThemeMode
+import com.kakei.app.ui.theme.kakeiCard
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URI
 
 /**
- * Tab 5: Profile, Synchronization, Security (2FA/Passkeys/Biometrics), Categories & Smart Merchant Rule Simulator,
- * Family Group Sharing, CSV/OFX Import & Export, SMS/Push Automation & System Diagnostics.
+ * Profile page (opened from the Home avatar): Synchronization, SMS/Push Automation & Biometrics,
+ * Appearance (language, theme, base currency), Categories & Smart Merchant Rule Simulator,
+ * Family Group Sharing, Exchange Rates, CSV/OFX Import & Export, Encrypted Backups & System Diagnostics.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileAndHubScreen(
     settings: AppSettingsState,
@@ -53,9 +61,11 @@ fun ProfileAndHubScreen(
     rules: List<CounterpartyRuleDto>,
     groupMembers: List<GroupMemberDto>,
     pendingMutations: List<SyncMutationEntity>,
-    repository: KakeiRepository
+    repository: KakeiRepository,
+    onBack: () -> Unit
 ) {
     val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
     val isRu = s.language == AppLanguage.RU
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -64,7 +74,11 @@ fun ProfileAndHubScreen(
     var showSharingDialog by remember { mutableStateOf(false) }
     var showExchangeDialog by remember { mutableStateOf(false) }
     var showBackupDialog by remember { mutableStateOf(false) }
-    var serverUrlInput by remember(settings.serverBaseUrl) { mutableStateOf(settings.serverBaseUrl) }
+    var showRatesSheet by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    var showCurrencyDialog by remember { mutableStateOf(false) }
+    var showServerDialog by remember { mutableStateOf(false) }
     var sampleSmsIdx by remember { mutableIntStateOf(0) }
 
     val sampleBankAlerts = listOf(
@@ -84,439 +98,442 @@ fun ProfileAndHubScreen(
             value = withContext(Dispatchers.IO) { HealthCheckHelper.inspect(context, sqlCipherActive) }
         }
     }
+    val syncErrors by repository.syncErrors.collectAsState()
+    val rateBook by repository.rateBook.collectAsState()
+    val baseCurrency = settings.profile.defaultCurrency
+    val themeTitle = when (settings.themeMode) {
+        ThemeMode.DARK -> s.themeDark
+        ThemeMode.LIGHT -> s.themeLight
+        ThemeMode.SYSTEM -> s.themeSystem
+    }
+    val usdRate = if (baseCurrency.equals("USD", ignoreCase = true)) null else rateBook.rate("USD", baseCurrency)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(c.bg),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 8.dp,
+            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        ),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 1. User Profile, Language, Theme & Base Currency Card
+        // Top bar
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
+                CircleIconButton(
+                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = s.pick("Назад", "Back"),
+                    onClick = onBack,
+                    size = 44.dp
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+                Text(s.navProfile, style = MaterialTheme.typography.headlineMedium, color = c.text)
+            }
+        }
+
+        // 1. Profile & synchronization (Kakei API + offline Outbox queue)
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .frostedGlassCard(accentColor = EmeraldBrand)
+                    .kakeiCard(cornerRadius = 24.dp)
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(name = settings.profile.name, color = c.mint, contentColor = c.mintInk, size = 68.dp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            text = settings.profile.name,
+                            settings.profile.name,
                             style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = c.text,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${settings.profile.email} · ${settings.profile.defaultCurrency}",
+                            "${s.baseCurrencyLabel} · $baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = c.muted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-                    SuggestionChip(
-                        onClick = {},
-                        label = {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background((if (settings.isAuthenticated) c.mint else c.muted).copy(alpha = 0.16f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (settings.isAuthenticated) Icons.Outlined.Cloud else Icons.Outlined.CloudOff,
+                                contentDescription = null,
+                                tint = if (settings.isAuthenticated) c.mint else c.muted,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (settings.isAuthenticated) "Kakei Cloud" else s.offlineModeBadge,
-                                color = emeraldText(),
-                                fontWeight = FontWeight.SemiBold
+                                if (settings.isAuthenticated) "Kakei Cloud" else s.offlineModeBadge,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (settings.isAuthenticated) c.mint else c.muted
                             )
                         }
-                    )
+                    }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-
-                // Language selector (2 equal columns)
-                Text(
-                    text = s.languageLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.surf2)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    AppLanguage.entries.forEach { lang ->
-                        FilterChip(
-                            selected = settings.language == lang,
-                            onClick = { repository.setLanguage(lang) },
-                            modifier = Modifier.weight(1f),
-                            label = {
-                                Text(
-                                    text = lang.displayName,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 1
-                                )
-                            }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Sync, contentDescription = null, tint = c.mint, modifier = Modifier.size(22.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when {
+                                    settings.syncInProgress -> s.pick("Синхронизация…", "Syncing…")
+                                    pendingMutations.isEmpty() -> s.pick("Синхронизировано", "Up to date")
+                                    else -> "${s.pendingMutationsLabel}: ${pendingMutations.size}"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                color = c.text
+                            )
+                            Text(
+                                text = listOfNotNull(
+                                    settings.lastSyncTimestamp?.let { CurrencyFormatter.formatShortDate(it) },
+                                    if (pendingMutations.isEmpty()) s.pick("очередь пуста", "queue empty") else null,
+                                    settings.serverVersion?.let { "${s.pick("сервер", "server")} $it" }
+                                ).joinToString(" · ").ifBlank { s.pick("Сервер не подключён", "Server not connected") },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        KakeiButton(
+                            text = s.pick("Обновить", "Sync"),
+                            kind = KakeiButtonKind.TONAL,
+                            height = 40.dp,
+                            enabled = !settings.syncInProgress,
+                            onClick = { scope.launch { repository.synchronizeWithServer() } }
+                        )
+                    }
+                    if (syncErrors.isNotEmpty()) {
+                        Text(
+                            text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
+                                "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.coral
+                        )
+                        Text(
+                            text = if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = c.muted,
+                            modifier = Modifier.clickable { repository.dismissSyncErrors() }
                         )
                     }
                 }
-
-                // Theme selector (3 equal columns: Dark / Light / System)
-                Text(
-                    text = s.themeLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ThemeMode.entries.forEach { mode ->
-                        val modeTitle = when (mode) {
-                            ThemeMode.DARK -> s.themeDark
-                            ThemeMode.LIGHT -> s.themeLight
-                            ThemeMode.SYSTEM -> s.themeSystem
-                        }
-                        FilterChip(
-                            selected = settings.themeMode == mode,
-                            onClick = { repository.setThemeMode(mode) },
-                            modifier = Modifier.weight(1f),
-                            label = {
-                                // Three chips share the row: shrink long labels ("Системная") instead of cutting them.
-                                Text(
-                                    text = modeTitle,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.Center,
-                                    maxLines = 1,
-                                    autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp)
-                                )
-                            }
-                        )
-                    }
-                }
-
-                // Base Currency selector (2 rows x 3 equal columns so all 6 currencies are visible)
-                Text(
-                    text = s.baseCurrencyLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    CurrencyFormatter.supportedCurrencies.chunked(3).forEach { rowCurrencies ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            rowCurrencies.forEach { curr ->
-                                FilterChip(
-                                    selected = settings.profile.defaultCurrency == curr,
-                                    onClick = {
-                                        repository.updateProfile(settings.profile.name, curr, settings.language)
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    label = {
-                                        Text(
-                                            text = "$curr ${CurrencyFormatter.symbolFor(curr)}",
-                                            modifier = Modifier.fillMaxWidth(),
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
             }
         }
 
-        // 2. Kakei API Synchronization & Offline Outbox Queue
+        // 2. Native SMS / Push capture & security toggles
+        item { GroupCaption(s.pick("Автозахват", "Auto-capture")) }
         item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlassCard(accentColor = IndigoAccent)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = s.syncStatusTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface
+            GroupCard {
+                SettingsRow(
+                    icon = Icons.AutoMirrored.Outlined.Chat,
+                    iconColor = c.cyan,
+                    title = s.pick("SMS банков", "Bank SMS"),
+                    subtitle = s.pick("Kaspi, Halyk, Freedom и другие", "Kaspi, Halyk, Freedom and more"),
+                    checked = settings.smsCaptureEnabled,
+                    onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
                 )
-                OutlinedTextField(
-                    value = serverUrlInput,
-                    onValueChange = { serverUrlInput = it },
-                    label = { Text(s.authServerUrlLabel) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Notifications,
+                    iconColor = c.amber,
+                    title = s.pick("Push-уведомления", "Push notifications"),
+                    subtitle = s.pick("Дедупликация 5 мин", "5-min deduplication"),
+                    checked = settings.pushCaptureEnabled,
+                    onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
                 )
-                val syncErrors by repository.syncErrors.collectAsState()
-                Text(
-                    text = "${s.pendingMutationsLabel}: ${pendingMutations.size} · ${s.pick("Сервер", "Server")}: ${settings.serverVersion ?: s.pick("не подключён", "not connected")}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Bolt,
+                    iconColor = c.mint,
+                    title = s.pick("Быстрая категория", "Quick category"),
+                    subtitle = s.pick("Карточка на главной сразу после покупки", "Home card right after a purchase"),
+                    checked = settings.instantPopupEnabled,
+                    onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
                 )
-                if (syncErrors.isNotEmpty()) {
-                    Text(
-                        text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
-                            "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    TextButton(onClick = { repository.dismissSyncErrors() }) {
-                        Text(if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            repository.setServerBaseUrl(serverUrlInput)
-                            scope.launch { repository.synchronizeWithServer() }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EmeraldBrand,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(s.syncNowButton, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp))
-                    }
-                    OutlinedButton(
-                        onClick = { repository.logout() },
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Text(s.logoutButton, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = 14.sp))
-                    }
-                }
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Fingerprint,
+                    iconColor = c.violet,
+                    title = s.pick("Вход по биометрии", "Biometric unlock"),
+                    checked = settings.biometricLockEnabled,
+                    onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
+                )
             }
         }
 
-        // 3. Native SMS / Push Capture & Simulator
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlassCard(accentColor = AmberWarning)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = s.automationAndSmsTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isRu) "Парсер банковских SMS (SmsReceiver)" else "Bank SMS Parser (SmsReceiver)",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp)
-                    )
-                    Switch(
-                        checked = settings.smsCaptureEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isRu) "Перехват банковских Push (дедупликация 5 мин)" else "Payment Push Listener (5-min dedup)",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp)
-                    )
-                    Switch(
-                        checked = settings.pushCaptureEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isRu) "Мгновенное окно выбора категории (Overlay)" else "Instant Category Popup Overlay",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp)
-                    )
-                    Switch(
-                        checked = settings.instantPopupEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isRu) "Биометрическая авто-блокировка экрана" else "Biometric Screen-Off Auto-Lock",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f).padding(end = 12.dp)
-                    )
-                    Switch(
-                        checked = settings.biometricLockEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
-                    )
-                }
-
-                // Developer tools: synthetic alerts would book fake money into real accounts.
-                if (BuildConfig.DEBUG) {
-                    FilledTonalButton(
-                        onClick = {
-                            val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
-                            sampleSmsIdx++
-                            repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Sms, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(s.simulateSmsCaptureButton)
-                    }
-                    if (repository.canLoadDemoData && accounts.isEmpty()) {
-                        OutlinedButton(
-                            onClick = { repository.loadDemoDataForDevelopment() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(s.loadDemoDataButton)
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3b. Auto-capture permissions, default capture account & alerts awaiting an account
+        // 2b. Auto-capture permissions, default capture account & alerts awaiting an account
         item {
             AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
         }
 
-        // 3c. Exchange rates (server rates + manual overrides)
+        // 3. Appearance
+        item { GroupCaption(s.pick("Оформление", "Appearance")) }
         item {
-            ExchangeRatesCard(settings = settings, repository = repository)
+            GroupCard {
+                SettingsRow(
+                    icon = Icons.Outlined.Language,
+                    iconColor = c.blue,
+                    title = s.languageLabel,
+                    value = settings.language.displayName,
+                    onClick = { showLanguageDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.DarkMode,
+                    iconColor = c.violet,
+                    title = s.themeLabel,
+                    value = themeTitle,
+                    onClick = { showThemeDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.AccountBalanceWallet,
+                    iconColor = c.mint,
+                    title = s.baseCurrencyLabel,
+                    value = "$baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
+                    onClick = { showCurrencyDialog = true }
+                )
+            }
         }
 
-        // 4. Feature Hub Action Cards (Categories & Smart Rules, Group Sharing, Import/Export, Encrypted Backups)
+        // 4. Data hub: categories & smart rules, sharing, rates, import/export, backups, server
+        item { GroupCaption(s.pick("Данные", "Data")) }
         item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlassCard(accentColor = CyanTransfer)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(
-                    onClick = { showCategoriesDialog = true },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = EmeraldBrand,
-                        contentColor = Color.White
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Category, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("${s.categoriesAndRulesTitle} (${categories.size} / ${rules.size})")
-                }
+            GroupCard {
+                SettingsRow(
+                    icon = Icons.Outlined.Sell,
+                    iconColor = c.amber,
+                    title = s.categoriesAndRulesTitle,
+                    value = "${categories.size} · ${rules.size}",
+                    onClick = { showCategoriesDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.People,
+                    iconColor = c.cyan,
+                    title = s.groupSharingTitle,
+                    value = "${groupMembers.size}",
+                    onClick = { showSharingDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.SwapHoriz,
+                    iconColor = c.blue,
+                    title = s.exchangeRatesTitle,
+                    value = usdRate?.let { "USD ${CurrencyFormatter.formatRate(it)}" },
+                    onClick = { showRatesSheet = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Download,
+                    iconColor = c.mint,
+                    title = s.importExportTitle,
+                    value = "CSV, OFX",
+                    onClick = { showExchangeDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Lock,
+                    iconColor = c.pink,
+                    title = s.pick("Зашифрованная копия", "Encrypted backup"),
+                    subtitle = "AES-256-GCM",
+                    onClick = { showBackupDialog = true }
+                )
+                RowDivider(startIndent = 66.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Dns,
+                    iconColor = c.muted,
+                    title = s.authServerUrlLabel,
+                    value = runCatching { URI(settings.serverBaseUrl).host }.getOrNull() ?: settings.serverBaseUrl,
+                    onClick = { showServerDialog = true }
+                )
+            }
+        }
 
-                FilledTonalButton(
-                    onClick = { showSharingDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Group, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("${s.groupSharingTitle} (${groupMembers.size})")
-                }
-
-                FilledTonalButton(
-                    onClick = { showExchangeDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.ImportExport, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(s.importExportTitle)
-                }
-
-                OutlinedButton(
-                    onClick = { showBackupDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Lock, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (isRu) "Зашифрованный бэкап AES-256-GCM" else "AES-256-GCM Encrypted Backup & Restore")
+        // 5. Developer tools: synthetic alerts would book fake money into real accounts.
+        if (BuildConfig.DEBUG) {
+            item { GroupCaption(s.pick("Разработка", "Developer")) }
+            item {
+                GroupCard {
+                    SettingsRow(
+                        icon = Icons.Outlined.Sms,
+                        iconColor = c.amber,
+                        title = s.simulateSmsCaptureButton,
+                        showChevron = false,
+                        onClick = {
+                            val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
+                            sampleSmsIdx++
+                            repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
+                        }
+                    )
+                    if (repository.canLoadDemoData && accounts.isEmpty()) {
+                        RowDivider(startIndent = 66.dp)
+                        SettingsRow(
+                            icon = Icons.Outlined.Inventory2,
+                            iconColor = c.violet,
+                            title = s.loadDemoDataButton,
+                            showChevron = false,
+                            onClick = { repository.loadDemoDataForDevelopment() }
+                        )
+                    }
                 }
             }
         }
 
-        // 5. System & SQLCipher Diagnostics Panel
+        // 6. System & SQLCipher Diagnostics Panel
+        item { GroupCaption(s.diagnosticsTitle) }
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .frostedGlassCard(accentColor = PurpleGoal)
+                    .kakeiCard()
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = s.diagnosticsTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
                 val status = health
                 if (status == null) {
-                    Text(
-                        text = "• …",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("…", color = c.muted)
                 } else {
-                    Text(
-                        text = "• SQLCipher AES-256 Hardware Keystore: ${if (status.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE"}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "• NotificationListenerService Bound: ${status.notificationListenerGranted}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "• System Overlay Permission: ${status.overlayPermissionGranted}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "• Battery Optimization Ignored: ${status.batteryOptimizationIgnored}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "• Biometric Hardware Ready: ${status.biometricAvailable}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    DiagnosticLine("SQLCipher AES-256", if (status.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE", status.sqlCipherActive)
+                    DiagnosticLine("NotificationListenerService", status.notificationListenerGranted.toString(), status.notificationListenerGranted)
+                    DiagnosticLine("System overlay", status.overlayPermissionGranted.toString(), status.overlayPermissionGranted)
+                    DiagnosticLine("Battery optimization ignored", status.batteryOptimizationIgnored.toString(), status.batteryOptimizationIgnored)
+                    DiagnosticLine("Biometric hardware", status.biometricAvailable.toString(), status.biometricAvailable)
                 }
-                Text(
-                    text = "• Home Screen Widgets Registered: 7 AppWidgetProviders + QuickAddTileService",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                DiagnosticLine("Home screen widgets", "7 + QS Tile", true)
+            }
+        }
+
+        // 7. Sign out
+        item {
+            Spacer(modifier = Modifier.height(6.dp))
+            KakeiButton(
+                text = s.logoutButton,
+                icon = Icons.AutoMirrored.Outlined.Logout,
+                kind = KakeiButtonKind.TONAL,
+                color = c.coral,
+                onClick = { repository.logout() },
+                modifier = Modifier.fillMaxWidth(),
+                height = 56.dp
+            )
+        }
+    }
+
+    // Language
+    if (showLanguageDialog) {
+        ChoiceDialog(
+            title = s.languageLabel,
+            options = AppLanguage.entries.map { it to it.displayName },
+            selected = settings.language,
+            onSelect = {
+                repository.setLanguage(it)
+                showLanguageDialog = false
+            },
+            onDismiss = { showLanguageDialog = false }
+        )
+    }
+
+    // Theme
+    if (showThemeDialog) {
+        ChoiceDialog(
+            title = s.themeLabel,
+            options = ThemeMode.entries.map { mode ->
+                mode to when (mode) {
+                    ThemeMode.DARK -> s.themeDark
+                    ThemeMode.LIGHT -> s.themeLight
+                    ThemeMode.SYSTEM -> s.themeSystem
+                }
+            },
+            selected = settings.themeMode,
+            onSelect = {
+                repository.setThemeMode(it)
+                showThemeDialog = false
+            },
+            onDismiss = { showThemeDialog = false }
+        )
+    }
+
+    // Base currency
+    if (showCurrencyDialog) {
+        ChoiceDialog(
+            title = s.baseCurrencyLabel,
+            options = CurrencyFormatter.supportedCurrencies.map { it to "$it ${CurrencyFormatter.symbolFor(it)}" },
+            selected = baseCurrency,
+            onSelect = {
+                repository.updateProfile(settings.profile.name, it, settings.language)
+                showCurrencyDialog = false
+            },
+            onDismiss = { showCurrencyDialog = false }
+        )
+    }
+
+    // Server URL
+    if (showServerDialog) {
+        var serverUrlInput by remember(settings.serverBaseUrl) { mutableStateOf(settings.serverBaseUrl) }
+        AlertDialog(
+            onDismissRequest = { showServerDialog = false },
+            title = { Text(s.authServerUrlLabel) },
+            text = {
+                OutlinedTextField(
+                    value = serverUrlInput,
+                    onValueChange = { serverUrlInput = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.setServerBaseUrl(serverUrlInput)
+                        scope.launch { repository.synchronizeWithServer() }
+                        showServerDialog = false
+                    }
+                ) {
+                    Text(s.syncNowButton)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showServerDialog = false }) { Text(s.cancelButton) }
+            }
+        )
+    }
+
+    // Exchange rates (server rates + manual overrides)
+    if (showRatesSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showRatesSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = c.bg
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp)
+            ) {
+                ExchangeRatesCard(settings = settings, repository = repository)
             }
         }
     }
@@ -539,7 +556,10 @@ fun ProfileAndHubScreen(
             onDismissRequest = { showCategoriesDialog = false },
             title = { Text(s.categoriesAndRulesTitle) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(s.pick("Проверка правил:", "Smart Rule Simulator:"), fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = simulatorInput,
@@ -549,10 +569,10 @@ fun ProfileAndHubScreen(
                     )
                     Text(
                         text = "➔ ${s.categoryLabel}: $simCategoryName (${simResult.confidenceLabel})",
-                        color = emeraldText(),
+                        color = c.mint,
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    HorizontalDivider()
+                    HorizontalDivider(color = c.line)
                     OutlinedTextField(
                         value = newRulePattern,
                         onValueChange = { newRulePattern = it },
@@ -564,21 +584,23 @@ fun ProfileAndHubScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         listOf("EXACT", "PREFIX", "CONTAINS").forEach { mt ->
-                            FilterChip(
+                            KakeiChip(
+                                text = when (mt) {
+                                    "EXACT" -> s.pick("Совпадает", "Exact")
+                                    "PREFIX" -> s.pick("Начинается с", "Prefix")
+                                    else -> s.pick("Содержит", "Contains")
+                                },
                                 selected = newRuleMatchType == mt,
-                                onClick = { newRuleMatchType = mt },
-                                label = {
-                                    Text(
-                                        when (mt) {
-                                            "EXACT" -> s.pick("Совпадает", "Exact")
-                                            "PREFIX" -> s.pick("Начинается с", "Prefix")
-                                            else -> s.pick("Содержит", "Contains")
-                                        }
-                                    )
-                                }
+                                onClick = { newRuleMatchType = mt }
                             )
                         }
                     }
+                    CategoryPickerRow(
+                        categories = categories,
+                        selectedId = newRuleCatId,
+                        langCode = settings.language.code,
+                        onSelect = { newRuleCatId = it.id }
+                    )
                     Button(
                         onClick = {
                             if (newRulePattern.isNotBlank() && newRuleCatId.isNotBlank()) {
@@ -623,7 +645,7 @@ fun ProfileAndHubScreen(
             onDismissRequest = { showSharingDialog = false },
             title = { Text(s.groupSharingTitle) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = memberEmail,
                         onValueChange = { memberEmail = it },
@@ -635,11 +657,7 @@ fun ProfileAndHubScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         listOf("ADMIN", "TRACK_READ", "READ_ONLY").forEach { p ->
-                            FilterChip(
-                                selected = permLevel == p,
-                                onClick = { permLevel = p },
-                                label = { Text(s.permissionLevel(p)) }
-                            )
+                            KakeiChip(text = s.permissionLevel(p), selected = permLevel == p, onClick = { permLevel = p })
                         }
                     }
                     groupMembers.forEach { m ->
@@ -648,12 +666,14 @@ fun ProfileAndHubScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Avatar(name = m.memberName.ifBlank { m.memberEmail }, color = accentForName(m.memberEmail), size = 32.dp)
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "${m.memberEmail} (${s.permissionLevel(m.permissionLevel)})",
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { repository.removeGroupMember(m) }) {
-                                Icon(Icons.Default.Delete, contentDescription = null)
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = s.deleteButton, tint = c.muted)
                             }
                         }
                     }
@@ -691,14 +711,10 @@ fun ProfileAndHubScreen(
             onDismissRequest = { showExchangeDialog = false },
             title = { Text(s.importExportTitle) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("csv", "ofx").forEach { f ->
-                            FilterChip(
-                                selected = format == f,
-                                onClick = { format = f },
-                                label = { Text(f.uppercase()) }
-                            )
+                            KakeiChip(text = f.uppercase(), selected = format == f, onClick = { format = f })
                         }
                     }
                     OutlinedTextField(
@@ -754,7 +770,7 @@ fun ProfileAndHubScreen(
             onDismissRequest = { showBackupDialog = false },
             title = { Text(s.pick("Зашифрованный бэкап (AES-256-GCM)", "Encrypted Backup (AES-256-GCM)")) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
@@ -793,4 +809,56 @@ fun ProfileAndHubScreen(
             }
         )
     }
+}
+
+@Composable
+private fun DiagnosticLine(label: String, value: String, ok: Boolean) {
+    val c = KakeiTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(if (ok) c.mint else c.amber)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = c.text, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodySmall, color = c.muted)
+    }
+}
+
+/** Single-choice list dialog used for language, theme and base currency. */
+@Composable
+private fun <T> ChoiceDialog(
+    title: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val s = LocalAppStrings.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                options.forEach { (value, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelect(value) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = value == selected, onClick = { onSelect(value) })
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(s.cancelButton) }
+        }
+    )
 }

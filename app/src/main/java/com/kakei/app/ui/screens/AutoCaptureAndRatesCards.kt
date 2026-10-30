@@ -83,7 +83,7 @@ fun AutoCaptureCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .frostedGlassCard(accentColor = AmberWarning)
+            .kakeiCard(cornerRadius = 24.dp)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -161,7 +161,7 @@ private fun PermissionRow(title: String, granted: Boolean, actionLabel: String, 
             Text(
                 text = if (granted) s.permissionGranted else s.permissionMissing,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (granted) emeraldText() else MaterialTheme.colorScheme.error
+                color = if (granted) KakeiTheme.colors.mint else MaterialTheme.colorScheme.error
             )
         }
         if (!granted) {
@@ -242,7 +242,7 @@ fun ExchangeRatesCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .frostedGlassCard(accentColor = CyanTransfer)
+            .kakeiCard(cornerRadius = 24.dp)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -263,7 +263,7 @@ fun ExchangeRatesCard(
             Text(
                 text = "1 $cur = ${CurrencyFormatter.formatRate(rate)} $base" +
                     if (manual) " · ${s.exchangeRateManualBadge}" else "",
-                color = if (manual) emeraldText() else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (manual) KakeiTheme.colors.mint else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 

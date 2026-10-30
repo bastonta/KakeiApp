@@ -2,6 +2,7 @@ package com.kakei.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -10,16 +11,20 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.TrackChanges
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.i18n.stringsFor
 import com.kakei.app.data.repository.KakeiRepository
+import com.kakei.app.ui.components.BottomNavItem
+import com.kakei.app.ui.components.KakeiBottomBar
 import com.kakei.app.ui.screens.*
 import com.kakei.app.ui.theme.KakeiTheme
 
@@ -96,6 +101,7 @@ fun KakeiAppRoot(
         )
     }
     var showQuickAddModal by remember { mutableStateOf(initialQuickAdd) }
+    var showProfile by remember { mutableStateOf(false) }
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         KakeiTheme(themeMode = settings.themeMode) {
@@ -105,59 +111,28 @@ fun KakeiAppRoot(
                     repository = repository
                 )
             } else {
-                val navItemColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Profile is a full-screen page opened from the avatar on Home, not a tab.
+                BackHandler(enabled = showProfile) { showProfile = false }
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     containerColor = MaterialTheme.colorScheme.background,
                     contentColor = MaterialTheme.colorScheme.onBackground,
-                    contentWindowInsets = WindowInsets.systemBars,
+                    contentWindowInsets = WindowInsets.statusBars,
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        NavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ) {
-                            NavigationBarItem(
-                                selected = currentTab == 0,
-                                onClick = { currentTab = 0 },
-                                colors = navItemColors,
-                                icon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = null) },
-                                label = { Text(appStrings.navHome, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 1,
-                                onClick = { currentTab = 1 },
-                                colors = navItemColors,
-                                icon = { Icon(Icons.Default.Insights, contentDescription = null) },
-                                label = { Text(appStrings.navInsights, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 2,
-                                onClick = { currentTab = 2 },
-                                colors = navItemColors,
-                                icon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) },
-                                label = { Text(appStrings.navLending, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 3,
-                                onClick = { currentTab = 3 },
-                                colors = navItemColors,
-                                icon = { Icon(Icons.Default.Savings, contentDescription = null) },
-                                label = { Text(appStrings.navGoals, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            )
-                            NavigationBarItem(
-                                selected = currentTab == 4,
-                                onClick = { currentTab = 4 },
-                                colors = navItemColors,
-                                icon = { Icon(Icons.Default.Person, contentDescription = null) },
-                                label = { Text(appStrings.navProfile, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        if (!showProfile) {
+                            KakeiBottomBar(
+                                items = listOf(
+                                    BottomNavItem(appStrings.navHome, Icons.Outlined.Home),
+                                    BottomNavItem(appStrings.navInsights, Icons.Outlined.BarChart),
+                                    BottomNavItem(appStrings.navLending, Icons.Outlined.People),
+                                    BottomNavItem(appStrings.navGoals, Icons.Outlined.TrackChanges)
+                                ),
+                                selectedIndex = currentTab,
+                                onSelect = { currentTab = it },
+                                onAdd = { showQuickAddModal = true },
+                                addContentDescription = appStrings.quickAddTransaction
                             )
                         }
                     }
@@ -168,7 +143,19 @@ fun KakeiAppRoot(
                             .consumeWindowInsets(innerPadding)
                             .imePadding()
                     ) {
-                        when (currentTab) {
+                        if (showProfile) {
+                            ProfileAndHubScreen(
+                                settings = settings,
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                rules = rules,
+                                groupMembers = groupMembers,
+                                pendingMutations = pendingMutations,
+                                repository = repository,
+                                onBack = { showProfile = false }
+                            )
+                        } else when (currentTab) {
                             0 -> HomeScreen(
                                 settings = settings,
                                 accounts = accounts,
@@ -179,7 +166,7 @@ fun KakeiAppRoot(
                                 forecast = forecast,
                                 instantCapturedRecord = instantCapturedRecord,
                                 repository = repository,
-                                onOpenQuickAdd = { showQuickAddModal = true }
+                                onOpenProfile = { showProfile = true }
                             )
                             1 -> InsightsAndBudgetsScreen(
                                 baseCurrency = settings.profile.defaultCurrency,
@@ -188,6 +175,7 @@ fun KakeiAppRoot(
                                 categories = categories,
                                 budgets = budgets,
                                 obligations = obligations,
+                                transactions = transactions,
                                 forecast = forecast,
                                 healthScore = healthScore,
                                 streaks = streaks,
@@ -204,16 +192,6 @@ fun KakeiAppRoot(
                             3 -> SavingsScreen(
                                 baseCurrency = settings.profile.defaultCurrency,
                                 goals = savingsGoals,
-                                repository = repository
-                            )
-                            4 -> ProfileAndHubScreen(
-                                settings = settings,
-                                accounts = accounts,
-                                categories = categories,
-                                labels = labels,
-                                rules = rules,
-                                groupMembers = groupMembers,
-                                pendingMutations = pendingMutations,
                                 repository = repository
                             )
                         }

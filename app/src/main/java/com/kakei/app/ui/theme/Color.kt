@@ -1,47 +1,89 @@
 package com.kakei.app.ui.theme
 
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// Matte Dark Palette (#121212 base + frosted surfaces)
-val MatteDarkBackground = Color(0xFF121212)
-val MatteDarkSurface = Color(0xFF1A1D24)
-val MatteDarkSurfaceElevated = Color(0xFF232731)
-val MatteDarkBorder = Color(0xFF2E3442)
-val MatteDarkTextPrimary = Color(0xFFF3F4F6)
-val MatteDarkTextSecondary = Color(0xFF9CA3AF)
+/**
+ * Kakei 2.0 design tokens (design/Kakei-2.0-redesign.figcraft, "Theme" variable collection).
+ * Dark is the default theme; light is an equal peer with the same roles.
+ */
+@Immutable
+data class KakeiColors(
+    val isDark: Boolean,
+    /** Screen background. */
+    val bg: Color,
+    /** Cards, sheets and the bottom bar. */
+    val surf: Color,
+    /** Nested surfaces: tiles, keypad keys, segmented tracks, inputs. */
+    val surf2: Color,
+    /** Hairline borders and dividers. */
+    val line: Color,
+    val text: Color,
+    val muted: Color,
+    val faint: Color,
+    /** Brand, income and positive states. */
+    val mint: Color,
+    /** Content drawn on top of [mint]. */
+    val mintInk: Color,
+    /** Expense, overspend and destructive actions. */
+    val coral: Color,
+    /** Attention: pending review, warnings. */
+    val amber: Color,
+    /** Transfers. */
+    val cyan: Color,
+    /** Goals. */
+    val violet: Color,
+    val pink: Color,
+    val blue: Color,
+    /** Net-worth hero gradient, top-left to bottom-right. */
+    val heroA: Color,
+    val heroB: Color,
+    val scrim: Color
+)
 
-// Light Palette
-val LightBackground = Color(0xFFF8FAFC)
-val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceElevated = Color(0xFFF1F5F9)
-val LightBorder = Color(0xFFE2E8F0)
-val LightTextPrimary = Color(0xFF0F172A)
-val LightTextSecondary = Color(0xFF64748B)
+val DarkKakeiColors = KakeiColors(
+    isDark = true,
+    bg = Color(0xFF0A0F0D),
+    surf = Color(0xFF121A17),
+    surf2 = Color(0xFF1A2420),
+    line = Color(0xFF23302B),
+    text = Color(0xFFEEF3F0),
+    muted = Color(0xFF8C9A94),
+    faint = Color(0xFF5C6A64),
+    mint = Color(0xFF3DD68C),
+    mintInk = Color(0xFF06281A),
+    coral = Color(0xFFFF6B5E),
+    amber = Color(0xFFF5B544),
+    cyan = Color(0xFF4CC9F0),
+    violet = Color(0xFFA78BFA),
+    pink = Color(0xFFF472B6),
+    blue = Color(0xFF60A5FA),
+    heroA = Color(0xFF1F8A5B),
+    heroB = Color(0xFF0D3324),
+    scrim = Color(0xFF000000)
+)
 
-// Semantic Brand & Financial Colors (Emerald + Wallet Accents)
-val EmeraldBrand = Color(0xFF30A46C)
-val EmeraldLight = Color(0xFF3DD68C)
-val EmeraldContainerDark = Color(0xFF133926)
-val EmeraldContainerLight = Color(0xFFD1FAE5)
+val LightKakeiColors = KakeiColors(
+    isDark = false,
+    bg = Color(0xFFF3F5F2),
+    surf = Color(0xFFFFFFFF),
+    surf2 = Color(0xFFEDF1EE),
+    line = Color(0xFFE1E7E2),
+    text = Color(0xFF0D1512),
+    muted = Color(0xFF5F6D67),
+    faint = Color(0xFF9AA6A0),
+    mint = Color(0xFF1FA466),
+    mintInk = Color(0xFFFFFFFF),
+    coral = Color(0xFFE5484D),
+    amber = Color(0xFFD98A00),
+    cyan = Color(0xFF0E9BC4),
+    violet = Color(0xFF7C5CE0),
+    pink = Color(0xFFD9468F),
+    blue = Color(0xFF2F7BE0),
+    heroA = Color(0xFF22B06E),
+    heroB = Color(0xFF0F6B41),
+    scrim = Color(0xFF0D1512)
+)
 
-val IndigoAccent = Color(0xFF6366F1)
-val IndigoContainerDark = Color(0xFF1E1B4B)
-val IndigoContainerLight = Color(0xFFE0E7FF)
-
-val CoralExpense = Color(0xFFEF4444)
-val CoralContainerDark = Color(0xFF3F1518)
-val CoralContainerLight = Color(0xFFFEE2E2)
-
-val AmberWarning = Color(0xFFF59E0B)
-val AmberContainerDark = Color(0xFF3D2808)
-val AmberContainerLight = Color(0xFFFEF3C7)
-
-val CyanTransfer = Color(0xFF06B6D4)
-val PurpleGoal = Color(0xFFA855F7)
-
-// Heatmap Intensity Palette (0..4)
-val HeatmapLevel0Dark = Color(0xFF1E222B)
-val HeatmapLevel1Dark = Color(0xFF14462F)
-val HeatmapLevel2Dark = Color(0xFF1D6E47)
-val HeatmapLevel3Dark = Color(0xFF289861)
-val HeatmapLevel4Dark = Color(0xFF3DD68C)
+val LocalKakeiColors = staticCompositionLocalOf { DarkKakeiColors }

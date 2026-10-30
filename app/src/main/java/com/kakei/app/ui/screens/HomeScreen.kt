@@ -1,44 +1,65 @@
 package com.kakei.app.ui.screens
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.data.repository.AppSettingsState
 import com.kakei.app.data.repository.KakeiRepository
-import com.kakei.app.ui.theme.*
+import com.kakei.app.ui.components.*
+import com.kakei.app.ui.theme.KakeiTheme
+import com.kakei.app.ui.theme.kakeiCard
 import java.math.BigDecimal
+import java.math.RoundingMode
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
+
+/** Records shown on Home before the user taps "All". */
+private const val RECENT_RECORDS_LIMIT = 15
 
 /**
  * Tab 1: Home & Ledger Screen combining:
- * - Consolidated Net Worth hero card & sync status badge
- * - Wallet by BudgetBakers Horizontal Multi-Currency Accounts Carousel + Create Account dialog
- * - Instant Captured Alert & `NeedsReview` auto-categorization confirmation banner
- * - Searchable & filterable Ledger Transactions list with splits, labels, and clearing badges
+ * - Greeting header with profile avatar, search and review notifications
+ * - Net Worth hero card with 30-day balance trend, forecast and top budget burn rate
+ * - Instant Captured Alert card with one-tap categorization
+ * - Horizontal multi-currency accounts carousel (doubles as the ledger account filter) + Create Account dialog
+ * - `NeedsReview` queue banner and the day-grouped ledger with splits, labels and clearing badges
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     settings: AppSettingsState,
@@ -50,15 +71,21 @@ fun HomeScreen(
     forecast: CashFlowForecastDto,
     instantCapturedRecord: TransactionDto?,
     repository: KakeiRepository,
-    onOpenQuickAdd: () -> Unit
+    onOpenProfile: () -> Unit
 ) {
     val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
     val baseCurrency = settings.profile.defaultCurrency
+    val langCode = settings.language.code
 
     var selectedAccountFilter by remember { mutableStateOf<String?>(null) }
+    var searchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var showAllRecords by remember { mutableStateOf(false) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
+    var menuRecordId by remember { mutableStateOf<String?>(null) }
+    var showNoNotifications by remember { mutableStateOf(false) }
 
     val activeAccounts = accounts.filter { !it.isArchived }
     val rateBook by repository.rateBook.collectAsState()
@@ -75,6 +102,40 @@ fun HomeScreen(
         CurrencyFormatter.format(amt, cur)
     }
 
+    // Net income − expense per day in the base currency (transfers excluded); drives the
+    // month delta and the hero sparkline. Records without a known rate are left out.
+    val dailyNet = remember(transactions, rateBook, baseCurrency) {
+        val map = mutableMapOf<LocalDate, BigDecimal>()
+        transactions.forEach { tx ->
+            if (tx.type == "TRANSFER") return@forEach
+            val date = bookingDateTime(tx.bookingDate)?.toLocalDate() ?: return@forEach
+            val converted = CurrencyFormatter.convert(tx.amount.abs(), tx.currency, baseCurrency, rateBook)
+                ?: return@forEach
+            val signed = if (tx.type == "INCOME") converted else converted.negate()
+            map[date] = (map[date] ?: BigDecimal.ZERO) + signed
+        }
+        map
+    }
+    val today = LocalDate.now()
+    val currentMonth = YearMonth.from(today)
+    val monthNet = remember(dailyNet) {
+        dailyNet.filterKeys { YearMonth.from(it) == currentMonth }.values.fold(BigDecimal.ZERO, BigDecimal::add)
+    }
+    val monthStartWorth = netWorth - monthNet
+    val monthDeltaPercent = if (monthStartWorth.signum() > 0 && monthNet.signum() != 0) {
+        monthNet.multiply(BigDecimal(100)).divide(monthStartWorth, 1, RoundingMode.HALF_UP)
+    } else null
+    // Walk back from today's net worth to reconstruct the last 30 days of balances.
+    val trend = remember(dailyNet, netWorth) {
+        val points = ArrayList<BigDecimal>(31)
+        var running = netWorth
+        for (offset in 0..30) {
+            points.add(running)
+            running -= dailyNet[today.minusDays(offset.toLong())] ?: BigDecimal.ZERO
+        }
+        points.reversed()
+    }
+
     val needsReviewItems = transactions.filter { it.needsReview }
     val filteredTransactions = transactions.filter { tx ->
         val matchesAcc = selectedAccountFilter == null || tx.accountId == selectedAccountFilter
@@ -83,6 +144,12 @@ fun HomeScreen(
             (tx.note?.contains(searchQuery, ignoreCase = true) == true)
         matchesAcc && matchesQuery
     }
+    val visibleTransactions = if (showAllRecords || searchQuery.isNotBlank()) {
+        filteredTransactions
+    } else {
+        filteredTransactions.take(RECENT_RECORDS_LIMIT)
+    }
+    val recordsByDay = visibleTransactions.groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }
 
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
     val accountMap = remember(accounts) { accounts.associateBy { it.id } }
@@ -91,473 +158,299 @@ fun HomeScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(c.bg),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Top Consolidated Net Worth Hero Card
+        // 1. Greeting header: avatar (opens Profile), month, search and notifications
         item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlassCard(accentColor = EmeraldBrand)
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp)
-                    ) {
-                        Text(
-                            text = s.netWorthTitle,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = CurrencyFormatter.format(netWorth, baseCurrency),
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        if (netWorthUnconverted.isNotEmpty()) {
-                            Text(
-                                text = "+ $netWorthUnconverted · ${s.fxRateUnavailable}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AssistChip(
-                            onClick = {
-                                val next = if (settings.language == AppLanguage.RU) AppLanguage.EN else AppLanguage.RU
-                                repository.setLanguage(next)
-                            },
-                            label = { Text(settings.language.code.uppercase()) }
-                        )
-                        IconButton(
-                            onClick = onOpenQuickAdd,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(EmeraldBrand)
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = s.quickAddTransaction, tint = Color.White)
-                        }
-                    }
-                }
-
-                // Forecast & Budget mini telemetry pills
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Text(
-                                text = s.pick("Прогноз 30д", "30d Forecast"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = CurrencyFormatter.format(forecast.forecastedEndBalance, baseCurrency),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (forecast.liquidityDeficitAlert) CoralExpense else emeraldText()
-                            )
-                        }
-                    }
-                    val topBudget = budgets.firstOrNull()
-                    if (topBudget != null) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Text(
-                                    text = "${topBudget.name} (${topBudget.usagePercentage}%)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "${s.dailyBurnLimitLabel}: ${CurrencyFormatter.format(topBudget.dailyBurnRateLimit, topBudget.currency)}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Instant SMS/Push Popup Overlay Card (InstantPopupService UX)
-        if (instantCapturedRecord != null) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .frostedGlassCard(accentColor = AmberWarning)
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Default.Bolt, contentDescription = null, tint = AmberWarning)
-                            Text(
-                                text = "${instantCapturedRecord.payee ?: s.pick("Банковское уведомление", "Bank Alert")} · ${CurrencyFormatter.format(instantCapturedRecord.amount, instantCapturedRecord.currency)}",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
-                        IconButton(onClick = { repository.dismissInstantCapturedBanner() }) {
-                            Icon(Icons.Default.Close, contentDescription = null)
-                        }
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(
+                    name = settings.profile.name,
+                    color = c.mint,
+                    contentColor = c.mintInk,
+                    size = 44.dp,
+                    modifier = Modifier.clickable(onClick = onOpenProfile)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = instantCapturedRecord.note ?: "",
+                        text = "${monthName(today.monthValue, s)} ${today.year}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = c.muted
                     )
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        categories.forEach { cat ->
-                            SuggestionChip(
-                                onClick = {
-                                    repository.confirmReview(
-                                        record = instantCapturedRecord,
-                                        categoryId = cat.id,
-                                        createRule = true
-                                    )
-                                },
-                                label = { Text("✓ ${cat.localizedName(settings.language.code)}") }
-                            )
-                        }
+                    Text(
+                        text = greeting(s),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = c.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                CircleIconButton(
+                    icon = Icons.Outlined.Search,
+                    contentDescription = s.searchPayeeHint,
+                    onClick = {
+                        searchVisible = !searchVisible
+                        if (!searchVisible) searchQuery = ""
                     }
-                }
-            }
-        }
-
-        // 3. Wallet-style Multi-Currency Accounts Carousel
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(s.accountsTitle, style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = { showCreateAccountDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(s.addAccount)
-                }
-            }
-
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(vertical = 4.dp)
-            ) {
-                item {
-                    val selected = selectedAccountFilter == null
-                    // Mirrors the account card layout below so both cards share the same size.
-                    Column(
-                        modifier = Modifier
-                            .width(195.dp)
-                            .frostedGlassCard(
-                                cornerRadius = 16.dp,
-                                accentColor = if (selected) EmeraldBrand else IndigoAccent
-                            )
-                            .clickable { selectedAccountFilter = null }
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = s.allAccountsFilter,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 6.dp)
-                            )
-                            Text(
-                                text = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Box {
+                    CircleIconButton(
+                        icon = Icons.Outlined.Notifications,
+                        contentDescription = s.needsReviewBanner,
+                        badge = needsReviewItems.isNotEmpty(),
+                        onClick = {
+                            val first = needsReviewItems.firstOrNull()
+                            if (first != null) reviewTargetRecord = first else showNoNotifications = true
                         }
-                        Text(
-                            text = CurrencyFormatter.format(netWorth, baseCurrency),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = emeraldText()
-                        )
-                        Text(
-                            text = baseCurrency,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                items(activeAccounts, key = { it.id }) { acc ->
-                    val isSelected = selectedAccountFilter == acc.id
-                    Column(
-                        modifier = Modifier
-                            .width(195.dp)
-                            .frostedGlassCard(
-                                cornerRadius = 16.dp,
-                                accentColor = if (isSelected) EmeraldBrand else IndigoAccent
-                            )
-                            .clickable {
-                                selectedAccountFilter = if (isSelected) null else acc.id
-                            }
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = acc.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 6.dp)
-                            )
-                            Text(
-                                text = s.accountType(acc.accountType),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
-                        }
-                        Text(
-                            text = CurrencyFormatter.format(acc.currentBalance, acc.currency),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        // Permission is only worth showing on accounts shared with the user.
-                        Text(
-                            text = listOfNotNull(
-                                acc.currency,
-                                acc.permissionLevel.takeIf { it != "ADMIN" }?.let { s.permissionLevel(it) }
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    DropdownMenu(expanded = showNoNotifications, onDismissRequest = { showNoNotifications = false }) {
+                        DropdownMenuItem(
+                            text = { Text(s.pick("Новых уведомлений нет", "No new notifications")) },
+                            onClick = { showNoNotifications = false }
                         )
                     }
                 }
             }
         }
 
-        // 4. NeedsReview Queue Banner (if any unclassified records exist)
-        if (needsReviewItems.isNotEmpty()) {
+        if (searchVisible) {
             item {
-                Surface(
-                    color = AmberWarning.copy(alpha = 0.15f),
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(s.searchPayeeHint) },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        // 2. Net Worth hero card
+        item {
+            NetWorthHeroCard(
+                netWorth = netWorth,
+                baseCurrency = baseCurrency,
+                unconverted = netWorthUnconverted,
+                monthNet = monthNet,
+                monthDeltaPercent = monthDeltaPercent,
+                trend = trend,
+                forecast = forecast,
+                topBudget = budgets.firstOrNull()
+            )
+        }
+
+        // 3. Instant captured alert (InstantPopupService UX, shown in-app)
+        if (instantCapturedRecord != null) {
+            item {
+                InstantCaptureCard(
+                    record = instantCapturedRecord,
+                    categories = categories,
+                    langCode = langCode,
+                    onCategory = { cat ->
+                        repository.confirmReview(record = instantCapturedRecord, categoryId = cat.id, createRule = true)
+                    },
+                    onDismiss = { repository.dismissInstantCapturedBanner() }
+                )
+            }
+        }
+
+        // 4. Accounts carousel (also filters the ledger below)
+        item {
+            SectionHeader(
+                title = s.accountsTitle,
+                action = s.pick("+ Добавить", "+ Add"),
+                actionColor = c.mint,
+                onAction = { showCreateAccountDialog = true }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    AccountCard(
+                        tile = { LetterTile("Σ", c.mint, contentColor = c.mintInk) },
+                        caption = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
+                        name = s.allAccountsFilter,
+                        amount = formatCompactMoney(netWorth, baseCurrency, s),
+                        selected = selectedAccountFilter == null,
+                        onClick = { selectedAccountFilter = null }
+                    )
+                }
+                items(activeAccounts, key = { it.id }) { acc ->
+                    val isSelected = selectedAccountFilter == acc.id
+                    AccountCard(
+                        tile = { LetterTile(acc.name.take(1).uppercase(), accentForName(acc.name)) },
+                        // Permission is only worth showing on accounts shared with the user.
+                        caption = listOfNotNull(
+                            s.accountType(acc.accountType),
+                            acc.permissionLevel.takeIf { it != "ADMIN" }?.let { s.permissionLevel(it) }
+                        ).joinToString(" · "),
+                        name = acc.name,
+                        amount = formatMoney(acc.currentBalance, acc.currency),
+                        selected = isSelected,
+                        onClick = { selectedAccountFilter = if (isSelected) null else acc.id }
+                    )
+                }
+            }
+        }
+
+        // 5. NeedsReview queue banner
+        if (needsReviewItems.isNotEmpty()) {
+            item {
+                val n = needsReviewItems.size.toLong()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .kakeiCard(cornerRadius = 16.dp, color = c.amber.copy(alpha = 0.10f), borderColor = c.amber.copy(alpha = 0.25f))
+                        .clickable { reviewTargetRecord = needsReviewItems.first() }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Icon(Icons.Outlined.Sell, contentDescription = null, tint = c.amber, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = s.pick(
+                            "$n ${ruPlural(n, "операция ждёт", "операции ждут", "операций ждут")} категорию",
+                            "$n ${if (n == 1L) "record needs" else "records need"} a category"
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.text,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(s.pick("Разобрать", "Review"), style = MaterialTheme.typography.labelLarge, color = c.amber)
+                    Icon(
+                        Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = c.amber,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+
+        // 6. Day-grouped ledger
+        item {
+            SectionHeader(
+                title = s.recentTransactions,
+                action = when {
+                    filteredTransactions.size <= RECENT_RECORDS_LIMIT -> null
+                    showAllRecords -> s.pick("Свернуть", "Less")
+                    else -> s.pick("Все", "All")
+                },
+                onAction = { showAllRecords = !showAllRecords }
+            )
+        }
+
+        if (visibleTransactions.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                    title = s.pick("Операций пока нет", "No records yet"),
+                    hint = s.pick(
+                        "Нажмите «+», чтобы добавить расход или доход, или включите автозахват SMS в профиле.",
+                        "Tap \"+\" to add an expense or income, or enable SMS capture in your profile."
+                    )
+                )
+            }
+        } else {
+            item {
+                GroupCard {
+                    recordsByDay.entries.forEachIndexed { groupIndex, (date, dayRecords) ->
+                        val dayExpense = dayRecords.filter { it.type == "EXPENSE" }.mapNotNull {
+                            CurrencyFormatter.convert(it.amount.abs(), it.currency, baseCurrency, rateBook)
+                        }.fold(BigDecimal.ZERO, BigDecimal::add)
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = if (groupIndex == 0) 14.dp else 10.dp, bottom = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = AmberWarning)
                             Text(
-                                text = "${s.needsReviewBanner} (${needsReviewItems.size})",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = AmberWarning
+                                text = date?.let { dayLabel(it, s) } ?: "—",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = c.muted
                             )
-                        }
-                        needsReviewItems.take(3).forEach { item ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            if (dayExpense.signum() > 0) {
                                 Text(
-                                    text = "${item.payee ?: s.pick("Без получателя", "Merchant")} · ${CurrencyFormatter.format(item.amount, item.currency)}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f)
+                                    text = "−" + CurrencyFormatter.format(dayExpense, baseCurrency),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = c.muted
                                 )
-                                TextButton(onClick = { reviewTargetRecord = item }) {
-                                    Text(s.confirmCategory)
+                            }
+                        }
+                        dayRecords.forEach { tx ->
+                            val cat = tx.categoryId?.let { categoryMap[it] }
+                            val acc = accountMap[tx.accountId]
+                            val visual = recordVisual(tx, cat)
+                            val catName = cat?.localizedName(langCode)
+                            val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
+                            val userNote = tx.note?.takeIf { it.isNotBlank() && !it.startsWith("[Auto-") }
+                            Box {
+                                TransactionRow(
+                                    icon = visual.icon,
+                                    iconColor = visual.color,
+                                    title = tx.payee ?: catName ?: s.operationType(tx.type),
+                                    // Without a payee the category is already the title; don't repeat it.
+                                    subtitle = listOfNotNull(
+                                        catName.takeIf { tx.payee != null } ?: s.operationType(tx.type).takeIf { tx.type == "TRANSFER" },
+                                        acc?.name
+                                    ).joinToString(" · "),
+                                    amount = signedRecordAmount(tx),
+                                    amountColor = when (tx.type) {
+                                        "INCOME" -> c.mint
+                                        "TRANSFER" -> c.cyan
+                                        else -> c.text
+                                    },
+                                    trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalTime()
+                                        ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
+                                    badge = when {
+                                        tx.needsReview -> s.pick("Проверить", "Review")
+                                        tx.status == "UNCLEARED" -> s.clearingStatus(tx.status)
+                                        else -> null
+                                    },
+                                    badgeColor = if (tx.needsReview) c.amber else c.muted,
+                                    extra = listOfNotNull(
+                                        userNote,
+                                        s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits").takeIf { tx.splits.isNotEmpty() },
+                                        txLabels.joinToString(" ") { "#${it.name}" }.takeIf { txLabels.isNotEmpty() }
+                                    ).joinToString(" · ").ifBlank { null },
+                                    modifier = Modifier.combinedClickable(
+                                        onClick = {
+                                            if (tx.needsReview) reviewTargetRecord = tx else menuRecordId = tx.id
+                                        },
+                                        onLongClick = { menuRecordId = tx.id }
+                                    )
+                                )
+                                DropdownMenu(
+                                    expanded = menuRecordId == tx.id,
+                                    onDismissRequest = { menuRecordId = null }
+                                ) {
+                                    if (tx.type != "TRANSFER") {
+                                        DropdownMenuItem(
+                                            text = { Text(s.confirmCategory) },
+                                            leadingIcon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
+                                            onClick = {
+                                                menuRecordId = null
+                                                reviewTargetRecord = tx
+                                            }
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(s.deleteButton, color = c.coral) },
+                                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
+                                        onClick = {
+                                            menuRecordId = null
+                                            repository.deleteRecord(tx)
+                                        }
+                                    )
                                 }
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // 5. Search bar & Ledger Transactions Header
-        item {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text(s.searchPayeeHint) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-
-        item {
-            Text(
-                text = "${s.recentTransactions} (${filteredTransactions.size})",
-                style = MaterialTheme.typography.titleLarge
-            )
-        }
-
-        // 6. Transaction Rows
-        items(filteredTransactions, key = { it.id }) { tx ->
-            val cat = tx.categoryId?.let { categoryMap[it] }
-            val acc = accountMap[tx.accountId]
-            val txColor = when (tx.type) {
-                "INCOME" -> emeraldText()
-                "TRANSFER" -> CyanTransfer
-                else -> CoralExpense
-            }
-            val signPrefix = when (tx.type) {
-                "INCOME" -> "+"
-                "EXPENSE" -> "-"
-                else -> "⇄ "
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .frostedGlassCard(cornerRadius = 16.dp, accentColor = txColor)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 8.dp)
-                    ) {
-                        val catName = cat?.localizedName(settings.language.code)
-                        Text(
-                            text = tx.payee ?: catName ?: s.operationType(tx.type),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            // Without a payee the category is already the title; don't repeat it.
-                            text = listOfNotNull(
-                                acc?.name,
-                                catName.takeIf { tx.payee != null },
-                                CurrencyFormatter.formatShortDate(tx.bookingDate)
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = "$signPrefix${CurrencyFormatter.format(tx.amount, tx.currency)}",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = txColor
-                        )
-                        Text(
-                            text = s.clearingStatus(tx.status),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = { repository.deleteRecord(tx) },
-                        modifier = Modifier
-                            .padding(start = 4.dp)
-                            .size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.DeleteOutline,
-                            contentDescription = s.deleteButton,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-
-                if (!tx.note.isNullOrBlank()) {
-                    Text(
-                        text = tx.note,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Splits & Labels badges + Review action (only when there is something to show)
-                val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
-                if (tx.splits.isNotEmpty() || txLabels.isNotEmpty() || tx.needsReview) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        if (tx.splits.isNotEmpty()) {
-                            SuggestionChip(
-                                onClick = {},
-                                label = {
-                                    Text(
-                                        s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits"),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            )
-                        }
-                        txLabels.forEach { lbl ->
-                            SuggestionChip(
-                                onClick = {},
-                                label = { Text("#${lbl.name}", style = MaterialTheme.typography.labelSmall) }
-                            )
-                        }
-                        if (tx.needsReview) {
-                            AssistChip(
-                                onClick = { reviewTargetRecord = tx },
-                                label = { Text(s.pick("Нужна проверка", "Needs Review"), color = AmberWarning) }
-                            )
-                        }
-                    }
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
             }
         }
@@ -587,23 +480,15 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         listOf("CASH", "CHECKING", "CREDIT", "DEBT", "INVESTMENT").forEach { t ->
-                            FilterChip(
-                                selected = accType == t,
-                                onClick = { accType = t },
-                                label = { Text(s.accountType(t)) }
-                            )
+                            KakeiChip(text = s.accountType(t), selected = accType == t, onClick = { accType = t })
                         }
                     }
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        CurrencyFormatter.supportedCurrencies.forEach { c ->
-                            FilterChip(
-                                selected = accCurrency == c,
-                                onClick = { accCurrency = c },
-                                label = { Text(c) }
-                            )
+                        CurrencyFormatter.supportedCurrencies.forEach { cur ->
+                            KakeiChip(text = cur, selected = accCurrency == cur, onClick = { accCurrency = cur })
                         }
                     }
                     OutlinedTextField(
@@ -642,30 +527,26 @@ fun HomeScreen(
     // Confirm Review Dialog (POST /records/{id}/review)
     val reviewItem = reviewTargetRecord
     if (reviewItem != null) {
-        var chosenCategory by remember { mutableStateOf(reviewItem.categoryId ?: categories.firstOrNull()?.id.orEmpty()) }
+        var chosenCategory by remember(reviewItem.id) {
+            mutableStateOf(reviewItem.categoryId ?: categories.firstOrNull()?.id.orEmpty())
+        }
         var createSmartRule by remember { mutableStateOf(true) }
 
         AlertDialog(
             onDismissRequest = { reviewTargetRecord = null },
             title = { Text(s.confirmCategory) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${reviewItem.payee ?: s.pick("Операция", "Record")} · ${CurrencyFormatter.format(reviewItem.amount, reviewItem.currency)}")
-                    categories.forEach { cat ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { chosenCategory = cat.id }
-                                .padding(vertical = 4.dp)
-                        ) {
-                            RadioButton(
-                                selected = chosenCategory == cat.id,
-                                onClick = { chosenCategory = cat.id }
-                            )
-                            Text(cat.localizedName(settings.language.code))
-                        }
-                    }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "${reviewItem.payee ?: s.pick("Операция", "Record")} · ${signedRecordAmount(reviewItem)}",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    CategoryPickerRow(
+                        categories = categories,
+                        selectedId = chosenCategory,
+                        langCode = langCode,
+                        onSelect = { chosenCategory = it.id }
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = createSmartRule, onCheckedChange = { createSmartRule = it })
                         Text(s.createSmartRule)
@@ -690,5 +571,303 @@ fun HomeScreen(
                 }
             }
         )
+    }
+}
+
+private fun greeting(s: com.kakei.app.core.i18n.AppStrings): String = when (LocalTime.now().hour) {
+    in 5..11 -> s.pick("Доброе утро", "Good morning")
+    in 12..17 -> s.pick("Добрый день", "Good afternoon")
+    in 18..22 -> s.pick("Добрый вечер", "Good evening")
+    else -> s.pick("Доброй ночи", "Good night")
+}
+
+@Composable
+private fun NetWorthHeroCard(
+    netWorth: BigDecimal,
+    baseCurrency: String,
+    unconverted: String,
+    monthNet: BigDecimal,
+    monthDeltaPercent: BigDecimal?,
+    trend: List<BigDecimal>,
+    forecast: CashFlowForecastDto,
+    topBudget: BudgetEnvelopeDto?
+) {
+    val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
+    val onHero = Color.White
+    val onHeroMuted = Color.White.copy(alpha = 0.72f)
+    val shape = RoundedCornerShape(24.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(c.heroA, c.heroB), start = Offset.Zero, end = Offset.Infinite))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = s.netWorthTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = onHeroMuted,
+                modifier = Modifier.weight(1f)
+            )
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Outlined.Language, contentDescription = null, tint = onHero, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(baseCurrency, style = MaterialTheme.typography.labelMedium, color = onHero)
+            }
+        }
+        Text(
+            text = formatMoney(netWorth, baseCurrency),
+            style = MaterialTheme.typography.displayLarge,
+            color = onHero,
+            maxLines = 1
+        )
+        if (unconverted.isNotEmpty()) {
+            Text(
+                text = "+ $unconverted · ${s.fxRateUnavailable}",
+                style = MaterialTheme.typography.bodySmall,
+                color = onHeroMuted
+            )
+        }
+        if (monthNet.signum() != 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (monthDeltaPercent != null) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.14f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (monthNet.signum() >= 0) Icons.Outlined.NorthEast else Icons.Outlined.SouthEast,
+                            contentDescription = null,
+                            tint = onHero,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = (if (monthDeltaPercent.signum() > 0) "+" else "") +
+                                monthDeltaPercent.stripTrailingZeros().toPlainString().replace('.', ',') + "%",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = onHero
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = "${formatMoney(monthNet, baseCurrency, showPlus = true)} ${s.pick("за", "in")} " +
+                        monthName(LocalDate.now().monthValue, s).lowercase(localeFor(s)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onHeroMuted
+                )
+            }
+        }
+
+        Sparkline(
+            points = trend,
+            color = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            HeroMiniTile(
+                caption = s.pick("Прогноз · 30 дней", "Forecast · 30 days"),
+                value = formatMoney(forecast.forecastedEndBalance, baseCurrency),
+                valueColor = if (forecast.liquidityDeficitAlert) Color(0xFFFFB4A9) else onHero,
+                modifier = Modifier.weight(1f)
+            )
+            if (topBudget != null) {
+                HeroMiniTile(
+                    caption = "${topBudget.name} · ${topBudget.usagePercentage}%",
+                    value = "${formatMoney(topBudget.dailyBurnRateLimit, topBudget.currency)} ${s.pick("/ день", "/ day")}",
+                    valueColor = onHero,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroMiniTile(caption: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.18f))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(
+            caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(value, style = MaterialTheme.typography.titleMedium, color = valueColor, maxLines = 1)
+    }
+}
+
+/** Smooth balance trend line; values are only normalized to pixels, never used as money. */
+@Composable
+private fun Sparkline(points: List<BigDecimal>, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        if (points.size < 2) return@Canvas
+        val min = points.minOrNull() ?: return@Canvas
+        val max = points.maxOrNull() ?: return@Canvas
+        val range = max - min
+        val stroke = 2.dp.toPx()
+        val usable = size.height - stroke * 2
+        fun y(v: BigDecimal): Float = if (range.signum() == 0) {
+            size.height / 2f
+        } else {
+            stroke + usable * (1f - (v - min).divide(range, 6, RoundingMode.HALF_UP).toFloat())
+        }
+        val stepX = size.width / (points.size - 1)
+        val path = Path()
+        points.forEachIndexed { i, v ->
+            val x = i * stepX
+            if (i == 0) {
+                path.moveTo(x, y(v))
+            } else {
+                val prevX = (i - 1) * stepX
+                val prevY = y(points[i - 1])
+                val midX = (prevX + x) / 2f
+                path.cubicTo(midX, prevY, midX, y(v), x, y(v))
+            }
+        }
+        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+private fun AccountCard(
+    tile: @Composable () -> Unit,
+    caption: String,
+    name: String,
+    amount: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val c = KakeiTheme.colors
+    Column(
+        modifier = Modifier
+            .width(172.dp)
+            .kakeiCard(
+                cornerRadius = 20.dp,
+                color = if (selected) c.mint.copy(alpha = 0.07f).compositeOver(c.surf) else c.surf,
+                borderColor = if (selected) c.mint else c.line,
+                borderWidth = if (selected) 1.5.dp else 1.dp
+            )
+            .clickable(onClick = onClick)
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            tile()
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                caption,
+                style = MaterialTheme.typography.bodySmall,
+                color = c.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(name, style = MaterialTheme.typography.bodyMedium, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            amount,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = c.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun InstantCaptureCard(
+    record: TransactionDto,
+    categories: List<CategoryDto>,
+    langCode: String,
+    onCategory: (CategoryDto) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .kakeiCard(color = c.amber.copy(alpha = 0.08f), borderColor = c.amber.copy(alpha = 0.45f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconTile(icon = Icons.Outlined.Bolt, color = c.amber, size = 36.dp, iconSize = 18.dp, cornerRadius = 10.dp)
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = s.pick("Новая операция", "New transaction"),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = c.text
+                )
+                Text(
+                    text = "${record.payee ?: s.pick("Банковское уведомление", "Bank alert")} · ${s.pick("только что", "just now")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(signedRecordAmount(record), style = MaterialTheme.typography.titleLarge, color = c.text)
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Close, contentDescription = s.dismissButton, tint = c.muted, modifier = Modifier.size(18.dp))
+            }
+        }
+        CategoryPickerRow(
+            categories = categories,
+            selectedId = record.categoryId.takeIf { !record.needsReview },
+            langCode = langCode,
+            onSelect = onCategory
+        )
+    }
+}
+
+/** Horizontally scrolling category chips with category icons; the active one uses the category color. */
+@Composable
+fun CategoryPickerRow(
+    categories: List<CategoryDto>,
+    selectedId: String?,
+    langCode: String,
+    onSelect: (CategoryDto) -> Unit
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        categories.forEach { cat ->
+            val visual = categoryVisual(cat)
+            KakeiChip(
+                text = cat.localizedName(langCode),
+                icon = visual.icon,
+                iconTint = visual.color,
+                color = visual.color,
+                selected = selectedId == cat.id,
+                onClick = { onSelect(cat) }
+            )
+        }
     }
 }
