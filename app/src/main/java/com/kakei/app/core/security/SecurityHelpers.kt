@@ -1,10 +1,8 @@
 package com.kakei.app.core.security
 
 import android.content.Context
-import android.os.Build
 import android.os.PowerManager
 import android.os.VibrationEffect
-import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
@@ -14,6 +12,7 @@ import android.security.keystore.StrongBoxUnavailableException
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import java.security.KeyStore
 import java.security.SecureRandom
@@ -199,17 +198,17 @@ object DatabaseKeyManager {
             KeystoreCipher.encrypt(KEYSTORE_ALIAS, rawKey, preferStrongBox = true)
         }
         // commit(): the passphrase must be durable before any database is keyed with it.
-        prefs.edit().putString(KEY_WRAPPED_PASSPHRASE, newWrapped).commit()
+        prefs.edit(commit = true) { putString(KEY_WRAPPED_PASSPHRASE, newWrapped) }
         return rawKey
     }
 
     /** Forgets the wrapped passphrase and its Keystore key (controlled recovery only). */
     fun resetDatabaseKey(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .remove(KEY_WRAPPED_PASSPHRASE)
-            .remove(LEGACY_KEY_WRAPPED)
-            .remove(LEGACY_KEY_IV)
-            .commit()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit(commit = true) {
+            remove(KEY_WRAPPED_PASSPHRASE)
+            remove(LEGACY_KEY_WRAPPED)
+            remove(LEGACY_KEY_IV)
+        }
         KeystoreCipher.deleteKey(KEYSTORE_ALIAS)
     }
 
@@ -218,11 +217,13 @@ object DatabaseKeyManager {
         val legacyWrapped = prefs.getString(LEGACY_KEY_WRAPPED, null)
         val legacyIv = prefs.getString(LEGACY_KEY_IV, null)
         if (legacyWrapped == null || legacyIv == null) return
-        val editor = prefs.edit().remove(LEGACY_KEY_WRAPPED).remove(LEGACY_KEY_IV)
-        if (!prefs.contains(KEY_WRAPPED_PASSPHRASE)) {
-            editor.putString(KEY_WRAPPED_PASSPHRASE, "$legacyIv:$legacyWrapped")
+        prefs.edit(commit = true) {
+            remove(LEGACY_KEY_WRAPPED)
+            remove(LEGACY_KEY_IV)
+            if (!prefs.contains(KEY_WRAPPED_PASSPHRASE)) {
+                putString(KEY_WRAPPED_PASSPHRASE, "$legacyIv:$legacyWrapped")
+            }
         }
-        editor.commit()
     }
 }
 
@@ -243,7 +244,7 @@ class SecurePrefs(context: Context) {
             String(KeystoreCipher.decrypt(KEY_ALIAS, payload), Charsets.UTF_8)
         } catch (_: Exception) {
             // Unreadable (key rotated or data from another device): drop it.
-            prefs.edit().remove(key).apply()
+            prefs.edit { remove(key) }
             null
         }
     }
@@ -257,14 +258,14 @@ class SecurePrefs(context: Context) {
             memoryFallback[key] = value
             return
         }
-        prefs.edit()
-            .putString(key, KeystoreCipher.encrypt(KEY_ALIAS, value.toByteArray(Charsets.UTF_8)))
-            .apply()
+        prefs.edit {
+            putString(key, KeystoreCipher.encrypt(KEY_ALIAS, value.toByteArray(Charsets.UTF_8)))
+        }
     }
 
     fun remove(key: String) {
         memoryFallback.remove(key)
-        prefs.edit().remove(key).apply()
+        prefs.edit { remove(key) }
     }
 
     companion object {
@@ -368,13 +369,7 @@ object BiometricHelper {
 object HapticHelper {
     fun tick(context: Context) {
         try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            }
+            val vibrator = context.getSystemService(VibratorManager::class.java)?.defaultVibrator
             if (vibrator?.hasVibrator() == true) {
                 vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
             }
