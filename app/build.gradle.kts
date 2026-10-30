@@ -45,8 +45,10 @@ android {
         release {
             signingConfig = signingConfigs.findByName("release")
             optimization {
+                // No experimental packageScope: limiting R8 to androidx/kotlin/kotlinx produced a
+                // class extending a package-private kotlin.text class across packages, which
+                // crashed every release launch with IllegalAccessError.
                 enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
             }
         }
     }
