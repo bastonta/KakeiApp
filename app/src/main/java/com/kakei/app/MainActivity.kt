@@ -68,7 +68,10 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         val since = backgroundedAt
         backgroundedAt = 0L
-        if (since != 0L && SystemClock.elapsedRealtime() - since >= RELOCK_AFTER_MS) {
+        // Background time after which the biometric lock engages again (user setting).
+        val relockAfterMs = (application as KakeiApplication).repository
+            .settingsState.value.lockTimeoutSeconds * 1000L
+        if (since != 0L && SystemClock.elapsedRealtime() - since >= relockAfterMs) {
             unlocked = false
             autoPromptPending = true
             lockError = null
@@ -105,9 +108,6 @@ class MainActivity : FragmentActivity() {
     companion object {
         const val EXTRA_OPEN_QUICK_ADD = "extra_open_quick_add"
         const val EXTRA_WIDGET_ACTION = "extra_widget_action"
-
-        /** Background time after which the biometric lock engages again. */
-        private const val RELOCK_AFTER_MS = 30_000L
 
         // Process-scoped lock state: survives configuration changes and activity
         // recreation, and resets to locked when the process dies.

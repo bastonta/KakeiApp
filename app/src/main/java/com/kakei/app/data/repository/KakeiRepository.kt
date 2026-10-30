@@ -61,6 +61,8 @@ data class AppSettingsState(
     val language: AppLanguage = AppLanguage.RU,
     val themeMode: ThemeMode = ThemeMode.DARK,
     val biometricLockEnabled: Boolean = false,
+    /** Background time (seconds) after which the biometric lock engages again; 0 = immediately. */
+    val lockTimeoutSeconds: Int = DEFAULT_LOCK_TIMEOUT_SECONDS,
     val smsCaptureEnabled: Boolean = true,
     val pushCaptureEnabled: Boolean = true,
     val instantPopupEnabled: Boolean = true,
@@ -71,7 +73,14 @@ data class AppSettingsState(
     val syncInProgress: Boolean = false,
     val lastSyncTimestamp: String? = null,
     val statusMessage: String? = null
-)
+) {
+    companion object {
+        const val DEFAULT_LOCK_TIMEOUT_SECONDS = 60
+
+        /** Relock delays offered in settings, in seconds. */
+        val LOCK_TIMEOUT_OPTIONS = listOf(0, 30, 60, 300, 900, 1800)
+    }
+}
 
 @Serializable
 data class EncryptedSnapshotPayload(
@@ -305,6 +314,7 @@ class KakeiRepository(
             language = lang,
             themeMode = theme,
             biometricLockEnabled = prefs.getBoolean("biometric_lock", false),
+            lockTimeoutSeconds = prefs.getInt("lock_timeout_sec", AppSettingsState.DEFAULT_LOCK_TIMEOUT_SECONDS),
             smsCaptureEnabled = prefs.getBoolean("sms_capture", true),
             pushCaptureEnabled = prefs.getBoolean("push_capture", true),
             instantPopupEnabled = prefs.getBoolean("instant_popup", true),
@@ -348,6 +358,12 @@ class KakeiRepository(
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString("theme_mode", mode.name) }
         _settingsState.value = _settingsState.value.copy(themeMode = mode)
+    }
+
+    fun setLockTimeout(seconds: Int) {
+        val clean = seconds.coerceAtLeast(0)
+        prefs.edit { putInt("lock_timeout_sec", clean) }
+        _settingsState.value = _settingsState.value.copy(lockTimeoutSeconds = clean)
     }
 
     fun setServerBaseUrl(url: String) {

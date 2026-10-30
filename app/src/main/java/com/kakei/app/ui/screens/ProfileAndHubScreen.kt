@@ -78,6 +78,7 @@ fun ProfileAndHubScreen(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showServerDialog by remember { mutableStateOf(false) }
+    var showLockTimeoutDialog by remember { mutableStateOf(false) }
     var sampleSmsIdx by remember { mutableIntStateOf(0) }
 
     val sampleBankAlerts = listOf(
@@ -105,6 +106,13 @@ fun ProfileAndHubScreen(
         ThemeMode.DARK -> s.themeDark
         ThemeMode.LIGHT -> s.themeLight
         ThemeMode.SYSTEM -> s.themeSystem
+    }
+    val lockTimeoutLabel: (Int) -> String = { seconds ->
+        when {
+            seconds == 0 -> s.pick("Сразу", "Immediately")
+            seconds < 60 -> s.pick("$seconds сек", "$seconds sec")
+            else -> s.pick("${seconds / 60} мин", "${seconds / 60} min")
+        }
     }
     val usdRate = if (baseCurrency.equals("USD", ignoreCase = true)) null else rateBook.rate("USD", baseCurrency)
 
@@ -281,6 +289,17 @@ fun ProfileAndHubScreen(
                     checked = settings.biometricLockEnabled,
                     onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
                 )
+                if (settings.biometricLockEnabled) {
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Timer,
+                        iconColor = c.violet,
+                        title = s.pick("Блокировать через", "Lock after"),
+                        subtitle = s.pick("Время в фоне до повторного входа", "Time in background before relock"),
+                        value = lockTimeoutLabel(settings.lockTimeoutSeconds),
+                        onClick = { showLockTimeoutDialog = true }
+                    )
+                }
             }
         }
 
@@ -507,6 +526,20 @@ fun ProfileAndHubScreen(
                 showThemeDialog = false
             },
             onDismiss = { showThemeDialog = false }
+        )
+    }
+
+    // Biometric relock delay
+    if (showLockTimeoutDialog) {
+        ChoiceDialog(
+            title = s.pick("Блокировать через", "Lock after"),
+            options = AppSettingsState.LOCK_TIMEOUT_OPTIONS.map { it to lockTimeoutLabel(it) },
+            selected = settings.lockTimeoutSeconds,
+            onSelect = {
+                repository.setLockTimeout(it)
+                showLockTimeoutDialog = false
+            },
+            onDismiss = { showLockTimeoutDialog = false }
         )
     }
 
