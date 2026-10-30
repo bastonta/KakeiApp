@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-30
+
+### Fixed
+- Release builds crashed on launch with `IllegalAccessError` in `androidx.startup.InitializationProvider`: the experimental R8 `packageScope` (androidx/kotlin/kotlinx only) produced a class extending a package-private `kotlin.text` class across packages. R8 now optimizes the whole app.
+
 ## [1.1.0] - 2026-10-30
 
 ### Added
