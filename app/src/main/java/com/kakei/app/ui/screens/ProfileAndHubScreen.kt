@@ -57,7 +57,6 @@ fun ProfileAndHubScreen(
     settings: AppSettingsState,
     accounts: List<AccountDto>,
     categories: List<CategoryDto>,
-    labels: List<LabelDto>,
     rules: List<CounterpartyRuleDto>,
     groupMembers: List<GroupMemberDto>,
     pendingMutations: List<SyncMutationEntity>,
@@ -99,6 +98,7 @@ fun ProfileAndHubScreen(
         }
     }
     val syncErrors by repository.syncErrors.collectAsState()
+    val passkeys by repository.passkeys.collectAsState()
     val rateBook by repository.rateBook.collectAsState()
     val baseCurrency = settings.profile.defaultCurrency
     val themeTitle = when (settings.themeMode) {
@@ -287,6 +287,40 @@ fun ProfileAndHubScreen(
         // 2b. Auto-capture permissions, default capture account & alerts awaiting an account
         item {
             AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
+        }
+
+        // 2c. Passkeys registered on the Kakei account (refreshed on every sync)
+        if (settings.isAuthenticated) {
+            item { GroupCaption("Passkeys") }
+            item {
+                GroupCard {
+                    if (passkeys.isEmpty()) {
+                        SettingsRow(
+                            icon = Icons.Outlined.Key,
+                            iconColor = c.muted,
+                            title = s.pick("Нет passkeys", "No passkeys"),
+                            subtitle = s.pick("Добавьте ключ в веб-версии Kakei", "Add one in the Kakei web app"),
+                            showChevron = false
+                        )
+                    } else {
+                        passkeys.forEachIndexed { index, passkey ->
+                            if (index > 0) RowDivider(startIndent = 66.dp)
+                            SettingsRow(
+                                icon = Icons.Outlined.Key,
+                                iconColor = c.violet,
+                                title = passkey.name,
+                                subtitle = listOfNotNull(
+                                    "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
+                                    passkey.lastUsedAt?.let {
+                                        "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
+                                    }
+                                ).joinToString(" · "),
+                                showChevron = false
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // 3. Appearance

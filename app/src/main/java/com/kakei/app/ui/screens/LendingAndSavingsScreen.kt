@@ -1,7 +1,6 @@
 package com.kakei.app.ui.screens
 
 import android.content.Intent
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -45,7 +44,6 @@ private const val LEGACY_DEFAULT_GOAL_COLOR = "#30A46C"
 /**
  * Tab 3: Lending, Partial Repayments, Debt Forgiveness, Split Bill (2..20 people) & Settle All.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LendingScreen(
     baseCurrency: String,
@@ -550,7 +548,6 @@ private fun QuickAction(
 /**
  * Tab 4: Savings Goals (Piggybanks) with Target Pacing & Quick Steppers.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SavingsScreen(
     baseCurrency: String,

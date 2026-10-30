@@ -1,7 +1,7 @@
 package com.kakei.app
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,15 +20,24 @@ import androidx.compose.material.icons.outlined.TrackChanges
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.i18n.stringsFor
+import com.kakei.app.core.security.BiometricHelper
 import com.kakei.app.data.repository.KakeiRepository
 import com.kakei.app.ui.components.BottomNavItem
 import com.kakei.app.ui.components.KakeiBottomBar
 import com.kakei.app.ui.screens.*
 import com.kakei.app.ui.theme.KakeiTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    /** True while a BiometricPrompt is on screen (it may pause/stop this activity). */
+    private var authInProgress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,22 +52,88 @@ class MainActivity : ComponentActivity() {
             KakeiAppRoot(
                 repository = app.repository,
                 initialQuickAdd = openQuickAddInitial,
-                initialWidgetAction = widgetAction
+                initialWidgetAction = widgetAction,
+                lockState = AppLockState(
+                    isUnlocked = unlocked,
+                    autoPromptPending = autoPromptPending,
+                    lastError = lockError
+                ),
+                onUnlockRequest = ::requestUnlock,
+                onLockDisabled = { unlocked = true }
             )
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val since = backgroundedAt
+        backgroundedAt = 0L
+        if (since != 0L && SystemClock.elapsedRealtime() - since >= RELOCK_AFTER_MS) {
+            unlocked = false
+            autoPromptPending = true
+            lockError = null
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations && !authInProgress) {
+            backgroundedAt = SystemClock.elapsedRealtime()
+        }
+    }
+
+    private fun requestUnlock(title: String, subtitle: String) {
+        autoPromptPending = false
+        if (authInProgress) return
+        authInProgress = true
+        lockError = null
+        BiometricHelper.authenticate(
+            activity = this,
+            title = title,
+            subtitle = subtitle,
+            onSuccess = {
+                authInProgress = false
+                unlocked = true
+            },
+            onError = { message ->
+                authInProgress = false
+                lockError = message
+            }
+        )
     }
 
     companion object {
         const val EXTRA_OPEN_QUICK_ADD = "extra_open_quick_add"
         const val EXTRA_WIDGET_ACTION = "extra_widget_action"
+
+        /** Background time after which the biometric lock engages again. */
+        private const val RELOCK_AFTER_MS = 30_000L
+
+        // Process-scoped lock state: survives configuration changes and activity
+        // recreation, and resets to locked when the process dies.
+        private var unlocked by mutableStateOf(false)
+        private var autoPromptPending by mutableStateOf(true)
+        private var lockError by mutableStateOf<String?>(null)
+        private var backgroundedAt = 0L
     }
 }
+
+/** Snapshot of the biometric app lock passed from [MainActivity] into the UI. */
+data class AppLockState(
+    val isUnlocked: Boolean = true,
+    /** The system prompt should open on its own once (cold start or relock). */
+    val autoPromptPending: Boolean = false,
+    val lastError: String? = null
+)
 
 @Composable
 fun KakeiAppRoot(
     repository: KakeiRepository,
     initialQuickAdd: Boolean = false,
-    initialWidgetAction: String? = null
+    initialWidgetAction: String? = null,
+    lockState: AppLockState = AppLockState(),
+    onUnlockRequest: (title: String, subtitle: String) -> Unit = { _, _ -> },
+    onLockDisabled: () -> Unit = {}
 ) {
     val settings by repository.settingsState.collectAsState()
     val accounts by repository.accounts.collectAsState()
@@ -103,12 +178,41 @@ fun KakeiAppRoot(
     var showQuickAddModal by remember { mutableStateOf(initialQuickAdd) }
     var showProfile by remember { mutableStateOf(false) }
 
+    // Biometric app lock. Re-checked on resume: the user may have removed the device
+    // screen lock meanwhile, and a lock that can never be passed must not engage.
+    val context = LocalContext.current
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+    val isResumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    val canUseBiometrics = remember(settings.biometricLockEnabled, isResumed) {
+        settings.biometricLockEnabled && BiometricHelper.canAuthenticate(context)
+    }
+    val hasSession = settings.isAuthenticated || settings.isOfflineAutonomousMode
+    val lockActive = hasSession && canUseBiometrics && !lockState.isUnlocked
+    val promptTitle = appStrings.pick("Вход в Kakei", "Unlock Kakei")
+    val promptSubtitle = appStrings.pick("Биометрия или код устройства", "Biometrics or device credential")
+
+    if (!canUseBiometrics && !lockState.isUnlocked) {
+        // Lock turned off (or unusable): keep the session unlocked, so turning it on later
+        // does not lock the user out mid-session.
+        SideEffect { onLockDisabled() }
+    }
+    LaunchedEffect(lockActive, lockState.autoPromptPending, isResumed) {
+        if (lockActive && lockState.autoPromptPending && isResumed) {
+            onUnlockRequest(promptTitle, promptSubtitle)
+        }
+    }
+
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         KakeiTheme(themeMode = settings.themeMode) {
             if (!settings.isAuthenticated && !settings.isOfflineAutonomousMode) {
                 AuthScreen(
                     settings = settings,
                     repository = repository
+                )
+            } else if (lockActive) {
+                AppLockScreen(
+                    errorMessage = lockState.lastError,
+                    onUnlock = { onUnlockRequest(promptTitle, promptSubtitle) }
                 )
             } else {
                 // Profile is a full-screen page opened from the avatar on Home, not a tab.
@@ -148,7 +252,6 @@ fun KakeiAppRoot(
                                 settings = settings,
                                 accounts = accounts,
                                 categories = categories,
-                                labels = labels,
                                 rules = rules,
                                 groupMembers = groupMembers,
                                 pendingMutations = pendingMutations,

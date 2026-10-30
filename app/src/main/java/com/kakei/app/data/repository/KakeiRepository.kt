@@ -1,6 +1,7 @@
 package com.kakei.app.data.repository
 
 import android.content.Context
+import androidx.core.content.edit
 import com.kakei.app.BuildConfig
 import com.kakei.app.automation.BankSmsPatterns
 import com.kakei.app.automation.KakeiWidgetUpdater
@@ -8,6 +9,7 @@ import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
+import com.kakei.app.core.security.BiometricHelper
 import com.kakei.app.core.security.SecurePrefs
 import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
@@ -32,7 +34,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
@@ -261,7 +262,7 @@ class KakeiRepository(
         val legacy = prefs.getString("jwt_token", null)
         if (!legacy.isNullOrBlank()) {
             securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, legacy)
-            prefs.edit().remove("jwt_token").apply()
+            prefs.edit { remove("jwt_token") }
         }
         return legacy
     }
@@ -337,7 +338,7 @@ class KakeiRepository(
         if (_settingsState.value.language == AppLanguage.RU) ru else en
 
     fun setLanguage(language: AppLanguage) {
-        prefs.edit().putString("lang_code", language.code).apply()
+        prefs.edit { putString("lang_code", language.code) }
         _settingsState.value = _settingsState.value.copy(
             language = language,
             profile = _settingsState.value.profile.copy(language = language.code)
@@ -345,13 +346,13 @@ class KakeiRepository(
     }
 
     fun setThemeMode(mode: ThemeMode) {
-        prefs.edit().putString("theme_mode", mode.name).apply()
+        prefs.edit { putString("theme_mode", mode.name) }
         _settingsState.value = _settingsState.value.copy(themeMode = mode)
     }
 
     fun setServerBaseUrl(url: String) {
         val clean = url.trim().ifBlank { "http://10.0.2.2:5144" }
-        prefs.edit().putString("server_url", clean).apply()
+        prefs.edit { putString("server_url", clean) }
         apiClient.updateBaseUrl(clean)
         _settingsState.value = _settingsState.value.copy(serverBaseUrl = clean)
         scope.launch {
@@ -376,18 +377,28 @@ class KakeiRepository(
         val nextSms = smsEnabled ?: current.smsCaptureEnabled
         val nextPush = pushEnabled ?: current.pushCaptureEnabled
         val nextPopup = instantPopup ?: current.instantPopupEnabled
-        val nextBio = biometricEnabled ?: current.biometricLockEnabled
-        prefs.edit()
-            .putBoolean("sms_capture", nextSms)
-            .putBoolean("push_capture", nextPush)
-            .putBoolean("instant_popup", nextPopup)
-            .putBoolean("biometric_lock", nextBio)
-            .apply()
+        // Without an enrolled biometric or screen lock the gate could never be passed.
+        val bioUnavailable = biometricEnabled == true && !BiometricHelper.canAuthenticate(appContext)
+        val nextBio = if (bioUnavailable) current.biometricLockEnabled else biometricEnabled ?: current.biometricLockEnabled
+        prefs.edit {
+            putBoolean("sms_capture", nextSms)
+            putBoolean("push_capture", nextPush)
+            putBoolean("instant_popup", nextPopup)
+            putBoolean("biometric_lock", nextBio)
+        }
         _settingsState.value = current.copy(
             smsCaptureEnabled = nextSms,
             pushCaptureEnabled = nextPush,
             instantPopupEnabled = nextPopup,
-            biometricLockEnabled = nextBio
+            biometricLockEnabled = nextBio,
+            statusMessage = if (bioUnavailable) {
+                tr(
+                    "Сначала настройте биометрию или блокировку экрана в системе",
+                    "Set up biometrics or a screen lock in system settings first"
+                )
+            } else {
+                current.statusMessage
+            }
         )
     }
 
@@ -396,7 +407,7 @@ class KakeiRepository(
     // ========================================================================
 
     fun enterOfflineAutonomousMode() {
-        prefs.edit().putBoolean("offline_mode", true).apply()
+        prefs.edit { putBoolean("offline_mode", true) }
         reloadFromLocalDatabase()
         _settingsState.value = _settingsState.value.copy(
             isOfflineAutonomousMode = true,
@@ -461,11 +472,11 @@ class KakeiRepository(
                     defaultCurrency = defaultCurrency
                 )
             ).onSuccess { resp ->
-                prefs.edit()
-                    .putString("user_name", name.trim())
-                    .putString("user_email", email.trim())
-                    .putString("default_currency", defaultCurrency)
-                    .apply()
+                prefs.edit {
+                    putString("user_name", name.trim())
+                    putString("user_email", email.trim())
+                    putString("default_currency", defaultCurrency)
+                }
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
                     pendingEmailConfirmUserId = resp.userId,
@@ -494,12 +505,12 @@ class KakeiRepository(
 
     private suspend fun completeLoginSession(userId: String, email: String, token: String) {
         securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)
-        prefs.edit()
-            .remove("jwt_token")
-            .putString("user_id", userId)
-            .putString("user_email", email)
-            .putBoolean("offline_mode", false)
-            .apply()
+        prefs.edit {
+            remove("jwt_token")
+            putString("user_id", userId)
+            putString("user_email", email)
+            putBoolean("offline_mode", false)
+        }
         apiClient.accessToken = token
         _settingsState.value = _settingsState.value.copy(
             isAuthenticated = true,
@@ -518,10 +529,11 @@ class KakeiRepository(
             apiClient.clearSession()
             securePrefs.remove(SecurePrefs.KEY_ACCESS_TOKEN)
             securePrefs.remove(SecurePrefs.KEY_REFRESH_COOKIE)
-            prefs.edit()
-                .remove("jwt_token")
-                .putBoolean("offline_mode", false)
-                .apply()
+            prefs.edit {
+                remove("jwt_token")
+                putBoolean("offline_mode", false)
+            }
+            _passkeys.value = emptyList()
             _settingsState.value = _settingsState.value.copy(
                 isAuthenticated = false,
                 isOfflineAutonomousMode = false,
@@ -531,11 +543,11 @@ class KakeiRepository(
     }
 
     fun updateProfile(name: String, defaultCurrency: String, language: AppLanguage) {
-        prefs.edit()
-            .putString("user_name", name.trim())
-            .putString("default_currency", defaultCurrency)
-            .putString("lang_code", language.code)
-            .apply()
+        prefs.edit {
+            putString("user_name", name.trim())
+            putString("default_currency", defaultCurrency)
+            putString("lang_code", language.code)
+        }
         val updatedProfile = _settingsState.value.profile.copy(
             name = name.trim(),
             defaultCurrency = defaultCurrency,
@@ -1076,7 +1088,7 @@ class KakeiRepository(
             apiClient.getExchangeRates().onSuccess { storeExchangeRates(it) }.onFailure { pullFailures++ }
 
             val nowIso = Instant.now().toString()
-            prefs.edit().putString("last_sync", nowIso).apply()
+            prefs.edit { putString("last_sync", nowIso) }
             reloadFromLocalDatabase()
 
             // Override analytics with server values if available
@@ -1120,9 +1132,7 @@ class KakeiRepository(
         val lbls = database.listItems<LabelDto>(KakeiDatabase.COL_LABELS, descending = false)
         val rls = database.listItems<CounterpartyRuleDto>(KakeiDatabase.COL_RULES, descending = false)
         val txs = database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS, descending = true)
-        val rawBudgets = database.listItems<BudgetEnvelopeDto>(KakeiDatabase.COL_BUDGETS, descending = false)
         val obs = database.listItems<PlannedObligationDto>(KakeiDatabase.COL_OBLIGATIONS, descending = false)
-        val lendItems = database.listItems<LendingRecordDto>(KakeiDatabase.COL_LENDING, descending = true)
         val savItems = database.listItems<SavingsGoalDto>(KakeiDatabase.COL_SAVINGS, descending = false)
         val grpItems = database.listItems<GroupMemberDto>(KakeiDatabase.COL_GROUP_MEMBERS, descending = false)
         val muts = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
@@ -1205,15 +1215,6 @@ class KakeiRepository(
         _exchangeRates.value = resp
         _rateBook.value = ExchangeRateBook.from(resp)
         recomputeDerivedAnalytics()
-    }
-
-    fun refreshExchangeRates() {
-        if (!_settingsState.value.isAuthenticated) return
-        scope.launch {
-            apiClient.getExchangeRates()
-                .onSuccess { storeExchangeRates(it) }
-                .onFailure { postMessage(tr("Не удалось обновить курсы: ${it.message}", "Exchange rates refresh failed: ${it.message}")) }
-        }
     }
 
     /** Sets a manual rate: [rate] units of [toCurrency] per 1 [fromCurrency]. Requires a connection. */
@@ -1312,36 +1313,10 @@ class KakeiRepository(
         )
     }
 
-    fun toggleArchiveAccount(account: AccountDto) {
-        val updated = account.copy(
-            isArchived = !account.isArchived,
-            syncRevision = account.syncRevision + 1,
-            updatedAt = Instant.now().toString()
-        )
-        database.putItem(KakeiDatabase.COL_ACCOUNTS, updated.id, updated.name, database.json.encodeToString(updated))
-        val mutationItem = AccountMutationItem(
-            id = account.id,
-            isArchived = updated.isArchived,
-            expectedSyncRevision = account.syncRevision
-        )
-        enqueueOrSendAccountMutation(mutationItem)
-        reloadFromLocalDatabase()
-    }
-
     fun deleteAccount(accountId: String) {
         database.deleteItem(KakeiDatabase.COL_ACCOUNTS, accountId)
         reloadFromLocalDatabase()
         enqueueMutation("ACCOUNT", accountId, "DELETE", "{}")
-    }
-
-    private fun enqueueOrSendAccountMutation(item: AccountMutationItem) {
-        enqueueMutation(
-            entityType = "ACCOUNT",
-            entityId = item.id,
-            operation = "UPDATE",
-            payloadJson = database.json.encodeToString(item),
-            expectedSyncRevision = item.expectedSyncRevision
-        )
     }
 
     // ========================================================================
@@ -1383,33 +1358,6 @@ class KakeiRepository(
         )
     }
 
-    fun deleteCategory(id: String) {
-        database.deleteItem(KakeiDatabase.COL_CATEGORIES, id)
-        reloadFromLocalDatabase()
-        enqueueMutation("CATEGORY", id, "DELETE", "{}")
-    }
-
-    fun createLabel(name: String, colorHex: String) {
-        val lbl = LabelDto(
-            id = UUID.randomUUID().toString(),
-            name = name.trim(),
-            colorHex = colorHex,
-            createdAt = Instant.now().toString()
-        )
-        database.putItem(KakeiDatabase.COL_LABELS, lbl.id, lbl.name, database.json.encodeToString(lbl))
-        reloadFromLocalDatabase()
-        enqueueMutation(
-            "LABEL", lbl.id, "CREATE",
-            database.json.encodeToString(CreateLabelRequest(name = lbl.name, colorHex = colorHex))
-        )
-    }
-
-    fun deleteLabel(id: String) {
-        database.deleteItem(KakeiDatabase.COL_LABELS, id)
-        reloadFromLocalDatabase()
-        enqueueMutation("LABEL", id, "DELETE", "{}")
-    }
-
     fun createSmartRule(pattern: String, matchType: String, categoryId: String) {
         val rule = CounterpartyRuleDto(
             id = UUID.randomUUID().toString(),
@@ -1430,12 +1378,6 @@ class KakeiRepository(
                 )
             )
         )
-    }
-
-    fun deleteSmartRule(id: String) {
-        database.deleteItem(KakeiDatabase.COL_RULES, id)
-        reloadFromLocalDatabase()
-        enqueueMutation("RULE", id, "DELETE", "{}")
     }
 
     // ========================================================================
@@ -1572,7 +1514,7 @@ class KakeiRepository(
             putDto(KakeiDatabase.COL_ACCOUNTS, updatedSource.id, updatedSource.name, updatedSource)
 
             // TRANSFER: counterflow credit leg on the target account, exactly creditAmount.
-            if (targetAcc != null && creditAmount != null && pairId != null) {
+            if (targetAcc != null && creditAmount != null) {
                 val mirrorTx = record.copy(
                     id = UUID.randomUUID().toString(),
                     accountId = targetAcc.id,
@@ -2381,14 +2323,14 @@ class KakeiRepository(
     }
 
     fun setDefaultCaptureAccount(accountId: String?) {
-        prefs.edit().putString("capture_default_account", accountId).apply()
+        prefs.edit { putString("capture_default_account", accountId) }
         _settingsState.value = _settingsState.value.copy(captureDefaultAccountId = accountId)
     }
 
     fun setCaptureSenderAccount(sender: String, accountId: String?) {
         val map = _settingsState.value.captureSenderAccounts.toMutableMap()
         if (accountId == null) map.remove(sender) else map[sender] = accountId
-        prefs.edit().putString("capture_sender_accounts", database.json.encodeToString(map.toMap())).apply()
+        prefs.edit { putString("capture_sender_accounts", database.json.encodeToString(map.toMap())) }
         _settingsState.value = _settingsState.value.copy(captureSenderAccounts = map.toMap())
     }
 
@@ -2580,7 +2522,7 @@ class KakeiRepository(
                     !isQueued(c.id)
             }.forEach { database.deleteItem(KakeiDatabase.COL_CATEGORIES, it.id) }
         }
-        prefs.edit().putBoolean(PREF_DEMO_SEED_CLEANED, true).apply()
+        prefs.edit { putBoolean(PREF_DEMO_SEED_CLEANED, true) }
     }
 
     private fun reportDatabaseOpenState() {

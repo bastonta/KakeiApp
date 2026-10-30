@@ -160,11 +160,6 @@ object DatabaseKeyManager {
     internal val LEGACY_FALLBACK_PASSPHRASE: ByteArray
         get() = "kakei_fallback_local_passphrase_32b".toByteArray(Charsets.UTF_8).copyOf(32)
 
-    fun hasStoredPassphrase(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.contains(KEY_WRAPPED_PASSPHRASE) || prefs.contains(LEGACY_KEY_WRAPPED)
-    }
-
     /**
      * Returns the database passphrase, creating and wrapping a fresh random one when
      * none is stored yet.

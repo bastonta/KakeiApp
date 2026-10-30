@@ -1,7 +1,6 @@
 package com.kakei.app.ui.screens
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -59,7 +58,6 @@ private const val RECENT_RECORDS_LIMIT = 15
  * - Horizontal multi-currency accounts carousel (doubles as the ledger account filter) + Create Account dialog
  * - `NeedsReview` queue banner and the day-grouped ledger with splits, labels and clearing badges
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     settings: AppSettingsState,

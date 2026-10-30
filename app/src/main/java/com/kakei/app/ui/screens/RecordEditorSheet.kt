@@ -1,6 +1,5 @@
 package com.kakei.app.ui.screens
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -49,7 +48,7 @@ import java.util.UUID
  * - Multi-category Splits (`SplitDto`) editor
  * - Orthogonal Labels (`LabelDto`) multi-select chips
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordEditorDialog(
     accounts: List<AccountDto>,

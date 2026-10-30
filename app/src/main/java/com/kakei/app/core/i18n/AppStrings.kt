@@ -207,15 +207,7 @@ data class AppStrings(
         else -> code
     }
 
-    /** Display name for a budget alert level (SAFE, WARNING_75, WARNING_90, EXCEEDED_100). */
-    fun budgetAlert(code: String): String = when (code) {
-        "SAFE" -> pick("В норме", "On track")
-        "WARNING_75" -> pick("Использовано 75%", "75% used")
-        "WARNING_90" -> pick("Использовано 90%", "90% used")
-        "EXCEEDED_100", "CRITICAL_100" -> pick("Лимит превышен", "Over limit")
-        else -> code
-    }
-}
+    /** Display name for a budget alert level (SAFE, WARNING_75, WARNING_90, EXCEEDED_100). */}
 
 fun stringsFor(language: AppLanguage): AppStrings = when (language) {
     AppLanguage.RU -> AppStrings(

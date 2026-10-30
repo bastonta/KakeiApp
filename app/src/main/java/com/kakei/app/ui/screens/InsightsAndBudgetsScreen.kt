@@ -1,7 +1,6 @@
 package com.kakei.app.ui.screens
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -997,7 +996,6 @@ private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendS
 // Budgets
 // ============================================================================
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BudgetsSubScreen(
     baseCurrency: String,
@@ -1363,7 +1361,6 @@ private fun PlanningSubScreen(
 }
 
 /** Tap and long-press both open the row's action menu. */
-@OptIn(ExperimentalFoundationApi::class)
 private fun Modifier.combinedClickableCompat(onOpen: () -> Unit): Modifier =
     this.combinedClickable(onClick = onOpen, onLongClick = onOpen)
 

@@ -79,7 +79,7 @@ data class PendingCaptureEntity(
  * Encrypted local SQLite database powered by SQLCipher (AES-256) and AndroidKeyStore.
  * Stores full offline replicas of all Kakei domain entities and the Outbox mutation queue.
  */
-class KakeiDatabase(private val context: Context) {
+class KakeiDatabase(context: Context) {
 
     val json = Json {
         ignoreUnknownKeys = true
@@ -126,7 +126,7 @@ class KakeiDatabase(private val context: Context) {
             System.loadLibrary("sqlcipher")
             val passphrase = try {
                 resolvePassphrase(context)
-            } catch (e: KeystoreUnavailableException) {
+            } catch (_: KeystoreUnavailableException) {
                 // Transient Keystore failure that survived the retries: leave the encrypted
                 // file untouched (it opens normally once the Keystore recovers) and run this
                 // session on an ephemeral in-memory database keyed with a random passphrase.

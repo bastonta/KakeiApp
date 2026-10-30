@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Biometric app lock: when enabled, `MainActivity` shows `AppLockScreen` and a `BiometricPrompt` (biometrics or device credential) on cold start and after 30 seconds in the background.
+- Profile lists the passkeys registered on the Kakei account.
+
+### Changed
+- The biometric lock toggle refuses to turn on when no biometric or screen lock is set up on the device.
+- `SharedPreferences` writes use the KTX `edit { }` extension.
+
+### Removed
+- Unused repository actions (`refreshExchangeRates`, `toggleArchiveAccount`, `deleteCategory`, `createLabel`, `deleteLabel`, `deleteSmartRule`) and other dead helpers.
+
 ## [1.0.0] - 2026-10-30
 
 ### Added

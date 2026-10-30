@@ -148,6 +148,4 @@ object CurrencyFormatter {
             isoTimestamp.take(10)
         }
     }
-
-    fun todayIsoDate(): String = LocalDate.now().toString()
 }

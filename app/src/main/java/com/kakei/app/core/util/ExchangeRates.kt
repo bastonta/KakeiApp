@@ -67,8 +67,6 @@ data class ConvertedTotal(
     val total: BigDecimal,
     val unconverted: Map<String, BigDecimal> = emptyMap()
 ) {
-    val isComplete: Boolean get() = unconverted.isEmpty()
-
     companion object {
         fun of(
             items: List<Pair<BigDecimal, String>>,

@@ -3,7 +3,6 @@ package com.kakei.app.data.remote
 import com.kakei.app.data.remote.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -219,7 +218,7 @@ class KakeiApiClient(
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
-                    val body = resp.body?.string().orEmpty()
+                    val body = resp.body.string()
                     json.decodeFromString<TokenRefreshResponse>(body).token
                 } else null
             }
@@ -254,7 +253,7 @@ class KakeiApiClient(
                 .build()
 
             okHttpClient.newCall(request).execute().use { response ->
-                val rawBody = response.body?.string().orEmpty()
+                val rawBody = response.body.string()
                 if (response.code in 200..299) {
                     when {
                         T::class == Unit::class -> {
@@ -537,7 +536,7 @@ class KakeiApiClient(
             val req = Request.Builder().url(urlBuilder.build()).get().build()
             okHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) throw IOException("Export failed: HTTP ${resp.code}")
-                resp.body?.bytes() ?: ByteArray(0)
+                resp.body.bytes()
             }
         }
     }
