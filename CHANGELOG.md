@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- GitHub Actions release workflow (`release.yml`): on `v*` tags it runs the unit tests, builds a release APK signed from repository secrets and publishes it to a GitHub release with notes from `CHANGELOG.md`.
+- Release signing config in `app/build.gradle.kts`, read from an untracked `keystore.properties`.
+
 ### Removed
 - Unused dependencies `navigation-compose`, `datastore-preferences` and `okhttp logging-interceptor`.
 

@@ -175,6 +175,22 @@ app/build/outputs/apk/debug/app-debug.apk
 app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
+### Release Builds (CI)
+
+`.github/workflows/release.yml` runs only when a `vX.Y.Z` tag is pushed. It checks that the tag matches `versionName` in `app/build.gradle.kts`, runs `./gradlew test`, builds a signed release APK and attaches it as `kakei-vX.Y.Z.apk` to a GitHub release whose notes are taken from the matching `CHANGELOG.md` section.
+
+Signing comes from these repository secrets, which the workflow writes to an untracked `keystore.properties` read by Gradle:
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEY_BASE64` | Release keystore, base64-encoded (`base64 -w0 release.keystore`) |
+| `ANDROID_KEY_ALIAS` | Key alias |
+| `ANDROID_KEY_PASSWORD` | Keystore and key password |
+
+All three secrets are required; the workflow fails if any of them is missing.
+
+To sign locally, put the same `keystore.properties` (`password`, `keyAlias`, `storeFile`, optional `keyPassword`) in the repository root.
+
 ### Connecting to Kakei Backend Server
 
 1. Start the Kakei backend server (bound to port `5144` by default).

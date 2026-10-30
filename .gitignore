@@ -358,3 +358,6 @@ obj/
 
 # End of https://www.toptal.com/developers/gitignore/api/kotlin,android,androidstudio,intellij+all,visualstudiocode,windows,linux,macos
 
+
+# Release signing (written by CI)
+keystore.properties
