@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,6 +61,8 @@ fun RecordEditorScreen(
     /** Past records, the source of payee suggestions and their remembered categories. */
     transactions: List<TransactionDto>,
     langCode: String,
+    /** Creates a label inline from the form; the returned label gets selected on this record. */
+    onCreateLabel: (name: String, colorHex: String) -> LabelDto,
     /** Effective server rate (target units per 1 source unit), or null when unknown. */
     rateFor: (fromCurrency: String, toCurrency: String) -> BigDecimal?,
     onDismiss: () -> Unit,
@@ -97,6 +101,7 @@ fun RecordEditorScreen(
     var clearingStatus by remember { mutableStateOf("CLEARED") }
     var selectedLabels by remember { mutableStateOf(setOf<String>()) }
     var splits by remember { mutableStateOf(listOf<SplitDto>()) }
+    var newLabelName by remember { mutableStateOf<String?>(null) }
     var showDetails by remember { mutableStateOf(false) }
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
@@ -421,9 +426,45 @@ fun RecordEditorScreen(
                     }
                 }
 
-                // Orthogonal Labels / Tags
-                if (labels.isNotEmpty()) {
+                // Orthogonal Labels / Tags: pick existing ones or create a new one inline
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(s.labelsTitle, style = MaterialTheme.typography.labelLarge, color = c.muted)
+                    TextButton(onClick = { newLabelName = if (newLabelName == null) "" else null }) {
+                        Text(s.pick("+ Добавить метку", "+ Add label"))
+                    }
+                }
+
+                newLabelName?.let { draft ->
+                    val createLabel = {
+                        val name = draft.trim().removePrefix("#").trim()
+                        if (name.isNotEmpty()) {
+                            val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                            val label = existing ?: onCreateLabel(name, LABEL_COLORS[labels.size % LABEL_COLORS.size])
+                            selectedLabels = selectedLabels + label.id
+                            newLabelName = null
+                        }
+                    }
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { newLabelName = it },
+                        label = { Text(s.pick("Новая метка", "New label")) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { createLabel() }),
+                        trailingIcon = {
+                            IconButton(onClick = { createLabel() }, enabled = draft.isNotBlank()) {
+                                Icon(Icons.Outlined.Check, contentDescription = s.saveButton)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (labels.isNotEmpty()) {
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -518,6 +559,9 @@ fun RecordEditorScreen(
 }
 
 private const val OPERATORS = "+-×÷"
+
+/** Colors handed out in turn to labels created from the record form. */
+private val LABEL_COLORS = listOf("#6366F1", "#10B981", "#F59E0B", "#EF4444", "#06B6D4", "#EC4899", "#8B5CF6")
 
 /**
  * Big-number rendering of the calculator state: a plain number keeps what the user typed

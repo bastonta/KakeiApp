@@ -258,6 +258,7 @@ fun KakeiAppRoot(
                                 labels = labels,
                                 transactions = transactions,
                                 langCode = settings.language.code,
+                                onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
                                 rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
                                 onDismiss = { showQuickAddModal = false },
                                 onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount ->

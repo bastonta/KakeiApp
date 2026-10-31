@@ -1601,6 +1601,23 @@ class KakeiRepository(
         )
     }
 
+    /** Creates a label locally (selectable right away, e.g. on a new record) and queues it for sync. */
+    fun createLabel(name: String, colorHex: String): LabelDto {
+        val label = LabelDto(
+            id = UUID.randomUUID().toString(),
+            name = name.trim(),
+            colorHex = colorHex,
+            createdAt = Instant.now().toString()
+        )
+        database.putItem(KakeiDatabase.COL_LABELS, label.id, label.name, database.json.encodeToString(label))
+        reloadFromLocalDatabase()
+        enqueueMutation(
+            "LABEL", label.id, "CREATE",
+            database.json.encodeToString(CreateLabelRequest(name = label.name, colorHex = colorHex))
+        )
+        return label
+    }
+
     fun createSmartRule(pattern: String, matchType: String, categoryId: String) {
         val rule = CounterpartyRuleDto(
             id = UUID.randomUUID().toString(),
