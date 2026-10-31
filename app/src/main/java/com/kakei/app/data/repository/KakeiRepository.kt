@@ -348,11 +348,29 @@ class KakeiRepository(
         if (_settingsState.value.language == AppLanguage.RU) ru else en
 
     fun setLanguage(language: AppLanguage) {
+        if (language == _settingsState.value.language) return
         prefs.edit { putString("lang_code", language.code) }
+        val updatedProfile = _settingsState.value.profile.copy(language = language.code)
         _settingsState.value = _settingsState.value.copy(
             language = language,
-            profile = _settingsState.value.profile.copy(language = language.code)
+            profile = updatedProfile
         )
+        // The language is part of the server profile; without pushing it the next sync's
+        // profile pull would revert the choice to the server copy.
+        if (_settingsState.value.isAuthenticated) {
+            enqueueMutation(
+                entityType = "PROFILE",
+                entityId = updatedProfile.userId,
+                operation = "UPDATE",
+                payloadJson = database.json.encodeToString(
+                    ProfileInfoUpdateRequest(
+                        name = updatedProfile.name,
+                        defaultCurrency = updatedProfile.defaultCurrency,
+                        language = language.code
+                    )
+                )
+            )
+        }
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -536,7 +554,37 @@ class KakeiRepository(
             pendingEmailConfirmUserId = null,
             syncInProgress = false
         )
+        pushLoginLanguageIfChanged()
         synchronizeWithServer()
+    }
+
+    /**
+     * The language picked on the sign-in screen wins over the one stored in the server profile:
+     * when they differ, a profile update is queued so the following sync drains it before pulling.
+     */
+    private suspend fun pushLoginLanguageIfChanged() {
+        val language = _settingsState.value.language
+        apiClient.getProfileInfo().onSuccess { prof ->
+            if (AppLanguage.fromCode(prof.language) == language) return@onSuccess
+            val merged = prof.copy(language = language.code)
+            prefs.edit {
+                putString("user_name", merged.name)
+                putString("default_currency", merged.defaultCurrency)
+            }
+            _settingsState.value = _settingsState.value.copy(profile = merged)
+            enqueueMutation(
+                entityType = "PROFILE",
+                entityId = merged.userId,
+                operation = "UPDATE",
+                payloadJson = database.json.encodeToString(
+                    ProfileInfoUpdateRequest(
+                        name = merged.name,
+                        defaultCurrency = merged.defaultCurrency,
+                        language = language.code
+                    )
+                )
+            )
+        }
     }
 
     fun logout() {
@@ -982,10 +1030,25 @@ class KakeiRepository(
             }
 
             apiClient.getProfileInfo().onSuccess { prof ->
-                _settingsState.value = _settingsState.value.copy(
-                    profile = prof,
-                    language = AppLanguage.fromCode(prof.language)
-                )
+                if (remaining.any { it.entityType == "PROFILE" }) {
+                    // A local profile edit has not reached the server yet; keep the local values.
+                    val local = _settingsState.value.profile
+                    _settingsState.value = _settingsState.value.copy(
+                        profile = prof.copy(
+                            name = local.name,
+                            defaultCurrency = local.defaultCurrency,
+                            language = local.language
+                        )
+                    )
+                } else {
+                    val lang = AppLanguage.fromCode(prof.language)
+                    prefs.edit {
+                        putString("lang_code", lang.code)
+                        putString("user_name", prof.name)
+                        putString("default_currency", prof.defaultCurrency)
+                    }
+                    _settingsState.value = _settingsState.value.copy(profile = prof, language = lang)
+                }
             }.onFailure { pullFailures++ }
 
             val j = database.json
