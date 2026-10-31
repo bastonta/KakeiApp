@@ -288,20 +288,20 @@ class UnitTest {
     }
 
     private val systemCategoryTree = listOf(
-        CategoryDto(id = "00000000-0000-0000-0000-000000000100", name = "Food & Dining"),
-        CategoryDto(id = SystemCategories.GROCERIES, parentId = "00000000-0000-0000-0000-000000000100", name = "Groceries"),
-        CategoryDto(id = SystemCategories.FOOD_DELIVERY, parentId = "00000000-0000-0000-0000-000000000100", name = "Food Delivery"),
-        CategoryDto(id = "00000000-0000-0000-0000-000000000200", name = "Transportation"),
-        CategoryDto(id = SystemCategories.TAXI, parentId = "00000000-0000-0000-0000-000000000200", name = "Taxi & Rideshare"),
-        CategoryDto(id = "00000000-0000-0000-0000-000000000900", name = "Car"),
-        CategoryDto(id = SystemCategories.FUEL, parentId = "00000000-0000-0000-0000-000000000900", name = "Fuel & Charging"),
-        CategoryDto(id = SystemCategories.PARKING, parentId = "00000000-0000-0000-0000-000000000900", name = "Parking"),
-        CategoryDto(id = "00000000-0000-0000-0000-000000001000", name = "Digital Services"),
-        CategoryDto(id = SystemCategories.STREAMING, parentId = "00000000-0000-0000-0000-000000001000", name = "Streaming & Media"),
-        CategoryDto(id = SystemCategories.AI_CLOUD, parentId = "00000000-0000-0000-0000-000000001000", name = "AI & Cloud"),
-        CategoryDto(id = SystemCategories.GAMES, parentId = "00000000-0000-0000-0000-000000001000", name = "Games"),
-        CategoryDto(id = "00000000-0000-0000-0000-000000001400", name = "Finance"),
-        CategoryDto(id = SystemCategories.TAXES, parentId = "00000000-0000-0000-0000-000000001400", name = "Taxes"),
+        CategoryDto(id = "01a19376-6e46-7453-9394-6fec35072a36", name = "Food & Dining"),
+        CategoryDto(id = SystemCategories.GROCERIES, parentId = "01a19376-6e46-7453-9394-6fec35072a36", name = "Groceries"),
+        CategoryDto(id = SystemCategories.FOOD_DELIVERY, parentId = "01a19376-6e46-7453-9394-6fec35072a36", name = "Food Delivery"),
+        CategoryDto(id = "01a19376-6e5d-78d5-b34c-3c7b4fb284ad", name = "Transportation"),
+        CategoryDto(id = SystemCategories.TAXI, parentId = "01a19376-6e5d-78d5-b34c-3c7b4fb284ad", name = "Taxi & Rideshare"),
+        CategoryDto(id = "01a19376-6e69-77c7-adcc-3d2ed4989165", name = "Car"),
+        CategoryDto(id = SystemCategories.FUEL, parentId = "01a19376-6e69-77c7-adcc-3d2ed4989165", name = "Fuel & Charging"),
+        CategoryDto(id = SystemCategories.PARKING, parentId = "01a19376-6e69-77c7-adcc-3d2ed4989165", name = "Parking"),
+        CategoryDto(id = "01a19376-6ee1-7ca8-a428-dac83e2adf60", name = "Digital Services"),
+        CategoryDto(id = SystemCategories.STREAMING, parentId = "01a19376-6ee1-7ca8-a428-dac83e2adf60", name = "Streaming & Media"),
+        CategoryDto(id = SystemCategories.AI_CLOUD, parentId = "01a19376-6ee1-7ca8-a428-dac83e2adf60", name = "AI & Cloud"),
+        CategoryDto(id = SystemCategories.GAMES, parentId = "01a19376-6ee1-7ca8-a428-dac83e2adf60", name = "Games"),
+        CategoryDto(id = "01a19376-6f1e-720e-8260-71fb47fda07e", name = "Finance"),
+        CategoryDto(id = SystemCategories.TAXES, parentId = "01a19376-6f1e-720e-8260-71fb47fda07e", name = "Taxes"),
         CategoryDto(id = SystemCategories.INCOME, name = "Income"),
         CategoryDto(id = SystemCategories.SALARY, parentId = SystemCategories.INCOME, name = "Salary & Payroll"),
         CategoryDto(id = SystemCategories.INTEREST, parentId = SystemCategories.INCOME, name = "Interest & Dividends")
@@ -325,7 +325,7 @@ class UnitTest {
                 name = "Car",
                 limitAmount = BigDecimal("50000"),
                 currency = "KZT",
-                categoryIds = listOf("00000000-0000-0000-0000-000000000900")
+                categoryIds = listOf("01a19376-6e69-77c7-adcc-3d2ed4989165")
             )
         )
 
@@ -374,10 +374,10 @@ class UnitTest {
         assertTrue(tree.roots.any { it.id == "orphan" })
         assertEquals(
             listOf("AI & Cloud", "Games", "Streaming & Media"),
-            tree.children["00000000-0000-0000-0000-000000001000"]!!.map { it.name }
+            tree.children["01a19376-6ee1-7ca8-a428-dac83e2adf60"]!!.map { it.name }
         )
-        assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf(SystemCategories.FUEL))
-        assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf("00000000-0000-0000-0000-000000000900"))
+        assertEquals("01a19376-6e69-77c7-adcc-3d2ed4989165", tree.rootOf(SystemCategories.FUEL))
+        assertEquals("01a19376-6e69-77c7-adcc-3d2ed4989165", tree.rootOf("01a19376-6e69-77c7-adcc-3d2ed4989165"))
     }
 
     @Test

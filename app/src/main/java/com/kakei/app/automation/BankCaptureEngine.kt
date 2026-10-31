@@ -230,6 +230,10 @@ object SmartMerchantMatcher {
         listOf("gym", "fitness", "yoga", "crossfit") to SystemCategories.FITNESS,
         listOf("apple store", "best buy", "amazon", "electronics") to SystemCategories.ELECTRONICS,
         listOf("zara", "uniqlo", "h&m", "nike", "adidas", "apparel") to SystemCategories.CLOTHING,
+        listOf("booking.com", "airbnb", "hotel", "hostel", "отель", "гостиница") to SystemCategories.ACCOMMODATION,
+        listOf("airlines", "airways", "aviasales", "air astana", "аэрофлот", "авиабилет") to SystemCategories.TRAVEL_TICKETS,
+        listOf("university", "tuition", "университет", "школа") to SystemCategories.TUITION,
+        listOf("insurance", "страхов") to SystemCategories.INSURANCE,
         listOf("bank fee", "commission", "комиссия") to SystemCategories.BANK_FEES,
         listOf("tax", "налог") to SystemCategories.TAXES
     )

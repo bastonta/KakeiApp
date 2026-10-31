@@ -60,6 +60,8 @@ fun iconForKey(iconKey: String?): ImageVector = when (iconKey?.lowercase()) {
     "wrench" -> Icons.Outlined.CarRepair
     "plane", "travel" -> Icons.Outlined.Flight
     "luggage" -> Icons.Outlined.Luggage
+    "map" -> Icons.Outlined.Map
+    "hotel", "bed-double" -> Icons.Outlined.Hotel
     // Housing
     "home", "house", "rent" -> Icons.Outlined.Home
     "building" -> Icons.Outlined.Apartment
@@ -105,13 +107,14 @@ fun iconForKey(iconKey: String?): ImageVector = when (iconKey?.lowercase()) {
     "calculator" -> Icons.Outlined.Calculate
     "banknote" -> Icons.Outlined.Payments
     "swap", "transfer", "repeat", "arrow-left-right" -> Icons.Outlined.SwapHoriz
+    "ellipsis", "other" -> Icons.Outlined.MoreHoriz
     "shield", "shield-check" -> Icons.Outlined.Shield
     // Family, Education, Gifts, Work
     "users" -> Icons.Outlined.People
     "heart-handshake" -> Icons.Outlined.Diversity3
     "baby" -> Icons.Outlined.ChildCare
     "paw-print" -> Icons.Outlined.Pets
-    "graduation-cap" -> Icons.Outlined.School
+    "graduation-cap", "school" -> Icons.Outlined.School
     "presentation" -> Icons.Outlined.CoPresent
     "gift", "gifts" -> Icons.Outlined.CardGiftcard
     "hand-heart" -> Icons.Outlined.VolunteerActivism
