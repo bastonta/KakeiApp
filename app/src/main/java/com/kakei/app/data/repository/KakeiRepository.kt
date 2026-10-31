@@ -27,6 +27,7 @@ import com.kakei.app.data.remote.KakeiApiClient
 import com.kakei.app.data.remote.RefreshCookieStorage
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.domain.calculators.FinancialCalculators
+import com.kakei.app.domain.calculators.ObligationSchedule
 import com.kakei.app.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -951,6 +952,13 @@ class KakeiRepository(
                 val req = j.decodeFromString<UpsertObligationRequest>(mut.payloadJson)
                 apiClient.createObligation(req).fold(
                     onSuccess = { o -> adoptServerEntity(KakeiDatabase.COL_OBLIGATIONS, mut.entityId, o.id, o.nextDueDate, o); applied() },
+                    onFailure = { failure(it) }
+                )
+            }
+            "OBLIGATION" to "UPDATE" -> {
+                val req = j.decodeFromString<UpsertObligationRequest>(mut.payloadJson)
+                apiClient.updateObligation(mut.entityId, req).fold(
+                    onSuccess = { o -> putDto(KakeiDatabase.COL_OBLIGATIONS, o.id, o.nextDueDate, o); applied() },
                     onFailure = { failure(it) }
                 )
             }
@@ -1951,11 +1959,16 @@ class KakeiRepository(
         amount: BigDecimal,
         currency: String,
         frequency: String,
-        nextDueDate: String,
+        startDate: LocalDate,
+        dayOfMonth: Int?,
+        intervalDays: Int?,
         payee: String?,
         autoPost: Boolean = true
     ) {
         val nowIso = Instant.now().toString()
+        val dom = if (frequency == "MONTHLY") dayOfMonth ?: startDate.dayOfMonth else null
+        val interval = if (frequency == "EVERY_N_DAYS") intervalDays ?: 1 else null
+        val firstDue = ObligationSchedule(frequency, startDate, dom, interval).firstOnOrAfter(startDate) ?: startDate
         val ob = PlannedObligationDto(
             id = UUID.randomUUID().toString(),
             userId = _settingsState.value.profile.userId,
@@ -1966,7 +1979,10 @@ class KakeiRepository(
             amount = amount.setScale(2, RoundingMode.HALF_UP),
             currency = currency,
             frequency = frequency,
-            nextDueDate = nextDueDate,
+            startDate = startDate.toString(),
+            dayOfMonth = dom,
+            intervalDays = interval,
+            nextDueDate = firstDue.toString(),
             payee = payee?.takeIf { it.isNotBlank() } ?: title.trim(),
             autoPost = autoPost,
             isActive = true,
@@ -1986,10 +2002,74 @@ class KakeiRepository(
                     amount = ob.amount,
                     currency = currency,
                     frequency = frequency,
-                    nextDueDate = nextDueDate,
+                    startDate = ob.startDate,
+                    dayOfMonth = dom,
+                    intervalDays = interval,
                     payee = ob.payee,
                     autoPost = autoPost,
                     isActive = true
+                )
+            )
+        )
+    }
+
+    /**
+     * Edits a planned payment. Like the server, a payment that was already posted continues its
+     * new schedule after the current due date, so past occurrences are not posted again.
+     */
+    fun updateObligation(
+        id: String,
+        title: String,
+        type: String,
+        amount: BigDecimal,
+        frequency: String,
+        startDate: LocalDate,
+        dayOfMonth: Int?,
+        intervalDays: Int?
+    ) {
+        val existing = _obligations.value.firstOrNull { it.id == id } ?: return
+        val dom = if (frequency == "MONTHLY") dayOfMonth ?: startDate.dayOfMonth else null
+        val interval = if (frequency == "EVERY_N_DAYS") intervalDays ?: 1 else null
+        val currentDue = runCatching { LocalDate.parse(existing.nextDueDate.take(10)) }.getOrNull()
+        val from = if (existing.lastPostedAt != null && currentDue != null && currentDue.isAfter(startDate)) currentDue else startDate
+        val nextDue = ObligationSchedule(frequency, startDate, dom, interval).firstOnOrAfter(from)
+        val trimmedTitle = title.trim()
+        val updated = existing.copy(
+            title = trimmedTitle,
+            type = type,
+            amount = amount.setScale(2, RoundingMode.HALF_UP),
+            frequency = frequency,
+            startDate = startDate.toString(),
+            dayOfMonth = dom,
+            intervalDays = interval,
+            nextDueDate = (nextDue ?: currentDue ?: startDate).toString(),
+            // The payee follows the title unless it was set to something else.
+            payee = if (existing.payee == null || existing.payee == existing.title) trimmedTitle else existing.payee,
+            isActive = existing.isActive && nextDue != null,
+            updatedAt = Instant.now().toString()
+        )
+        database.putItem(KakeiDatabase.COL_OBLIGATIONS, updated.id, updated.nextDueDate, database.json.encodeToString(updated))
+        reloadFromLocalDatabase()
+        enqueueMutation(
+            "OBLIGATION", id, "UPDATE",
+            database.json.encodeToString(
+                UpsertObligationRequest(
+                    accountId = updated.accountId,
+                    targetAccountId = updated.targetAccountId,
+                    categoryId = updated.categoryId,
+                    title = updated.title,
+                    type = updated.type,
+                    amount = updated.amount,
+                    currency = updated.currency,
+                    frequency = updated.frequency,
+                    startDate = updated.startDate,
+                    dayOfMonth = dom,
+                    intervalDays = interval,
+                    endDate = updated.endDate,
+                    payee = updated.payee,
+                    note = updated.note,
+                    autoPost = updated.autoPost,
+                    isActive = existing.isActive
                 )
             )
         )
@@ -2013,16 +2093,10 @@ class KakeiRepository(
         )
         val currentDue = runCatching { LocalDate.parse(obligation.nextDueDate.take(10)) }
             .getOrDefault(LocalDate.now())
-        val nextDue = when (obligation.frequency.uppercase(Locale.ROOT)) {
-            "DAILY" -> currentDue.plusDays(1)
-            "WEEKLY" -> currentDue.plusWeeks(1)
-            "MONTHLY" -> currentDue.plusMonths(1)
-            "YEARLY" -> currentDue.plusYears(1)
-            else -> currentDue
-        }
+        val nextDue = ObligationSchedule.of(obligation).nextAfter(currentDue)
         val updatedOb = obligation.copy(
-            nextDueDate = nextDue.toString(),
-            isActive = obligation.frequency != "ONE_OFF",
+            nextDueDate = (nextDue ?: currentDue).toString(),
+            isActive = nextDue != null,
             lastPostedAt = Instant.now().toString()
         )
         database.putItem(

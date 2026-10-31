@@ -203,8 +203,16 @@ data class AppStrings(
         "WEEKLY" -> pick("Неделя", "Weekly")
         "MONTHLY" -> pick("Месяц", "Monthly")
         "YEARLY" -> pick("Год", "Yearly")
+        "EVERY_N_DAYS" -> pick("Каждые N дней", "Every N days")
         "ONE_OFF" -> pick("Разово", "One-off")
         else -> code
+    }
+
+    /** Schedule caption for a planned payment: "Месяц · 31-го", "Каждые 30 дн.". */
+    fun obligationPeriod(code: String, dayOfMonth: Int?, intervalDays: Int?): String = when {
+        code == "EVERY_N_DAYS" && intervalDays != null -> pick("Каждые $intervalDays дн.", "Every $intervalDays days")
+        code == "MONTHLY" && dayOfMonth != null -> period(code) + " · " + pick("$dayOfMonth-го", "day $dayOfMonth")
+        else -> period(code)
     }
 
     /** Display name for a budget alert level (SAFE, WARNING_75, WARNING_90, EXCEEDED_100). */}

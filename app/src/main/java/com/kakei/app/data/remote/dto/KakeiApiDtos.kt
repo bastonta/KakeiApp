@@ -651,7 +651,13 @@ data class PlannedObligationDto(
     val type: String = "EXPENSE", // "EXPENSE" | "INCOME" | "TRANSFER"
     val amount: DecimalStr,
     val currency: String,
-    val frequency: String = "MONTHLY", // "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY" | "ONE_OFF"
+    val frequency: String = "MONTHLY", // "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY" | "EVERY_N_DAYS" | "ONE_OFF"
+    /** When the schedule begins; empty in rows cached before it existed (then [nextDueDate] is used). */
+    val startDate: String = "",
+    /** MONTHLY: day of the month (1-31); shorter months use their last day. */
+    val dayOfMonth: Int? = null,
+    /** EVERY_N_DAYS: fixed step in days. */
+    val intervalDays: Int? = null,
     val nextDueDate: String,
     val endDate: String? = null,
     val payee: String? = null,
@@ -678,7 +684,9 @@ data class UpsertObligationRequest(
     val amount: DecimalStr,
     val currency: String,
     val frequency: String,
-    val nextDueDate: String,
+    val startDate: String,
+    val dayOfMonth: Int? = null,
+    val intervalDays: Int? = null,
     val endDate: String? = null,
     val payee: String? = null,
     val note: String? = null,

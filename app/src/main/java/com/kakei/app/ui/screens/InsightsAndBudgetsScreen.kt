@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,7 +48,9 @@ import com.kakei.app.ui.theme.kakeiCard
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.Month
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -60,6 +64,7 @@ private const val DONUT_TOP_CATEGORIES = 4
  * Tab 2: Analytics — Overview (health score, 30-day cash flow forecast, category split,
  * spending heatmap, insights), Envelope Budgets and the Planned Obligations list.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InsightsAndBudgetsScreen(
     baseCurrency: String,
@@ -81,6 +86,8 @@ fun InsightsAndBudgetsScreen(
     var subTab by rememberSaveable { mutableIntStateOf(0) }
     var showCreateBudgetDialog by remember { mutableStateOf(false) }
     var showCreateObligationDialog by remember { mutableStateOf(false) }
+    /** Planned payment opened in the dialog for editing; null while creating a new one. */
+    var editingObligation by remember { mutableStateOf<PlannedObligationDto?>(null) }
 
     Column(
         modifier = Modifier
@@ -121,7 +128,14 @@ fun InsightsAndBudgetsScreen(
                 forecast = forecast,
                 obligations = obligations,
                 categories = categories,
-                onOpenCreate = { showCreateObligationDialog = true },
+                onOpenCreate = {
+                    editingObligation = null
+                    showCreateObligationDialog = true
+                },
+                onEdit = {
+                    editingObligation = it
+                    showCreateObligationDialog = true
+                },
                 onExecute = { repository.executeObligationNow(it) },
                 onDelete = { repository.deleteObligation(it) }
             )
@@ -197,17 +211,27 @@ fun InsightsAndBudgetsScreen(
         )
     }
 
-    if (showCreateObligationDialog) {
-        var title by remember { mutableStateOf("") }
-        var amount by remember { mutableStateOf("25000") }
-        var freq by remember { mutableStateOf("MONTHLY") }
-        var opType by remember { mutableStateOf("EXPENSE") }
-        var dueDays by remember { mutableStateOf("7") }
+    if (showCreateObligationDialog) key(editingObligation?.id) {
+        val editing = editingObligation
+        val editingStart = editing?.let { ob ->
+            runCatching { LocalDate.parse(ob.startDate.ifBlank { ob.nextDueDate }.take(10)) }.getOrNull()
+        }
+        var title by remember { mutableStateOf(editing?.title.orEmpty()) }
+        var amount by remember { mutableStateOf(editing?.amount?.stripTrailingZeros()?.toPlainString() ?: "25000") }
+        var freq by remember { mutableStateOf(editing?.frequency ?: "MONTHLY") }
+        var opType by remember { mutableStateOf(editing?.type ?: "EXPENSE") }
+        var startDate by remember { mutableStateOf(editingStart ?: LocalDate.now()) }
+        var dayOfMonth by remember {
+            mutableStateOf((editing?.dayOfMonth ?: (editingStart ?: LocalDate.now()).dayOfMonth).toString())
+        }
+        var intervalDays by remember { mutableStateOf((editing?.intervalDays ?: 30).toString()) }
+        var showStartPicker by remember { mutableStateOf(false) }
         val defaultAccId = accounts.firstOrNull()?.id.orEmpty()
+        val dialogCurrency = editing?.currency ?: baseCurrency
 
         AlertDialog(
             onDismissRequest = { showCreateObligationDialog = false },
-            title = { Text(s.createObligationButton) },
+            title = { Text(if (editing != null) s.pick("Изменить платёж", "Edit payment") else s.createObligationButton) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -219,7 +243,7 @@ fun InsightsAndBudgetsScreen(
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("${s.amountLabel} ($baseCurrency)") },
+                        label = { Text("${s.amountLabel} ($dialogCurrency)") },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -236,24 +260,68 @@ fun InsightsAndBudgetsScreen(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("WEEKLY", "MONTHLY", "YEARLY", "ONE_OFF").forEach { f ->
+                        listOf("WEEKLY", "MONTHLY", "EVERY_N_DAYS", "YEARLY", "ONE_OFF").forEach { f ->
                             KakeiChip(text = s.period(f), selected = freq == f, onClick = { freq = f })
                         }
                     }
-                    OutlinedTextField(
-                        value = dueDays,
-                        onValueChange = { dueDays = it },
-                        label = { Text(s.pick("Через сколько дней", "Due in days from today")) },
-                        singleLine = true
-                    )
+                    OutlinedButton(onClick = { showStartPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.CalendarMonth, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            s.pick("Начать с ", "Start on ") +
+                                (shortDate(startDate.toString(), s, withYear = true) ?: startDate.toString())
+                        )
+                    }
+                    when (freq) {
+                        "MONTHLY" -> OutlinedTextField(
+                            value = dayOfMonth,
+                            onValueChange = { v -> dayOfMonth = v.filter { it.isDigit() }.take(2) },
+                            label = { Text(s.pick("День месяца (1–31)", "Day of month (1–31)")) },
+                            supportingText = {
+                                Text(s.pick(
+                                    "Если в месяце меньше дней — последний день месяца",
+                                    "Shorter months use their last day"
+                                ))
+                            },
+                            isError = dayOfMonth.toIntOrNull()?.let { it in 1..31 } != true,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                        "EVERY_N_DAYS" -> OutlinedTextField(
+                            value = intervalDays,
+                            onValueChange = { v -> intervalDays = v.filter { it.isDigit() }.take(4) },
+                            label = { Text(s.pick("Каждые сколько дней", "Repeat every N days")) },
+                            isError = intervalDays.toIntOrNull()?.let { it in 1..3660 } != true,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         val amt = amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
-                        val daysOffset = dueDays.toLongOrNull() ?: 7L
-                        if (title.isNotBlank() && amt > BigDecimal.ZERO && defaultAccId.isNotBlank()) {
+                        val dom = dayOfMonth.toIntOrNull()?.takeIf { it in 1..31 }
+                        val interval = intervalDays.toIntOrNull()?.takeIf { it in 1..3660 }
+                        val scheduleValid = when (freq) {
+                            "MONTHLY" -> dom != null
+                            "EVERY_N_DAYS" -> interval != null
+                            else -> true
+                        }
+                        if (editing != null && title.isNotBlank() && amt > BigDecimal.ZERO && scheduleValid) {
+                            repository.updateObligation(
+                                id = editing.id,
+                                title = title,
+                                type = opType,
+                                amount = amt,
+                                frequency = freq,
+                                startDate = startDate,
+                                dayOfMonth = dom,
+                                intervalDays = interval
+                            )
+                            showCreateObligationDialog = false
+                        } else if (editing == null && title.isNotBlank() && amt > BigDecimal.ZERO && defaultAccId.isNotBlank() && scheduleValid) {
                             repository.createObligation(
                                 title = title,
                                 accountId = defaultAccId,
@@ -262,7 +330,9 @@ fun InsightsAndBudgetsScreen(
                                 amount = amt,
                                 currency = baseCurrency,
                                 frequency = freq,
-                                nextDueDate = LocalDate.now().plusDays(daysOffset).toString(),
+                                startDate = startDate,
+                                dayOfMonth = dom,
+                                intervalDays = interval,
                                 payee = title
                             )
                             showCreateObligationDialog = false
@@ -278,6 +348,32 @@ fun InsightsAndBudgetsScreen(
                 }
             }
         )
+
+        if (showStartPicker) {
+            val zone = ZoneOffset.UTC
+            val pickerState = rememberDatePickerState(
+                initialSelectedDateMillis = startDate.atStartOfDay(zone).toInstant().toEpochMilli()
+            )
+            DatePickerDialog(
+                onDismissRequest = { showStartPicker = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pickerState.selectedDateMillis?.let {
+                            val picked = Instant.ofEpochMilli(it).atZone(zone).toLocalDate()
+                            // Picking a start date suggests repeating on that day of the month.
+                            if (startDate.dayOfMonth.toString() == dayOfMonth) dayOfMonth = picked.dayOfMonth.toString()
+                            startDate = picked
+                        }
+                        showStartPicker = false
+                    }) { Text(s.pick("Готово", "Done")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showStartPicker = false }) { Text(s.cancelButton) }
+                }
+            ) {
+                DatePicker(state = pickerState)
+            }
+        }
     }
 }
 
@@ -1243,6 +1339,7 @@ private fun PlanningSubScreen(
     obligations: List<PlannedObligationDto>,
     categories: List<CategoryDto>,
     onOpenCreate: () -> Unit,
+    onEdit: (PlannedObligationDto) -> Unit,
     onExecute: (PlannedObligationDto) -> Unit,
     onDelete: (String) -> Unit
 ) {
@@ -1319,13 +1416,21 @@ private fun PlanningSubScreen(
                                 icon = visual.icon,
                                 iconColor = visual.color,
                                 title = ob.title,
-                                subtitle = s.period(ob.frequency),
+                                subtitle = s.obligationPeriod(ob.frequency, ob.dayOfMonth, ob.intervalDays),
                                 amount = (if (ob.type == "INCOME") "+" else "−") + CurrencyFormatter.format(ob.amount, ob.currency),
                                 amountColor = if (ob.type == "INCOME") c.mint else c.text,
                                 trailingCaption = shortDate(ob.nextDueDate, s) ?: ob.nextDueDate,
                                 modifier = Modifier.combinedClickableCompat { menuId = ob.id }
                             )
                             DropdownMenu(expanded = menuId == ob.id, onDismissRequest = { menuId = null }) {
+                                DropdownMenuItem(
+                                    text = { Text(s.pick("Изменить", "Edit")) },
+                                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                                    onClick = {
+                                        menuId = null
+                                        onEdit(ob)
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text(s.executeNowButton) },
                                     leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null) },

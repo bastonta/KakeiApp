@@ -20,6 +20,7 @@ import com.kakei.app.data.remote.dto.PlannedObligationDto
 import com.kakei.app.data.remote.dto.SplitDto
 import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.domain.calculators.FinancialCalculators
+import com.kakei.app.domain.calculators.ObligationSchedule
 import com.kakei.app.ui.screens.CategoryTree
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -393,5 +394,23 @@ class UnitTest {
         // Bare options (no publicKey wrapper) pass through unchanged
         val bare = """{"challenge":"abc","rpId":"kakei.app"}"""
         assertEquals(Json.parseToJsonElement(bare), Json.parseToJsonElement(PasskeyHelper.extractPublicKeyOptions(Json.parseToJsonElement(bare))))
+    }
+
+    @Test
+    fun monthlyScheduleOn31stClampsToMonthEndWithoutDrift() {
+        val sched = ObligationSchedule("MONTHLY", LocalDate.of(2027, 1, 10), dayOfMonth = 31)
+        val jan = sched.firstOnOrAfter(sched.startDate)!!
+        assertEquals(LocalDate.of(2027, 1, 31), jan)
+        val feb = sched.nextAfter(jan)!!
+        assertEquals(LocalDate.of(2027, 2, 28), feb)
+        assertEquals(LocalDate.of(2027, 3, 31), sched.nextAfter(feb))
+    }
+
+    @Test
+    fun everyNDaysScheduleIgnoresMonthLength() {
+        val sched = ObligationSchedule("EVERY_N_DAYS", LocalDate.of(2027, 1, 31), intervalDays = 30)
+        assertEquals(LocalDate.of(2027, 1, 31), sched.firstOnOrAfter(sched.startDate))
+        assertEquals(LocalDate.of(2027, 3, 2), sched.nextAfter(LocalDate.of(2027, 1, 31)))
+        assertNull(ObligationSchedule("ONE_OFF", LocalDate.of(2027, 1, 31)).nextAfter(LocalDate.of(2027, 1, 31)))
     }
 }

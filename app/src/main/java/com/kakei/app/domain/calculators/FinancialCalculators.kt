@@ -459,6 +459,7 @@ object FinancialCalculators {
         val endDate = today.plusDays(horizonDays)
 
         for (ob in obligations.filter { it.isActive }) {
+            val schedule = ObligationSchedule.of(ob)
             var cursor = runCatching { LocalDate.parse(ob.nextDueDate.take(10)) }.getOrNull() ?: today
             val limitDate = ob.endDate?.takeIf { it.length >= 10 }
                 ?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
@@ -483,13 +484,7 @@ object FinancialCalculators {
                         )
                     )
                 }
-                cursor = when (ob.frequency.uppercase(Locale.ROOT)) {
-                    "DAILY" -> cursor.plusDays(1)
-                    "WEEKLY" -> cursor.plusWeeks(1)
-                    "MONTHLY" -> cursor.plusMonths(1)
-                    "YEARLY" -> cursor.plusYears(1)
-                    else -> endDate.plusDays(1) // ONE_OFF
-                }
+                cursor = schedule.nextAfter(cursor) ?: endDate.plusDays(1) // ONE_OFF
             }
         }
 
