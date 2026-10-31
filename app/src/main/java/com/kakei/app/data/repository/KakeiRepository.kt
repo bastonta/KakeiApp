@@ -1393,18 +1393,27 @@ class KakeiRepository(
     }
 
     /**
-     * Renames an account and/or changes its opening balance. The current balance moves by
-     * the same difference, mirroring the server, so the ledger history stays consistent.
+     * Renames an account, changes its opening balance and/or toggles whether it counts towards
+     * net worth. The current balance moves by the opening-balance difference, mirroring the
+     * server, so the ledger history stays consistent.
      */
-    fun updateAccount(accountId: String, name: String, initialBalance: BigDecimal) {
+    fun updateAccount(
+        accountId: String,
+        name: String,
+        initialBalance: BigDecimal,
+        isExcludedFromStats: Boolean? = null
+    ) {
         val existing = _accounts.value.firstOrNull { it.id == accountId } ?: return
         val newName = name.trim().ifBlank { existing.name }
         val newInitial = initialBalance.setScale(4, RoundingMode.HALF_UP)
         val delta = newInitial - existing.initialBalance
-        if (newName == existing.name && delta.signum() == 0) return
+        val newExcluded = isExcludedFromStats ?: existing.isExcludedFromStats
+        val excludedChanged = newExcluded != existing.isExcludedFromStats
+        if (newName == existing.name && delta.signum() == 0 && !excludedChanged) return
         val updated = existing.copy(
             name = newName,
             initialBalance = newInitial,
+            isExcludedFromStats = newExcluded,
             currentBalance = (existing.currentBalance + delta).setScale(4, RoundingMode.HALF_UP),
             updatedAt = Instant.now().toString()
         )
@@ -1421,6 +1430,7 @@ class KakeiRepository(
                 AccountMutationItem(
                     id = accountId,
                     name = newName.takeIf { it != existing.name },
+                    isExcludedFromStats = newExcluded.takeIf { excludedChanged },
                     initialBalance = newInitial.takeIf { delta.signum() != 0 }
                 )
             )

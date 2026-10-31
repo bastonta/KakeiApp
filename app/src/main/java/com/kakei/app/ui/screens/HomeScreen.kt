@@ -445,6 +445,7 @@ fun HomeScreen(
         var accName by remember(acc.id) { mutableStateOf(acc.name) }
         var accBalance by remember(acc.id) { mutableStateOf(acc.currentBalance.stripTrailingZeros().toPlainString()) }
         var viaRecord by remember(acc.id) { mutableStateOf(true) }
+        var excluded by remember(acc.id) { mutableStateOf(acc.isExcludedFromStats) }
         val targetBalance = accBalance.replace(',', '.').replace(" ", "").toBigDecimalOrNull()
         val delta = targetBalance?.let { it - acc.currentBalance }
 
@@ -489,6 +490,10 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = c.muted
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = excluded, onCheckedChange = { excluded = it })
+                        Text(s.pick("Не учитывать в чистом капитале", "Exclude from Net Worth stats"))
+                    }
                 }
             },
             confirmButton = {
@@ -497,10 +502,10 @@ fun HomeScreen(
                     onClick = {
                         val d = delta ?: BigDecimal.ZERO
                         if (viaRecord) {
-                            repository.updateAccount(acc.id, accName, acc.initialBalance)
+                            repository.updateAccount(acc.id, accName, acc.initialBalance, excluded)
                             repository.adjustBalanceWithRecord(acc.id, acc.currentBalance + d)
                         } else {
-                            repository.updateAccount(acc.id, accName, acc.initialBalance + d)
+                            repository.updateAccount(acc.id, accName, acc.initialBalance + d, excluded)
                         }
                         editAccount = null
                     }
