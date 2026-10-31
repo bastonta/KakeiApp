@@ -1329,6 +1329,59 @@ class KakeiRepository(
         )
     }
 
+    /**
+     * Renames an account and/or changes its opening balance. The current balance moves by
+     * the same difference, mirroring the server, so the ledger history stays consistent.
+     */
+    fun updateAccount(accountId: String, name: String, initialBalance: BigDecimal) {
+        val existing = _accounts.value.firstOrNull { it.id == accountId } ?: return
+        val newName = name.trim().ifBlank { existing.name }
+        val newInitial = initialBalance.setScale(4, RoundingMode.HALF_UP)
+        val delta = newInitial - existing.initialBalance
+        if (newName == existing.name && delta.signum() == 0) return
+        val updated = existing.copy(
+            name = newName,
+            initialBalance = newInitial,
+            currentBalance = (existing.currentBalance + delta).setScale(4, RoundingMode.HALF_UP),
+            updatedAt = Instant.now().toString()
+        )
+        database.putItem(KakeiDatabase.COL_ACCOUNTS, updated.id, updated.name, database.json.encodeToString(updated))
+        reloadFromLocalDatabase()
+        // No expectedSyncRevision: the server bumps an account's revision on every ledger record,
+        // so records queued ahead of this edit would always turn it into a 409. The server applies
+        // the opening-balance change as an atomic delta, so concurrent records are not lost.
+        enqueueMutation(
+            entityType = "ACCOUNT",
+            entityId = accountId,
+            operation = "UPDATE",
+            payloadJson = database.json.encodeToString(
+                AccountMutationItem(
+                    id = accountId,
+                    name = newName.takeIf { it != existing.name },
+                    initialBalance = newInitial.takeIf { delta.signum() != 0 }
+                )
+            )
+        )
+    }
+
+    /**
+     * Brings the account to [targetBalance] with an uncategorized correction record (income or
+     * expense for the difference), keeping the opening balance and the history untouched.
+     */
+    fun adjustBalanceWithRecord(accountId: String, targetBalance: BigDecimal) {
+        val account = _accounts.value.firstOrNull { it.id == accountId } ?: return
+        val delta = targetBalance.setScale(4, RoundingMode.HALF_UP) - account.currentBalance
+        if (delta.signum() == 0) return
+        createRecord(
+            accountId = accountId,
+            type = if (delta.signum() > 0) "INCOME" else "EXPENSE",
+            amount = delta.abs(),
+            categoryId = null,
+            payee = tr("Корректировка баланса", "Balance adjustment"),
+            note = null
+        )
+    }
+
     fun deleteAccount(accountId: String) {
         database.deleteItem(KakeiDatabase.COL_ACCOUNTS, accountId)
         reloadFromLocalDatabase()

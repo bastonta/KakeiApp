@@ -326,6 +326,8 @@ data class AccountMutationItem(
     val accountType: String? = null,
     val isExcludedFromStats: Boolean? = null,
     val isArchived: Boolean? = null,
+    /** New opening balance; the server shifts the current balance by the same difference. */
+    val initialBalance: DecimalStr? = null,
     val expectedSyncRevision: Long? = null
 )
 

@@ -50,6 +50,20 @@ import java.time.format.DateTimeFormatter
 /** Records shown on Home before the user taps "All". */
 private const val RECENT_RECORDS_LIMIT = 15
 
+/** Period filter of the expanded ledger ("All"). */
+private enum class LedgerPeriod {
+    THIS_MONTH, LAST_MONTH, THREE_MONTHS, THIS_YEAR, ALL_TIME;
+
+    /** Inclusive booking-date range, or null for no limit. */
+    fun range(today: LocalDate): ClosedRange<LocalDate>? = when (this) {
+        THIS_MONTH -> YearMonth.from(today).let { it.atDay(1)..it.atEndOfMonth() }
+        LAST_MONTH -> YearMonth.from(today).minusMonths(1).let { it.atDay(1)..it.atEndOfMonth() }
+        THREE_MONTHS -> YearMonth.from(today).let { it.minusMonths(2).atDay(1)..it.atEndOfMonth() }
+        THIS_YEAR -> today.withDayOfYear(1)..today.withDayOfYear(today.lengthOfYear())
+        ALL_TIME -> null
+    }
+}
+
 /**
  * Tab 1: Home & Ledger Screen combining:
  * - Greeting header with profile avatar, search and review notifications
@@ -80,7 +94,9 @@ fun HomeScreen(
     var searchVisible by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showAllRecords by remember { mutableStateOf(false) }
+    var ledgerPeriod by remember { mutableStateOf(LedgerPeriod.THIS_MONTH) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
+    var editAccount by remember { mutableStateOf<AccountDto?>(null) }
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
     var menuRecordId by remember { mutableStateOf<String?>(null) }
     var showNoNotifications by remember { mutableStateOf(false) }
@@ -134,20 +150,33 @@ fun HomeScreen(
         points.reversed()
     }
 
-    val needsReviewItems = transactions.filter { it.needsReview }
-    val filteredTransactions = transactions.filter { tx ->
-        val matchesAcc = selectedAccountFilter == null || tx.accountId == selectedAccountFilter
-        val matchesQuery = searchQuery.isBlank() ||
-            (tx.payee?.contains(searchQuery, ignoreCase = true) == true) ||
-            (tx.note?.contains(searchQuery, ignoreCase = true) == true)
-        matchesAcc && matchesQuery
+    val needsReviewItems = remember(transactions) { transactions.filter { it.needsReview } }
+    val filteredTransactions = remember(transactions, selectedAccountFilter, searchQuery) {
+        transactions.filter { tx ->
+            val matchesAcc = selectedAccountFilter == null || tx.accountId == selectedAccountFilter
+            val matchesQuery = searchQuery.isBlank() ||
+                (tx.payee?.contains(searchQuery, ignoreCase = true) == true) ||
+                (tx.note?.contains(searchQuery, ignoreCase = true) == true)
+            matchesAcc && matchesQuery
+        }
     }
-    val visibleTransactions = if (showAllRecords || searchQuery.isNotBlank()) {
-        filteredTransactions
-    } else {
-        filteredTransactions.take(RECENT_RECORDS_LIMIT)
+    // The expanded ledger is limited to the selected period; the collapsed one shows the latest records.
+    val visibleTransactions = remember(filteredTransactions, showAllRecords, searchQuery, ledgerPeriod, today) {
+        when {
+            showAllRecords -> {
+                val range = ledgerPeriod.range(today)
+                if (range == null) filteredTransactions else filteredTransactions.filter { tx ->
+                    val date = bookingDateTime(tx.bookingDate)?.toLocalDate()
+                    date != null && !date.isBefore(range.start) && !date.isAfter(range.endInclusive)
+                }
+            }
+            searchQuery.isNotBlank() -> filteredTransactions
+            else -> filteredTransactions.take(RECENT_RECORDS_LIMIT)
+        }
     }
-    val recordsByDay = visibleTransactions.groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }
+    val recordsByDay = remember(visibleTransactions) {
+        visibleTransactions.groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }.toList()
+    }
 
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
     val accountMap = remember(accounts) { accounts.associateBy { it.id } }
@@ -289,7 +318,9 @@ fun HomeScreen(
                         name = acc.name,
                         amount = formatMoney(acc.currentBalance, acc.currency),
                         selected = isSelected,
-                        onClick = { selectedAccountFilter = if (isSelected) null else acc.id }
+                        onClick = { selectedAccountFilter = if (isSelected) null else acc.id },
+                        // Only account admins may rename it or change its opening balance.
+                        onLongClick = { editAccount = acc }.takeIf { acc.permissionLevel == "ADMIN" }
                     )
                 }
             }
@@ -334,19 +365,49 @@ fun HomeScreen(
             SectionHeader(
                 title = s.recentTransactions,
                 action = when {
-                    filteredTransactions.size <= RECENT_RECORDS_LIMIT -> null
                     showAllRecords -> s.pick("Свернуть", "Less")
+                    filteredTransactions.size <= RECENT_RECORDS_LIMIT -> null
                     else -> s.pick("Все", "All")
                 },
-                onAction = { showAllRecords = !showAllRecords }
+                onAction = {
+                    showAllRecords = !showAllRecords
+                    if (showAllRecords) ledgerPeriod = LedgerPeriod.THIS_MONTH
+                }
             )
+        }
+
+        if (showAllRecords) {
+            item {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LedgerPeriod.entries.forEach { period ->
+                        KakeiChip(
+                            text = when (period) {
+                                LedgerPeriod.THIS_MONTH -> monthName(today.monthValue, s)
+                                LedgerPeriod.LAST_MONTH -> monthName(today.minusMonths(1).monthValue, s)
+                                LedgerPeriod.THREE_MONTHS -> s.pick("3 месяца", "3 months")
+                                LedgerPeriod.THIS_YEAR -> today.year.toString()
+                                LedgerPeriod.ALL_TIME -> s.pick("Всё время", "All time")
+                            },
+                            selected = ledgerPeriod == period,
+                            onClick = { ledgerPeriod = period }
+                        )
+                    }
+                }
+            }
         }
 
         if (visibleTransactions.isEmpty()) {
             item {
                 EmptyStateCard(
                     icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    title = s.pick("Операций пока нет", "No records yet"),
+                    title = if (showAllRecords) {
+                        s.pick("За этот период операций нет", "No records in this period")
+                    } else {
+                        s.pick("Операций пока нет", "No records yet")
+                    },
                     hint = s.pick(
                         "Нажмите «+», чтобы добавить расход или доход, или включите автозахват SMS в профиле.",
                         "Tap \"+\" to add an expense or income, or enable SMS capture in your profile."
@@ -354,97 +415,98 @@ fun HomeScreen(
                 )
             }
         } else {
-            item {
+            // One lazy item per day: composing the whole history inside a single item froze the UI.
+            items(recordsByDay, key = { (date, _) -> "day-${date ?: "none"}" }) { (date, dayRecords) ->
                 GroupCard {
-                    recordsByDay.entries.forEachIndexed { groupIndex, (date, dayRecords) ->
-                        val dayExpense = dayRecords.filter { it.type == "EXPENSE" }.mapNotNull {
+                    val dayExpense = remember(dayRecords, rateBook, baseCurrency) {
+                        dayRecords.filter { it.type == "EXPENSE" }.mapNotNull {
                             CurrencyFormatter.convert(it.amount.abs(), it.currency, baseCurrency, rateBook)
                         }.fold(BigDecimal.ZERO, BigDecimal::add)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 16.dp, end = 16.dp, top = if (groupIndex == 0) 14.dp else 10.dp, bottom = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = date?.let { dayLabel(it, s) } ?: "—",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = c.muted
+                        )
+                        if (dayExpense.signum() > 0) {
                             Text(
-                                text = date?.let { dayLabel(it, s) } ?: "—",
+                                text = "−" + CurrencyFormatter.format(dayExpense, baseCurrency),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = c.muted
                             )
-                            if (dayExpense.signum() > 0) {
-                                Text(
-                                    text = "−" + CurrencyFormatter.format(dayExpense, baseCurrency),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = c.muted
-                                )
-                            }
                         }
-                        dayRecords.forEach { tx ->
-                            val cat = tx.categoryId?.let { categoryMap[it] }
-                            val acc = accountMap[tx.accountId]
-                            val visual = recordVisual(tx, cat)
-                            val catName = cat?.localizedName(langCode)
-                            val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
-                            val userNote = tx.note?.takeIf { it.isNotBlank() && !it.startsWith("[Auto-") }
-                            Box {
-                                TransactionRow(
-                                    icon = visual.icon,
-                                    iconColor = visual.color,
-                                    title = tx.payee ?: catName ?: s.operationType(tx.type),
-                                    // Without a payee the category is already the title; don't repeat it.
-                                    subtitle = listOfNotNull(
-                                        catName.takeIf { tx.payee != null } ?: s.operationType(tx.type).takeIf { tx.type == "TRANSFER" },
-                                        acc?.name
-                                    ).joinToString(" · "),
-                                    amount = signedRecordAmount(tx),
-                                    amountColor = when (tx.type) {
-                                        "INCOME" -> c.mint
-                                        "TRANSFER" -> c.cyan
-                                        else -> c.text
+                    }
+                    dayRecords.forEach { tx ->
+                        val cat = tx.categoryId?.let { categoryMap[it] }
+                        val acc = accountMap[tx.accountId]
+                        val visual = recordVisual(tx, cat)
+                        val catName = cat?.localizedName(langCode)
+                        val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
+                        val userNote = tx.note?.takeIf { it.isNotBlank() && !it.startsWith("[Auto-") }
+                        Box {
+                            TransactionRow(
+                                icon = visual.icon,
+                                iconColor = visual.color,
+                                title = tx.payee ?: catName ?: s.operationType(tx.type),
+                                // Without a payee the category is already the title; don't repeat it.
+                                subtitle = listOfNotNull(
+                                    catName.takeIf { tx.payee != null } ?: s.operationType(tx.type).takeIf { tx.type == "TRANSFER" },
+                                    acc?.name
+                                ).joinToString(" · "),
+                                amount = signedRecordAmount(tx),
+                                amountColor = when (tx.type) {
+                                    "INCOME" -> c.mint
+                                    "TRANSFER" -> c.cyan
+                                    else -> c.text
+                                },
+                                trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalTime()
+                                    ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
+                                badge = when {
+                                    tx.needsReview -> s.pick("Проверить", "Review")
+                                    tx.status == "UNCLEARED" -> s.clearingStatus(tx.status)
+                                    else -> null
+                                },
+                                badgeColor = if (tx.needsReview) c.amber else c.muted,
+                                extra = listOfNotNull(
+                                    userNote,
+                                    s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits").takeIf { tx.splits.isNotEmpty() },
+                                    txLabels.joinToString(" ") { "#${it.name}" }.takeIf { txLabels.isNotEmpty() }
+                                ).joinToString(" · ").ifBlank { null },
+                                modifier = Modifier.combinedClickable(
+                                    onClick = {
+                                        if (tx.needsReview) reviewTargetRecord = tx else menuRecordId = tx.id
                                     },
-                                    trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalTime()
-                                        ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
-                                    badge = when {
-                                        tx.needsReview -> s.pick("Проверить", "Review")
-                                        tx.status == "UNCLEARED" -> s.clearingStatus(tx.status)
-                                        else -> null
-                                    },
-                                    badgeColor = if (tx.needsReview) c.amber else c.muted,
-                                    extra = listOfNotNull(
-                                        userNote,
-                                        s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits").takeIf { tx.splits.isNotEmpty() },
-                                        txLabels.joinToString(" ") { "#${it.name}" }.takeIf { txLabels.isNotEmpty() }
-                                    ).joinToString(" · ").ifBlank { null },
-                                    modifier = Modifier.combinedClickable(
-                                        onClick = {
-                                            if (tx.needsReview) reviewTargetRecord = tx else menuRecordId = tx.id
-                                        },
-                                        onLongClick = { menuRecordId = tx.id }
-                                    )
+                                    onLongClick = { menuRecordId = tx.id }
                                 )
-                                DropdownMenu(
-                                    expanded = menuRecordId == tx.id,
-                                    onDismissRequest = { menuRecordId = null }
-                                ) {
-                                    if (tx.type != "TRANSFER") {
-                                        DropdownMenuItem(
-                                            text = { Text(s.confirmCategory) },
-                                            leadingIcon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
-                                            onClick = {
-                                                menuRecordId = null
-                                                reviewTargetRecord = tx
-                                            }
-                                        )
-                                    }
+                            )
+                            DropdownMenu(
+                                expanded = menuRecordId == tx.id,
+                                onDismissRequest = { menuRecordId = null }
+                            ) {
+                                if (tx.type != "TRANSFER") {
                                     DropdownMenuItem(
-                                        text = { Text(s.deleteButton, color = c.coral) },
-                                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
+                                        text = { Text(s.confirmCategory) },
+                                        leadingIcon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
                                         onClick = {
                                             menuRecordId = null
-                                            repository.deleteRecord(tx)
+                                            reviewTargetRecord = tx
                                         }
                                     )
                                 }
+                                DropdownMenuItem(
+                                    text = { Text(s.deleteButton, color = c.coral) },
+                                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
+                                    onClick = {
+                                        menuRecordId = null
+                                        repository.deleteRecord(tx)
+                                    }
+                                )
                             }
                         }
                     }
@@ -516,6 +578,83 @@ fun HomeScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showCreateAccountDialog = false }) {
+                    Text(s.cancelButton)
+                }
+            }
+        )
+    }
+
+    // Edit Account Dialog (long press on an account card): name and balance, the latter either
+    // through a correction record or directly on the account (shifting its opening balance).
+    editAccount?.let { acc ->
+        var accName by remember(acc.id) { mutableStateOf(acc.name) }
+        var accBalance by remember(acc.id) { mutableStateOf(acc.currentBalance.stripTrailingZeros().toPlainString()) }
+        var viaRecord by remember(acc.id) { mutableStateOf(true) }
+        val targetBalance = accBalance.replace(',', '.').replace(" ", "").toBigDecimalOrNull()
+        val delta = targetBalance?.let { it - acc.currentBalance }
+
+        AlertDialog(
+            onDismissRequest = { editAccount = null },
+            title = { Text(s.pick("Изменить счёт", "Edit account")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = accName,
+                        onValueChange = { accName = it },
+                        label = { Text(s.pick("Название счёта", "Account Name")) },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = accBalance,
+                        onValueChange = { accBalance = it },
+                        label = { Text(s.pick("Текущий баланс", "Current balance") + ", ${acc.currency}") },
+                        isError = targetBalance == null,
+                        singleLine = true
+                    )
+                    KakeiSegmented(
+                        options = listOf(s.pick("Операцией", "Via record"), s.pick("В счёте", "On account")),
+                        selectedIndex = if (viaRecord) 0 else 1,
+                        onSelect = { viaRecord = it == 0 }
+                    )
+                    val diff = delta?.takeIf { it.signum() != 0 }?.let {
+                        (if (it.signum() > 0) "+" else "−") + CurrencyFormatter.format(it.abs(), acc.currency)
+                    }
+                    Text(
+                        text = when {
+                            diff == null -> s.pick("Баланс не меняется.", "The balance stays the same.")
+                            viaRecord -> s.pick(
+                                "Будет добавлена операция «Корректировка баланса» на $diff. Она войдёт в доходы/расходы.",
+                                "A \"Balance adjustment\" record of $diff will be added. It counts as income/expense."
+                            )
+                            else -> s.pick(
+                                "Начальный баланс изменится на $diff, без операции и без влияния на статистику.",
+                                "The opening balance changes by $diff, with no record and no effect on statistics."
+                            )
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.muted
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = targetBalance != null && accName.isNotBlank(),
+                    onClick = {
+                        val d = delta ?: BigDecimal.ZERO
+                        if (viaRecord) {
+                            repository.updateAccount(acc.id, accName, acc.initialBalance)
+                            repository.adjustBalanceWithRecord(acc.id, acc.currentBalance + d)
+                        } else {
+                            repository.updateAccount(acc.id, accName, acc.initialBalance + d)
+                        }
+                        editAccount = null
+                    }
+                ) {
+                    Text(s.saveButton)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editAccount = null }) {
                     Text(s.cancelButton)
                 }
             }
@@ -756,7 +895,8 @@ private fun AccountCard(
     name: String,
     amount: String,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
 ) {
     val c = KakeiTheme.colors
     Column(
@@ -768,7 +908,7 @@ private fun AccountCard(
                 borderColor = if (selected) c.mint else c.line,
                 borderWidth = if (selected) 1.5.dp else 1.dp
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Period filter for the full ledger ("All" on Home): current month (default), previous month, 3 months, current year or all time.
+- Long-press an account card on Home to rename it or set its current balance, either via a "Balance adjustment" income/expense record or directly on the account (shifts the opening balance, synced via `PATCH /accounts` `initialBalance`, no effect on statistics).
 - Two-level category picker (record editor, capture card, review dialog, budgets, smart rules): top-level groups first, subcategories of the opened group in a second row with a "Whole group" chip.
 - Icons for every category `iconKey` seeded by the backend, including the extended tree from backend migration 11 (Car, Digital Services, Family, Education, Gifts & Charity, Finance, Work & Business).
 
@@ -16,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Analytics category donut rolls subcategories up into their top-level group.
 
 ### Fixed
+- Expanding the ledger with "All" froze the app (ANR) on long histories: the whole history was composed in a single list item; each day is now its own lazy item.
 - Budgets on a parent category counted only records filed directly under it; like the server, they now include the direct subcategories (also in the health score).
 - New records, rules, planned payments and unrecognized bank captures no longer default to the alphabetically first category (now "AI & Cloud"); they stay uncategorized until the user picks one.
 
