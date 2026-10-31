@@ -1,5 +1,6 @@
 package com.kakei.app.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -20,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -31,6 +34,7 @@ import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.LabelDto
 import com.kakei.app.data.remote.dto.SplitDto
+import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.ui.components.*
 import com.kakei.app.ui.theme.KakeiTheme
 import java.math.BigDecimal
@@ -38,20 +42,22 @@ import java.math.RoundingMode
 import java.util.UUID
 
 /**
- * Quick-add Transaction Editor Sheet with:
+ * Full-screen New Record page with:
  * - EXPENSE / INCOME / TRANSFER segmented tabs
  * - Built-in expression calculator keypad (`+`, `-`, `×`, `÷`, `⌫`; long-press `⌫` clears), evaluated live
- * - Source & Target Account selectors
- * - Category tiles & Clearing Status (`UNCLEARED`, `CLEARED`, `RECONCILED`) selectors
+ * - Account and Category (or Target Account) fields in one row, picked from bottom-sheet lists
+ * - Payee autocomplete from past records, filling in the payee's last category
+ * - Clearing Status (`UNCLEARED`, `CLEARED`, `RECONCILED`) selectors
  * - Multi-category Splits (`SplitDto`) editor
  * - Orthogonal Labels (`LabelDto`) multi-select chips
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecordEditorDialog(
+fun RecordEditorScreen(
     accounts: List<AccountDto>,
     categories: List<CategoryDto>,
     labels: List<LabelDto>,
+    /** Past records, the source of payee suggestions and their remembered categories. */
+    transactions: List<TransactionDto>,
     langCode: String,
     /** Effective server rate (target units per 1 source unit), or null when unknown. */
     rateFor: (fromCurrency: String, toCurrency: String) -> BigDecimal?,
@@ -74,6 +80,8 @@ fun RecordEditorDialog(
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val payeeHistory = remember(transactions) { buildPayeeHistory(transactions) }
 
     var recordType by remember { mutableStateOf("EXPENSE") }
     var expression by remember { mutableStateOf("0") }
@@ -82,6 +90,8 @@ fun RecordEditorDialog(
         mutableStateOf(accounts.drop(1).firstOrNull()?.id ?: accounts.firstOrNull()?.id.orEmpty())
     }
     var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    // Once the user picks a category themselves, typing a known payee no longer overrides it.
+    var categoryPickedManually by remember { mutableStateOf(false) }
     var payee by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var clearingStatus by remember { mutableStateOf("CLEARED") }
@@ -133,31 +143,34 @@ fun RecordEditorDialog(
     }
     val types = listOf("EXPENSE" to s.expenseLabel, "INCOME" to s.incomeLabel, "TRANSFER" to s.transferLabel)
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = c.surf,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    BackHandler(onBack = onDismiss)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(c.bg)
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Title & close
+            // Back & title
             Row(verticalAlignment = Alignment.CenterVertically) {
+                CircleIconButton(
+                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                    contentDescription = s.pick("Назад", "Back"),
+                    onClick = onDismiss,
+                    size = 44.dp
+                )
+                Spacer(modifier = Modifier.width(14.dp))
                 Text(
                     text = s.quickAddTransaction,
                     style = MaterialTheme.typography.headlineMedium,
                     color = c.text,
                     modifier = Modifier.weight(1f)
-                )
-                CircleIconButton(
-                    icon = Icons.Outlined.Close,
-                    contentDescription = s.cancelButton,
-                    onClick = onDismiss
                 )
             }
 
@@ -210,101 +223,99 @@ fun RecordEditorDialog(
                 }
             }
 
-            // Source Account Selector
+            // Account and category (or transfer target) side by side, each picked from a list
             Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                accounts.filter { !it.isArchived }.forEach { acc ->
-                    val active = selectedAccountId == acc.id
-                    KakeiChip(
-                        text = "${acc.name} · ${acc.currency}",
-                        icon = if (active) Icons.Outlined.AccountBalanceWallet else null,
-                        selected = active,
-                        onClick = { selectedAccountId = acc.id }
+                AccountPickerField(
+                    caption = s.pick("Счёт", "Account"),
+                    accounts = accounts.filter { !it.isArchived },
+                    selectedId = selectedAccountId,
+                    onSelect = { selectedAccountId = it },
+                    modifier = Modifier.weight(1f)
+                )
+                if (recordType == "TRANSFER") {
+                    AccountPickerField(
+                        caption = s.targetAccountLabel,
+                        accounts = accounts.filter { !it.isArchived && it.id != selectedAccountId },
+                        selectedId = targetAccount?.id,
+                        onSelect = { targetAccountId = it },
+                        modifier = Modifier.weight(1f),
+                        transferTarget = true
+                    )
+                } else {
+                    CategoryPickerField(
+                        categories = categories,
+                        selectedId = selectedCategoryId,
+                        langCode = langCode,
+                        recordType = recordType,
+                        onSelect = {
+                            selectedCategoryId = it.id
+                            categoryPickedManually = true
+                        },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            if (recordType == "TRANSFER") {
-                // Target Account Selector for TRANSFER
-                Text(s.targetAccountLabel, style = MaterialTheme.typography.labelLarge, color = c.muted)
+            if (isCrossCurrency) {
                 Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    accounts.filter { !it.isArchived && it.id != selectedAccountId }.forEach { acc ->
-                        KakeiChip(
-                            text = "${acc.name} · ${acc.currency}",
-                            icon = Icons.Outlined.SwapHoriz,
-                            color = c.cyan,
-                            selected = targetAccountId == acc.id,
-                            onClick = { targetAccountId = acc.id }
-                        )
-                    }
+                    OutlinedTextField(
+                        value = if (receivedIsAnchor) receivedInput else effectiveReceived?.toPlainString().orEmpty(),
+                        onValueChange = {
+                            receivedInput = it
+                            receivedIsAnchor = true
+                        },
+                        label = { Text("${s.transferReceivedLabel} ($targetCurrency)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = if (receivedIsAnchor) effectiveRate?.toPlainString().orEmpty() else rateInput,
+                        onValueChange = {
+                            rateInput = it
+                            receivedIsAnchor = false
+                        },
+                        label = { Text("${s.transferRateLabel}: 1 $currency = ? $targetCurrency") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-                if (isCrossCurrency) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = if (receivedIsAnchor) receivedInput else effectiveReceived?.toPlainString().orEmpty(),
-                            onValueChange = {
-                                receivedInput = it
-                                receivedIsAnchor = true
-                            },
-                            label = { Text("${s.transferReceivedLabel} ($targetCurrency)") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = if (receivedIsAnchor) effectiveRate?.toPlainString().orEmpty() else rateInput,
-                            onValueChange = {
-                                rateInput = it
-                                receivedIsAnchor = false
-                            },
-                            label = { Text("${s.transferRateLabel}: 1 $currency = ? $targetCurrency") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    if (!crossCurrencyReady) {
-                        Text(
-                            text = s.transferRateMissing,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                if (!crossCurrencyReady) {
+                    Text(
+                        text = s.transferRateMissing,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
-            } else {
-                // Category groups as tiles, subcategories of the opened group below
-                CategoryPickerRow(
-                    categories = categories,
-                    selectedId = selectedCategoryId,
-                    langCode = langCode,
-                    onSelect = { selectedCategoryId = it.id },
-                    recordType = recordType,
-                    tiles = true
-                )
             }
 
-            // Payee
-            OutlinedTextField(
+            // Payee / merchant with suggestions from past records; a known payee fills in its last category
+            PayeeAutocompleteField(
                 value = payee,
-                onValueChange = { payee = it },
-                placeholder = { Text(s.payeeLabel) },
-                leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null, tint = c.muted) },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedContainerColor = c.surf2,
-                    focusedContainerColor = c.surf2,
-                    unfocusedBorderColor = Color.Transparent
-                ),
-                modifier = Modifier.fillMaxWidth()
+                onValueChange = { text ->
+                    payee = text
+                    if (!categoryPickedManually) {
+                        payeeHistory.firstOrNull { it.name.equals(text.trim(), ignoreCase = true) }
+                            ?.lastCategoryByType?.get(recordType)
+                            ?.let { selectedCategoryId = it }
+                    }
+                },
+                history = payeeHistory,
+                recordType = recordType,
+                categories = categories,
+                langCode = langCode,
+                onPick = { entry ->
+                    payee = entry.name
+                    entry.lastCategoryByType[recordType]?.let { selectedCategoryId = it }
+                    focusManager.clearFocus()
+                }
             )
 
             // Built-in calculator keypad

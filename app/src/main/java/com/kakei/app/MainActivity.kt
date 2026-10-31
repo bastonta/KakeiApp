@@ -217,10 +217,10 @@ fun KakeiAppRoot(
                     onUnlock = { onUnlockRequest(promptTitle, promptSubtitle) }
                 )
             } else {
-                // Profile and the transactions page are full-screen pages opened from Home, not tabs.
-                BackHandler(enabled = showProfile) { showProfile = false }
-                BackHandler(enabled = transactionsPage != null && !showProfile) { transactionsPage = null }
-                val fullScreenPage = showProfile || transactionsPage != null
+                // New record, profile and the transactions page are full-screen pages, not tabs.
+                BackHandler(enabled = showProfile && !showQuickAddModal) { showProfile = false }
+                BackHandler(enabled = transactionsPage != null && !showProfile && !showQuickAddModal) { transactionsPage = null }
+                val fullScreenPage = showQuickAddModal || showProfile || transactionsPage != null
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -251,7 +251,33 @@ fun KakeiAppRoot(
                             .consumeWindowInsets(innerPadding)
                             .imePadding()
                     ) {
-                        if (showProfile) {
+                        if (showQuickAddModal) {
+                            RecordEditorScreen(
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                langCode = settings.language.code,
+                                rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
+                                onDismiss = { showQuickAddModal = false },
+                                onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount ->
+                                    repository.createRecord(
+                                        accountId = accId,
+                                        type = type,
+                                        amount = amt,
+                                        categoryId = catId,
+                                        payee = payee,
+                                        note = note,
+                                        status = status,
+                                        transferTargetAccountId = targetAccId,
+                                        splits = splits,
+                                        labelIds = labelIds,
+                                        targetAmount = targetAmount
+                                    )
+                                    showQuickAddModal = false
+                                }
+                            )
+                        } else if (showProfile) {
                             ProfileAndHubScreen(
                                 settings = settings,
                                 accounts = accounts,
@@ -317,33 +343,6 @@ fun KakeiAppRoot(
                                 repository = repository
                             )
                         }
-                    }
-
-                    if (showQuickAddModal) {
-                        RecordEditorDialog(
-                            accounts = accounts,
-                            categories = categories,
-                            labels = labels,
-                            langCode = settings.language.code,
-                            rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
-                            onDismiss = { showQuickAddModal = false },
-                            onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount ->
-                                repository.createRecord(
-                                    accountId = accId,
-                                    type = type,
-                                    amount = amt,
-                                    categoryId = catId,
-                                    payee = payee,
-                                    note = note,
-                                    status = status,
-                                    transferTargetAccountId = targetAccId,
-                                    splits = splits,
-                                    labelIds = labelIds,
-                                    targetAmount = targetAmount
-                                )
-                                showQuickAddModal = false
-                            }
-                        )
                     }
                 }
             }
