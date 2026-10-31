@@ -69,7 +69,8 @@ fun HomeScreen(
     instantCapturedRecord: TransactionDto?,
     repository: KakeiRepository,
     onOpenProfile: () -> Unit,
-    onOpenTransactions: (accountId: String?, focusSearch: Boolean) -> Unit
+    onOpenTransactions: (accountId: String?, focusSearch: Boolean) -> Unit,
+    onEditRecord: (TransactionDto) -> Unit
 ) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
@@ -362,6 +363,7 @@ fun HomeScreen(
                             labels = tx.labelIds.mapNotNull { labelMap[it] },
                             langCode = langCode,
                             onReview = { reviewTargetRecord = it },
+                            onEdit = onEditRecord,
                             onDelete = { repository.deleteRecord(it) }
                         )
                     }

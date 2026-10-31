@@ -44,7 +44,7 @@ import java.math.RoundingMode
 import java.util.UUID
 
 /**
- * Full-screen New Record page with:
+ * Full-screen New Record / Edit Record page with:
  * - EXPENSE / INCOME / TRANSFER segmented tabs
  * - Built-in expression calculator keypad (`+`, `-`, `×`, `÷`, `⌫`; long-press `⌫` clears), evaluated live
  * - Account and Category (or Target Account) fields in one row, picked from bottom-sheet lists
@@ -52,6 +52,8 @@ import java.util.UUID
  * - Clearing Status (`UNCLEARED`, `CLEARED`, `RECONCILED`) selectors
  * - Multi-category Splits (`SplitDto`) editor
  * - Orthogonal Labels (`LabelDto`) multi-select chips
+ *
+ * With [initialRecord] the form is prefilled for editing; type and accounts stay fixed.
  */
 @Composable
 fun RecordEditorScreen(
@@ -65,6 +67,8 @@ fun RecordEditorScreen(
     onCreateLabel: (name: String, colorHex: String) -> LabelDto,
     /** Effective server rate (target units per 1 source unit), or null when unknown. */
     rateFor: (fromCurrency: String, toCurrency: String) -> BigDecimal?,
+    /** Record being edited (the debit leg for a transfer), or null for a new record. */
+    initialRecord: TransactionDto? = null,
     onDismiss: () -> Unit,
     onSave: (
         accountId: String,
@@ -87,22 +91,45 @@ fun RecordEditorScreen(
     val focusManager = LocalFocusManager.current
     val payeeHistory = remember(transactions) { buildPayeeHistory(transactions) }
 
-    var recordType by remember { mutableStateOf("EXPENSE") }
-    var expression by remember { mutableStateOf("0") }
-    var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id.orEmpty()) }
-    var targetAccountId by remember {
-        mutableStateOf(accounts.drop(1).firstOrNull()?.id ?: accounts.firstOrNull()?.id.orEmpty())
+    val editing = initialRecord != null
+    // Credit leg of an edited transfer: its amount prefills "received" for cross-currency pairs.
+    val initialCreditLeg = remember(initialRecord) {
+        initialRecord?.transferPairId?.let { pairId ->
+            transactions.firstOrNull { it.transferPairId == pairId && it.isTransferCredit }
+        }
     }
-    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+
+    var recordType by remember { mutableStateOf(initialRecord?.type ?: "EXPENSE") }
+    var expression by remember {
+        mutableStateOf(
+            initialRecord?.amount?.abs()?.setScale(2, RoundingMode.HALF_UP)?.stripTrailingZeros()
+                ?.toPlainString() ?: "0"
+        )
+    }
+    var selectedAccountId by remember {
+        mutableStateOf(initialRecord?.accountId ?: accounts.firstOrNull()?.id.orEmpty())
+    }
+    var targetAccountId by remember {
+        mutableStateOf(
+            initialRecord?.transferTargetAccountId
+                ?: accounts.drop(1).firstOrNull()?.id ?: accounts.firstOrNull()?.id.orEmpty()
+        )
+    }
+    var selectedCategoryId by remember { mutableStateOf(initialRecord?.categoryId) }
     // Once the user picks a category themselves, typing a known payee no longer overrides it.
-    var categoryPickedManually by remember { mutableStateOf(false) }
-    var payee by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-    var clearingStatus by remember { mutableStateOf("CLEARED") }
-    var selectedLabels by remember { mutableStateOf(setOf<String>()) }
-    var splits by remember { mutableStateOf(listOf<SplitDto>()) }
+    var categoryPickedManually by remember { mutableStateOf(editing) }
+    var payee by remember { mutableStateOf(initialRecord?.payee.orEmpty()) }
+    var note by remember { mutableStateOf(initialRecord?.note.orEmpty()) }
+    var clearingStatus by remember { mutableStateOf(initialRecord?.status ?: "CLEARED") }
+    var selectedLabels by remember { mutableStateOf(initialRecord?.labelIds?.toSet() ?: setOf()) }
+    var splits by remember { mutableStateOf(initialRecord?.splits ?: listOf()) }
     var newLabelName by remember { mutableStateOf<String?>(null) }
-    var showDetails by remember { mutableStateOf(false) }
+    var showDetails by remember {
+        mutableStateOf(
+            initialRecord != null && (!initialRecord.note.isNullOrBlank() || initialRecord.labelIds.isNotEmpty() ||
+                initialRecord.splits.isNotEmpty() || initialRecord.status != "CLEARED")
+        )
+    }
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
     val currency = selectedAccount?.currency ?: "KZT"
@@ -120,8 +147,10 @@ fun RecordEditorScreen(
                 ?.stripTrailingZeros()?.toPlainString().orEmpty()
         )
     }
-    var receivedInput by remember(currency, targetCurrency) { mutableStateOf("") }
-    var receivedIsAnchor by remember(currency, targetCurrency) { mutableStateOf(false) }
+    val initialReceived = initialCreditLeg?.takeIf { it.currency.equals(targetCurrency, ignoreCase = true) }
+        ?.amount?.setScale(2, RoundingMode.HALF_UP)?.stripTrailingZeros()?.toPlainString()
+    var receivedInput by remember(currency, targetCurrency) { mutableStateOf(initialReceived.orEmpty()) }
+    var receivedIsAnchor by remember(currency, targetCurrency) { mutableStateOf(initialReceived != null) }
     val enteredRate = parseDecimalInput(rateInput)
     val enteredReceived = parseDecimalInput(receivedInput)
     val effectiveReceived: BigDecimal? = if (receivedIsAnchor) {
@@ -141,9 +170,10 @@ fun RecordEditorScreen(
         "TRANSFER" -> c.cyan
         else -> c.coral
     }
-    val saveLabel = when (recordType) {
-        "INCOME" -> s.pick("Сохранить доход", "Save income")
-        "TRANSFER" -> s.pick("Сохранить перевод", "Save transfer")
+    val saveLabel = when {
+        editing -> s.pick("Сохранить изменения", "Save changes")
+        recordType == "INCOME" -> s.pick("Сохранить доход", "Save income")
+        recordType == "TRANSFER" -> s.pick("Сохранить перевод", "Save transfer")
         else -> s.pick("Сохранить расход", "Save expense")
     }
     val types = listOf("EXPENSE" to s.expenseLabel, "INCOME" to s.incomeLabel, "TRANSFER" to s.transferLabel)
@@ -172,22 +202,24 @@ fun RecordEditorScreen(
                 )
                 Spacer(modifier = Modifier.width(14.dp))
                 Text(
-                    text = s.quickAddTransaction,
+                    text = if (editing) s.pick("Изменить операцию", "Edit record") else s.quickAddTransaction,
                     style = MaterialTheme.typography.headlineMedium,
                     color = c.text,
                     modifier = Modifier.weight(1f)
                 )
             }
 
-            // Type Tabs: EXPENSE / INCOME / TRANSFER
-            KakeiSegmented(
-                options = types.map { it.second },
-                selectedIndex = types.indexOfFirst { it.first == recordType },
-                onSelect = { index ->
-                    HapticHelper.tick(context)
-                    recordType = types[index].first
-                }
-            )
+            // Type Tabs: EXPENSE / INCOME / TRANSFER (fixed once the record exists)
+            if (!editing) {
+                KakeiSegmented(
+                    options = types.map { it.second },
+                    selectedIndex = types.indexOfFirst { it.first == recordType },
+                    onSelect = { index ->
+                        HapticHelper.tick(context)
+                        recordType = types[index].first
+                    }
+                )
+            }
 
             // Big calculator amount display: the running total, with the raw expression below it
             Column(
@@ -235,19 +267,21 @@ fun RecordEditorScreen(
             ) {
                 AccountPickerField(
                     caption = s.pick("Счёт", "Account"),
-                    accounts = accounts.filter { !it.isArchived },
+                    accounts = if (editing) accounts else accounts.filter { !it.isArchived },
                     selectedId = selectedAccountId,
                     onSelect = { selectedAccountId = it },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    enabled = !editing
                 )
                 if (recordType == "TRANSFER") {
                     AccountPickerField(
                         caption = s.targetAccountLabel,
-                        accounts = accounts.filter { !it.isArchived && it.id != selectedAccountId },
+                        accounts = accounts.filter { (editing || !it.isArchived) && it.id != selectedAccountId },
                         selectedId = targetAccount?.id,
                         onSelect = { targetAccountId = it },
                         modifier = Modifier.weight(1f),
-                        transferTarget = true
+                        transferTarget = true,
+                        enabled = !editing
                     )
                 } else {
                     CategoryPickerField(

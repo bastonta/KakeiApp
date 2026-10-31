@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.currentStateAsState
 import com.kakei.app.core.i18n.LocalAppStrings
 import com.kakei.app.core.i18n.stringsFor
 import com.kakei.app.core.security.BiometricHelper
+import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.data.repository.KakeiRepository
 import com.kakei.app.ui.components.BottomNavItem
 import com.kakei.app.ui.components.KakeiBottomBar
@@ -179,6 +180,13 @@ fun KakeiAppRoot(
     var showProfile by remember { mutableStateOf(false) }
     // Full-screen transactions page opened from Home: (account filter, focus search).
     var transactionsPage by remember { mutableStateOf<Pair<String?, Boolean>?>(null) }
+    // Record opened in the editor; a transfer is always edited through its debit leg.
+    var editingRecord by remember { mutableStateOf<TransactionDto?>(null) }
+    val openRecordEditor: (TransactionDto) -> Unit = { tx ->
+        editingRecord = if (tx.isTransferCredit && tx.transferPairId != null) {
+            transactions.firstOrNull { it.transferPairId == tx.transferPairId && !it.isTransferCredit } ?: tx
+        } else tx
+    }
 
     // Biometric app lock. Re-checked on resume: the user may have removed the device
     // screen lock meanwhile, and a lock that can never be passed must not engage.
@@ -220,7 +228,7 @@ fun KakeiAppRoot(
                 // New record, profile and the transactions page are full-screen pages, not tabs.
                 BackHandler(enabled = showProfile && !showQuickAddModal) { showProfile = false }
                 BackHandler(enabled = transactionsPage != null && !showProfile && !showQuickAddModal) { transactionsPage = null }
-                val fullScreenPage = showQuickAddModal || showProfile || transactionsPage != null
+                val fullScreenPage = showQuickAddModal || showProfile || transactionsPage != null || editingRecord != null
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -251,7 +259,36 @@ fun KakeiAppRoot(
                             .consumeWindowInsets(innerPadding)
                             .imePadding()
                     ) {
-                        if (showQuickAddModal) {
+                        val recordToEdit = editingRecord
+                        if (recordToEdit != null) {
+                            key(recordToEdit.id) {
+                                RecordEditorScreen(
+                                    accounts = accounts,
+                                    categories = categories,
+                                    labels = labels,
+                                    transactions = transactions,
+                                    langCode = settings.language.code,
+                                    onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
+                                    rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
+                                    initialRecord = recordToEdit,
+                                    onDismiss = { editingRecord = null },
+                                    onSave = { _, _, amt, catId, payee, note, status, _, splits, labelIds, targetAmount ->
+                                        repository.updateRecord(
+                                            record = recordToEdit,
+                                            amount = amt,
+                                            categoryId = catId,
+                                            payee = payee,
+                                            note = note,
+                                            status = status,
+                                            splits = splits,
+                                            labelIds = labelIds,
+                                            targetAmount = targetAmount
+                                        )
+                                        editingRecord = null
+                                    }
+                                )
+                            }
+                        } else if (showQuickAddModal) {
                             RecordEditorScreen(
                                 accounts = accounts,
                                 categories = categories,
@@ -301,6 +338,7 @@ fun KakeiAppRoot(
                                 repository = repository,
                                 initialAccountId = accountId,
                                 focusSearch = focusSearch,
+                                onEditRecord = openRecordEditor,
                                 onBack = { transactionsPage = null }
                             )
                         } else when (currentTab) {
@@ -315,7 +353,8 @@ fun KakeiAppRoot(
                                 instantCapturedRecord = instantCapturedRecord,
                                 repository = repository,
                                 onOpenProfile = { showProfile = true },
-                                onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch }
+                                onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch },
+                                onEditRecord = openRecordEditor
                             )
                             1 -> InsightsAndBudgetsScreen(
                                 baseCurrency = settings.profile.defaultCurrency,

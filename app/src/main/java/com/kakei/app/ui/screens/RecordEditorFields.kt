@@ -180,6 +180,7 @@ private fun PickerField(
     icon: ImageVector,
     iconTint: Color,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     sheet: @Composable (close: () -> Unit) -> Unit
 ) {
     val c = KakeiTheme.colors
@@ -189,7 +190,7 @@ private fun PickerField(
             .height(56.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(c.surf2)
-            .clickable { open = true }
+            .clickable(enabled = enabled) { open = true }
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -206,7 +207,7 @@ private fun PickerField(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, tint = c.muted)
+        if (enabled) Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, tint = c.muted)
     }
     if (open) {
         ModalBottomSheet(
@@ -289,7 +290,9 @@ fun AccountPickerField(
     selectedId: String?,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
-    transferTarget: Boolean = false
+    transferTarget: Boolean = false,
+    /** False shows the account read-only (an existing record cannot move between accounts). */
+    enabled: Boolean = true
 ) {
     val c = KakeiTheme.colors
     val selected = accounts.firstOrNull { it.id == selectedId }
@@ -300,7 +303,8 @@ fun AccountPickerField(
         valueText = selected?.let { "${it.name} · ${it.currency}" } ?: "—",
         icon = icon,
         iconTint = tint,
-        modifier = modifier
+        modifier = modifier,
+        enabled = enabled
     ) { close ->
         PickerSheetHeader(caption)
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {

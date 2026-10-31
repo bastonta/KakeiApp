@@ -1085,7 +1085,11 @@ class KakeiRepository(
     private suspend fun drainOutbox(): Pair<Boolean, Int> {
         var rejectedCount = 0
         val queued = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
-        for (mut in queued) {
+        for (queuedMut in queued) {
+            // Re-read: an earlier entry may have swapped a local id for the server one
+            // (adoptServerEntity rewrites stored payloads, e.g. a label created inline
+            // in the record form), and this snapshot would still carry the stale id.
+            val mut = database.getItem<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, queuedMut.id) ?: continue
             val result = runCatching { processMutation(mut) }.getOrElse { failure(it) }
             when (result.outcome) {
                 Outcome.APPLIED -> database.deleteItem(KakeiDatabase.COL_MUTATIONS, mut.id)
@@ -1858,6 +1862,121 @@ class KakeiRepository(
         enqueueMutation(
             "RECORD", record.id, "REVIEW",
             database.json.encodeToString(ConfirmReviewRequest(categoryId = categoryId, createSmartRule = createRule))
+        )
+    }
+
+    /**
+     * Edits an existing record. Account and type are fixed after creation (the server does not
+     * accept them on `PATCH /records`). For a transfer the edit goes through the debit leg: the
+     * credit leg follows it (same amount, or exactly [targetAmount] across currencies), and each
+     * leg's balance moves by the difference of its own effect, mirroring the server.
+     */
+    fun updateRecord(
+        record: TransactionDto,
+        amount: BigDecimal,
+        categoryId: String?,
+        payee: String?,
+        note: String?,
+        status: String,
+        splits: List<SplitDto>,
+        labelIds: List<String>,
+        targetAmount: BigDecimal? = null
+    ) {
+        val legs = if (record.transferPairId != null) {
+            database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS)
+                .filter { it.transferPairId == record.transferPairId }
+        } else emptyList()
+        val debit = legs.firstOrNull { !it.isTransferCredit } ?: record
+        val credit = legs.firstOrNull { it.isTransferCredit && it.id != debit.id }
+
+        val baseCurrency = _settingsState.value.profile.defaultCurrency
+        val rates = _rateBook.value
+        val now = Instant.now().toString()
+        val newAmount = amount.abs().setScale(4, RoundingMode.HALF_UP)
+        val amountChanged = newAmount.compareTo(debit.amount) != 0
+        val cleanPayee = payee?.trim()?.takeIf { it.isNotEmpty() }
+        val cleanNote = note?.trim()?.takeIf { it.isNotEmpty() }
+        val isTransfer = debit.type == "TRANSFER"
+
+        val updatedDebit = debit.copy(
+            amount = newAmount,
+            convertedAmount = if (amountChanged) {
+                CurrencyFormatter.convert(newAmount, debit.currency, baseCurrency, rates) ?: debit.convertedAmount
+            } else debit.convertedAmount,
+            categoryId = if (isTransfer) debit.categoryId else categoryId ?: debit.categoryId,
+            payee = cleanPayee,
+            note = cleanNote,
+            status = status,
+            needsReview = if (!isTransfer && categoryId != null) false else debit.needsReview,
+            splits = if (isTransfer) debit.splits else splits,
+            labelIds = labelIds,
+            updatedAt = now
+        )
+        // Same rule as the server: same currency → same amount; otherwise the stated credited
+        // amount, or the pair's previous implied rate when only the debit amount changed.
+        val updatedCredit = credit?.let { leg ->
+            val creditAmount = when {
+                leg.currency.equals(debit.currency, ignoreCase = true) -> newAmount
+                targetAmount != null && targetAmount.signum() > 0 -> targetAmount.abs().setScale(4, RoundingMode.HALF_UP)
+                amountChanged && debit.amount.signum() != 0 ->
+                    newAmount.multiply(leg.amount).divide(debit.amount, 4, RoundingMode.HALF_UP)
+                else -> leg.amount
+            }
+            leg.copy(
+                amount = creditAmount,
+                convertedAmount = CurrencyFormatter.convert(creditAmount, leg.currency, baseCurrency, rates)
+                    ?: leg.convertedAmount,
+                status = status,
+                updatedAt = now
+            )
+        }
+        val changedLegs = listOf(debit to updatedDebit) +
+            (if (credit != null && updatedCredit != null) listOf(credit to updatedCredit) else emptyList())
+
+        database.runInTransaction {
+            for ((old, new) in changedLegs) {
+                putDto(KakeiDatabase.COL_TRANSACTIONS, new.id, new.bookingDate, new)
+                val delta = balanceEffect(new) - balanceEffect(old)
+                if (delta.signum() == 0) continue
+                // Fresh read per leg: both legs may sit on the same account.
+                val account = database.getItem<AccountDto>(KakeiDatabase.COL_ACCOUNTS, new.accountId) ?: continue
+                val updatedAcc = account.copy(
+                    currentBalance = (account.currentBalance + delta).setScale(4, RoundingMode.HALF_UP),
+                    updatedAt = now
+                )
+                putDto(KakeiDatabase.COL_ACCOUNTS, updatedAcc.id, updatedAcc.name, updatedAcc)
+            }
+        }
+        reloadFromLocalDatabase()
+
+        // A record still waiting in the Outbox has no server revision to compare against yet.
+        val hasPending = _pendingMutations.value.any { it.entityType == "RECORD" && it.entityId == debit.id }
+        val creditTarget = if (credit != null && updatedCredit != null &&
+            !credit.currency.equals(debit.currency, ignoreCase = true) &&
+            updatedCredit.amount.compareTo(credit.amount) != 0
+        ) updatedCredit.amount else null
+        val item = UpdateRecordItem(
+            id = debit.id,
+            categoryId = updatedDebit.categoryId.takeIf { it != debit.categoryId },
+            amount = newAmount.takeIf { amountChanged },
+            // An empty string clears the field on the server; null leaves it unchanged.
+            payee = (cleanPayee ?: "").takeIf { cleanPayee != debit.payee },
+            note = (cleanNote ?: "").takeIf { cleanNote != debit.note },
+            status = status.takeIf { it != debit.status },
+            needsReview = false.takeIf { debit.needsReview && !updatedDebit.needsReview },
+            splits = if (!isTransfer && splits != debit.splits) {
+                splits.map { SplitItemInput(it.categoryId, it.amount, it.note) }
+            } else null,
+            labelIds = labelIds.takeIf { it != debit.labelIds },
+            targetAmount = creditTarget,
+            expectedSyncRevision = debit.syncRevision.takeIf { !hasPending }
+        )
+        enqueueMutation(
+            entityType = "RECORD",
+            entityId = debit.id,
+            operation = "UPDATE",
+            payloadJson = database.json.encodeToString(item),
+            expectedSyncRevision = item.expectedSyncRevision
         )
     }
 

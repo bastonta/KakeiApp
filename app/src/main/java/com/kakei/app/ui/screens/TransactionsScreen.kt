@@ -90,6 +90,7 @@ fun TransactionsScreen(
     repository: KakeiRepository,
     initialAccountId: String? = null,
     focusSearch: Boolean = false,
+    onEditRecord: (TransactionDto) -> Unit,
     onBack: () -> Unit
 ) {
     val s = LocalAppStrings.current
@@ -428,6 +429,7 @@ fun TransactionsScreen(
                                 labels = entry.tx.labelIds.mapNotNull { labelMap[it] },
                                 langCode = langCode,
                                 onReview = { reviewTarget = it },
+                                onEdit = onEditRecord,
                                 onDelete = { repository.deleteRecord(it) }
                             )
                         }
@@ -587,7 +589,7 @@ private fun rangeLabel(range: ClosedRange<LocalDate>, s: AppStrings): String {
 }
 
 /**
- * A ledger record row with its tap / long-press menu (confirm category, delete), shared by the
+ * A ledger record row with its tap / long-press menu (edit, confirm category, delete), shared by the
  * Home ledger and the transactions page. Tapping a record that needs review opens the review.
  */
 @Composable
@@ -598,6 +600,7 @@ internal fun LedgerRecordItem(
     labels: List<LabelDto>,
     langCode: String,
     onReview: (TransactionDto) -> Unit,
+    onEdit: (TransactionDto) -> Unit,
     onDelete: (TransactionDto) -> Unit
 ) {
     val s = LocalAppStrings.current
@@ -641,6 +644,14 @@ internal fun LedgerRecordItem(
             )
         )
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(s.pick("Изменить", "Edit")) },
+                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    onEdit(tx)
+                }
+            )
             if (tx.type != "TRANSFER") {
                 DropdownMenuItem(
                     text = { Text(s.confirmCategory) },
