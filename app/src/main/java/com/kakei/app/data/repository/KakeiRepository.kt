@@ -1183,7 +1183,7 @@ class KakeiRepository(
         val obs = _obligations.value
         val lendItems = database.listItems<LendingRecordDto>(KakeiDatabase.COL_LENDING, descending = true)
 
-        val evaluatedBudgets = FinancialCalculators.evaluateBudgets(rawBudgets, txs, rates = rates)
+        val evaluatedBudgets = FinancialCalculators.evaluateBudgets(rawBudgets, txs, rates = rates, categories = _categories.value)
         _budgets.value = evaluatedBudgets
 
         // Debts in a currency without a known rate are left out of the base-currency totals
@@ -1209,7 +1209,7 @@ class KakeiRepository(
         )
 
         _forecast.value = FinancialCalculators.calculateCashFlowForecast(accs, obs, baseCurrency, rates = rates)
-        _healthScore.value = FinancialCalculators.calculateHealthScore(txs, evaluatedBudgets, lendItems, baseCurrency, rates = rates)
+        _healthScore.value = FinancialCalculators.calculateHealthScore(txs, evaluatedBudgets, lendItems, baseCurrency, rates = rates, categories = _categories.value)
         _streaks.value = FinancialCalculators.calculateNoSpendStreak(txs)
         _heatmaps.value = FinancialCalculators.calculateHeatmaps(txs, baseCurrency, rates = rates)
         _insights.value = FinancialCalculators.calculateInsights(txs, baseCurrency, rates = rates)
@@ -2095,7 +2095,7 @@ class KakeiRepository(
         )
         val (summary, items) = FinancialCalculators.parseStatementImport(acc, existingHashes, req)
         for (item in items) {
-            val match = SmartMerchantMatcher.classify(item.payee, item.note, _rules.value, _categories.value)
+            val match = SmartMerchantMatcher.classify(item.payee, item.note, _rules.value, _categories.value, item.type)
             createRecord(
                 accountId = item.accountId,
                 type = item.type,
@@ -2273,7 +2273,8 @@ class KakeiRepository(
             payee = parsed.merchant,
             note = parsed.rawMessage,
             rules = _rules.value,
-            categories = _categories.value
+            categories = _categories.value,
+            recordType = parsed.operationType
         )
 
         val result = createRecordDetailed(
@@ -2311,7 +2312,8 @@ class KakeiRepository(
             payee = capture.merchant,
             note = capture.rawText,
             rules = _rules.value,
-            categories = _categories.value
+            categories = _categories.value,
+            recordType = capture.operationType
         )
         val result = createRecordDetailed(
             accountId = account.id,

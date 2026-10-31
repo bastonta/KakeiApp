@@ -1,5 +1,6 @@
 package com.kakei.app.automation
 
+import com.kakei.app.core.util.SystemCategories
 import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.CounterpartyRuleDto
 import java.math.BigDecimal
@@ -197,19 +198,59 @@ data class CategorizationMatchResult(
  * Dual-tier auto-categorization engine:
  * 1. Deterministic User Smart Rules (`EXACT`, `PREFIX`, `CONTAINS` ordered by longest pattern match).
  * 2. Embedded keyword ML heuristic classifier (flags `needsReview = true` for one-tap confirmation).
+ *    Keywords route to the backend's system category ids (mirroring `services/categorization`),
+ *    falling back to name heuristics for local categories. Nothing matched leaves the category empty.
  */
 object SmartMerchantMatcher {
+
+    /** Server keyword table: first match wins, so specific merchants precede generic words. */
+    private val expenseKeywordTable: List<Pair<List<String>, String>> = listOf(
+        listOf("starbucks", "coffee", "espresso", "costa", "roastery") to SystemCategories.COFFEE,
+        listOf("doordash", "ubereats", "deliveroo", "wolt", "glovo", "yandex eda", "яндекс еда") to SystemCategories.FOOD_DELIVERY,
+        listOf("atm withdrawal", "cash withdrawal", "банкомат", "снятие наличных") to SystemCategories.CASH_WITHDRAWAL,
+        listOf(
+            "walmart", "whole foods", "carrefour", "tesco", "aldi", "lidl", "grocery", "supermarket",
+            "magnum", "small", "galmart", "arbuz", "продукт", "супермаркет"
+        ) to SystemCategories.GROCERIES,
+        listOf("mcdonald", "burger", "pizza", "restaurant", "bistro", "sushi", "kfc", "dodo", "ресторан", "кафе") to SystemCategories.RESTAURANTS,
+        listOf("uber", "lyft", "bolt", "yandex go", "indriver", "taxi", "cab", "такси") to SystemCategories.TAXI,
+        listOf("parking", "парковка") to SystemCategories.PARKING,
+        listOf("car wash", "auto service", "tire service", "мойка", "шиномонтаж") to SystemCategories.CAR_MAINTENANCE,
+        listOf("shell", "bp", "chevron", "exxon", "fuel", "petrol", "supercharger", "азс") to SystemCategories.FUEL,
+        listOf("metro", "subway", "transit", "train", "bus", "railway", "onay") to SystemCategories.TRANSIT,
+        listOf("openai", "chatgpt", "claude", "anthropic", "icloud", "google one", "dropbox") to SystemCategories.AI_CLOUD,
+        listOf("steam", "gog.com", "epic games", "playstation", "xbox", "nintendo", "blizzard") to SystemCategories.GAMES,
+        listOf("netflix", "spotify", "youtube", "apple music", "кинопоиск") to SystemCategories.STREAMING,
+        listOf("kindle", "audible", "webtoon", "remanga", "литрес") to SystemCategories.BOOKS,
+        listOf("google play", "app store") to SystemCategories.APPS,
+        listOf("rent", "mortgage", "landlord", "hoa") to SystemCategories.RENT,
+        listOf("internet", "telecom", "mobile", "beeline", "kcell", "tele2") to SystemCategories.PHONE_INTERNET,
+        listOf("electric", "water", "utility", "gas bill") to SystemCategories.UTILITIES,
+        listOf("pharmacy", "cvs", "walgreens", "clinic", "hospital", "dental", "doctor", "аптека") to SystemCategories.PHARMACY,
+        listOf("gym", "fitness", "yoga", "crossfit") to SystemCategories.FITNESS,
+        listOf("apple store", "best buy", "amazon", "electronics") to SystemCategories.ELECTRONICS,
+        listOf("zara", "uniqlo", "h&m", "nike", "adidas", "apparel") to SystemCategories.CLOTHING,
+        listOf("bank fee", "commission", "комиссия") to SystemCategories.BANK_FEES,
+        listOf("tax", "налог") to SystemCategories.TAXES
+    )
+
+    private val incomeKeywordTable: List<Pair<List<String>, String>> = listOf(
+        listOf("refund", "cashback", "chargeback", "возврат", "кэшбэк") to SystemCategories.REFUNDS,
+        listOf("dividend", "interest", "дивиденд") to SystemCategories.INTEREST,
+        listOf("salary", "payroll", "wage", "зарплат", "аванс") to SystemCategories.SALARY
+    )
 
     fun classify(
         payee: String?,
         note: String?,
         rules: List<CounterpartyRuleDto>,
-        categories: List<CategoryDto>
+        categories: List<CategoryDto>,
+        recordType: String? = null
     ): CategorizationMatchResult {
         val target = listOfNotNull(payee, note).joinToString(" ").trim()
         if (target.isEmpty()) {
             return CategorizationMatchResult(
-                categoryId = categories.firstOrNull()?.id,
+                categoryId = null,
                 matchedRuleId = null,
                 needsReview = true,
                 confidenceLabel = "Needs Review"
@@ -236,9 +277,21 @@ object SmartMerchantMatcher {
             }
         }
 
-        // Tier 2: Heuristic keyword classification
+        // Tier 2: Heuristic keyword classification, system categories first
         val lower = target.lowercase(Locale.ROOT)
-        val matchedCategory = categories.firstOrNull { cat ->
+        val knownIds = categories.mapTo(HashSet()) { it.id }
+        val tables = when (recordType?.uppercase(Locale.ROOT)) {
+            "INCOME" -> listOf(incomeKeywordTable)
+            "EXPENSE" -> listOf(expenseKeywordTable)
+            else -> listOf(incomeKeywordTable, expenseKeywordTable)
+        }
+        val systemMatch = tables.asSequence()
+            .flatMap { it.asSequence() }
+            .firstOrNull { (keywords, _) -> keywords.any { lower.hasWord(it) } }
+            ?.second
+            ?.takeIf { it in knownIds }
+
+        val matchedCategoryId = systemMatch ?: categories.firstOrNull { cat ->
             val catNameLower = cat.name.lowercase(Locale.ROOT)
             when {
                 lower.containsAny("magnum", "small", "galmart", "arbuz", "grocer", "продукт", "супермаркет", "chocolife") ->
@@ -253,14 +306,28 @@ object SmartMerchantMatcher {
                     catNameLower.contains("salary") || catNameLower.contains("income") || catNameLower.contains("зарплат")
                 else -> false
             }
-        }
+        }?.id
 
         return CategorizationMatchResult(
-            categoryId = matchedCategory?.id ?: categories.firstOrNull()?.id,
+            categoryId = matchedCategoryId,
             matchedRuleId = null,
             needsReview = true,
-            confidenceLabel = if (matchedCategory != null) "Heuristic Match (Review)" else "Unclassified (Review)"
+            confidenceLabel = if (matchedCategoryId != null) "Heuristic Match (Review)" else "Unclassified (Review)"
         )
+    }
+
+    /**
+     * Keyword match anchored at a word start, so short keywords do not fire inside other
+     * words of a raw bank message ("rent" in "current", "bp" in "abp").
+     */
+    private fun String.hasWord(keyword: String): Boolean {
+        var from = 0
+        while (true) {
+            val idx = indexOf(keyword, from)
+            if (idx < 0) return false
+            if (idx == 0 || !this[idx - 1].isLetterOrDigit()) return true
+            from = idx + 1
+        }
     }
 
     private fun String.containsAny(vararg keywords: String): Boolean =

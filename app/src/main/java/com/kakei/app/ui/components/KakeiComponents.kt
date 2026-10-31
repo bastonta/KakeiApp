@@ -11,6 +11,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -43,21 +45,77 @@ import com.kakei.app.ui.theme.kakeiCard
 
 /** Maps a category / goal `iconKey` (lucide-style names from the backend) to a Material icon. */
 fun iconForKey(iconKey: String?): ImageVector = when (iconKey?.lowercase()) {
+    // Food & Dining
     "shopping-cart", "cart", "groceries" -> Icons.Outlined.ShoppingCart
-    "coffee", "cafe", "utensils", "restaurant" -> Icons.Outlined.LocalCafe
-    "car", "transport", "taxi", "bus" -> Icons.Outlined.DirectionsCar
+    "shopping-basket" -> Icons.Outlined.ShoppingBasket
+    "coffee", "cafe" -> Icons.Outlined.LocalCafe
+    "utensils", "utensils-crossed", "restaurant" -> Icons.Outlined.Restaurant
+    "bike" -> Icons.Outlined.DeliveryDining
+    // Transportation & Car
+    "car", "car-front", "transport", "bus" -> Icons.Outlined.DirectionsCar
+    "car-taxi-front", "taxi" -> Icons.Outlined.LocalTaxi
+    "train" -> Icons.Outlined.Train
+    "fuel" -> Icons.Outlined.LocalGasStation
+    "square-parking" -> Icons.Outlined.LocalParking
+    "wrench" -> Icons.Outlined.CarRepair
+    "plane", "travel" -> Icons.Outlined.Flight
+    "luggage" -> Icons.Outlined.Luggage
+    // Housing
     "home", "house", "rent" -> Icons.Outlined.Home
-    "tv", "subscription", "subscriptions", "zap", "bolt" -> Icons.Outlined.Bolt
+    "building" -> Icons.Outlined.Apartment
+    "building-2" -> Icons.Outlined.Domain
+    "zap", "bolt" -> Icons.Outlined.Bolt
+    "sofa" -> Icons.Outlined.Weekend
+    "spray-can" -> Icons.Outlined.CleaningServices
+    "phone", "smartphone", "mobile" -> Icons.Outlined.PhoneAndroid
+    // Shopping
+    "shopping-bag" -> Icons.Outlined.ShoppingBag
+    "shirt" -> Icons.Outlined.Checkroom
+    "laptop" -> Icons.Outlined.Laptop
+    "pencil-ruler" -> Icons.Outlined.Edit
+    "box", "package" -> Icons.Outlined.Inventory2
+    // Health & Wellness
+    "heart", "health", "heart-pulse" -> Icons.Outlined.FavoriteBorder
+    "pill" -> Icons.Outlined.Medication
+    "dumbbell" -> Icons.Outlined.FitnessCenter
+    "sparkles" -> Icons.Outlined.Spa
+    // Entertainment & Digital Services
+    "film" -> Icons.Outlined.Movie
+    "tv", "subscription", "subscriptions" -> Icons.Outlined.Tv
+    "ticket" -> Icons.Outlined.ConfirmationNumber
+    "monitor-smartphone" -> Icons.Outlined.Devices
+    "bot" -> Icons.Outlined.SmartToy
+    "gamepad-2" -> Icons.Outlined.SportsEsports
+    "app-window" -> Icons.Outlined.Apps
+    "book-open" -> Icons.AutoMirrored.Outlined.MenuBook
+    // Income & Finance
     "wallet" -> Icons.Outlined.AccountBalanceWallet
     "piggy-bank", "piggy", "savings" -> Icons.Outlined.Savings
-    "plane", "travel" -> Icons.Outlined.Flight
-    "shield", "shield-check" -> Icons.Outlined.Shield
-    "heart", "health" -> Icons.Outlined.FavoriteBorder
-    "gift", "gifts" -> Icons.Outlined.CardGiftcard
-    "phone", "smartphone", "mobile" -> Icons.Outlined.PhoneAndroid
     "briefcase", "salary", "work" -> Icons.Outlined.Work
-    "box", "package", "laptop" -> Icons.Outlined.Inventory2
-    "swap", "transfer", "repeat" -> Icons.Outlined.SwapHoriz
+    "briefcase-business" -> Icons.Outlined.BusinessCenter
+    "rotate-ccw" -> Icons.Outlined.Replay
+    "percent" -> Icons.Outlined.Percent
+    "badge-percent" -> Icons.Outlined.Discount
+    "handshake" -> Icons.Outlined.Handshake
+    "tag" -> Icons.Outlined.Sell
+    "landmark" -> Icons.Outlined.AccountBalance
+    "receipt" -> Icons.AutoMirrored.Outlined.ReceiptLong
+    "credit-card" -> Icons.Outlined.CreditCard
+    "triangle-alert" -> Icons.Outlined.Warning
+    "calculator" -> Icons.Outlined.Calculate
+    "banknote" -> Icons.Outlined.Payments
+    "swap", "transfer", "repeat", "arrow-left-right" -> Icons.Outlined.SwapHoriz
+    "shield", "shield-check" -> Icons.Outlined.Shield
+    // Family, Education, Gifts, Work
+    "users" -> Icons.Outlined.People
+    "heart-handshake" -> Icons.Outlined.Diversity3
+    "baby" -> Icons.Outlined.ChildCare
+    "paw-print" -> Icons.Outlined.Pets
+    "graduation-cap" -> Icons.Outlined.School
+    "presentation" -> Icons.Outlined.CoPresent
+    "gift", "gifts" -> Icons.Outlined.CardGiftcard
+    "hand-heart" -> Icons.Outlined.VolunteerActivism
+    "monitor" -> Icons.Outlined.Monitor
     else -> Icons.Outlined.Sell
 }
 

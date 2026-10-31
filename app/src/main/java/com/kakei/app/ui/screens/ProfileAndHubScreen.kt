@@ -610,7 +610,7 @@ fun ProfileAndHubScreen(
         var newCatName by remember { mutableStateOf("") }
         var newRulePattern by remember { mutableStateOf("") }
         var newRuleMatchType by remember { mutableStateOf("CONTAINS") }
-        var newRuleCatId by remember { mutableStateOf(categories.firstOrNull()?.id.orEmpty()) }
+        var newRuleCatId by remember { mutableStateOf("") }
         var simulatorInput by remember { mutableStateOf("Magnum Cash & Carry Almaty") }
 
         val simResult = remember(simulatorInput, rules, categories) {

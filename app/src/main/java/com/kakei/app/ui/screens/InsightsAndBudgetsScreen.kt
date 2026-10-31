@@ -157,25 +157,17 @@ fun InsightsAndBudgetsScreen(
                         }
                     }
                     Text(s.categoryLabel, style = MaterialTheme.typography.labelLarge, color = c.muted)
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        categories.forEach { cat ->
-                            val active = selectedCats.contains(cat.id)
-                            val visual = categoryVisual(cat)
-                            KakeiChip(
-                                text = cat.localizedName(langCode),
-                                icon = visual.icon,
-                                iconTint = visual.color,
-                                color = visual.color,
-                                selected = active,
-                                onClick = {
-                                    selectedCats = if (active) selectedCats - cat.id else selectedCats + cat.id
-                                }
-                            )
+                    // A group covers its subcategories, like the server-side budget totals.
+                    CategoryPickerRow(
+                        categories = categories,
+                        selectedId = null,
+                        langCode = langCode,
+                        isSelected = { it in selectedCats },
+                        recordType = "EXPENSE",
+                        onSelect = { cat ->
+                            selectedCats = if (cat.id in selectedCats) selectedCats - cat.id else selectedCats + cat.id
                         }
-                    }
+                    )
                 }
             },
             confirmButton = {
@@ -265,7 +257,7 @@ fun InsightsAndBudgetsScreen(
                             repository.createObligation(
                                 title = title,
                                 accountId = defaultAccId,
-                                categoryId = categories.firstOrNull()?.id,
+                                categoryId = null,
                                 type = opType,
                                 amount = amt,
                                 currency = baseCurrency,
@@ -312,15 +304,18 @@ private fun AnalyticsInsightsSubScreen(
     val spendCurrency = insights.currency.ifBlank { baseCurrency }
 
     // Current-month expenses per category in the insights currency; split records are
-    // attributed to their split categories. Records without a known rate are left out.
-    val categorySpend = remember(transactions, rateBook, spendCurrency) {
+    // attributed to their split categories. Subcategories roll up into their top-level
+    // group so the donut stays readable. Records without a known rate are left out.
+    val categorySpend = remember(transactions, categories, rateBook, spendCurrency) {
+        val parentOf = categories.associate { it.id to it.parentId }
+        fun topLevel(catId: String?): String? = catId?.let { parentOf[it] ?: it }
         val month = YearMonth.now()
         val totals = linkedMapOf<String?, BigDecimal>()
         transactions.forEach { tx ->
             if (tx.type != "EXPENSE") return@forEach
             val date = bookingDateTime(tx.bookingDate)?.toLocalDate() ?: return@forEach
             if (YearMonth.from(date) != month) return@forEach
-            val parts = if (tx.splits.isNotEmpty()) tx.splits.map { it.categoryId to it.amount } else listOf(tx.categoryId to tx.amount)
+            val parts = if (tx.splits.isNotEmpty()) tx.splits.map { topLevel(it.categoryId) to it.amount } else listOf(topLevel(tx.categoryId) to tx.amount)
             parts.forEach { (catId, amt) ->
                 val converted = CurrencyFormatter.convert(amt.abs(), tx.currency, spendCurrency, rateBook) ?: return@forEach
                 totals[catId] = (totals[catId] ?: BigDecimal.ZERO) + converted

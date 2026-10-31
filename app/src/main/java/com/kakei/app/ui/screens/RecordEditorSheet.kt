@@ -22,8 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kakei.app.core.i18n.LocalAppStrings
@@ -83,7 +81,7 @@ fun RecordEditorDialog(
     var targetAccountId by remember {
         mutableStateOf(accounts.drop(1).firstOrNull()?.id ?: accounts.firstOrNull()?.id.orEmpty())
     }
-    var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull()?.id) }
+    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
     var payee by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var clearingStatus by remember { mutableStateOf("CLEARED") }
@@ -282,49 +280,15 @@ fun RecordEditorDialog(
                     }
                 }
             } else {
-                // Category tiles
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    categories.forEach { cat ->
-                        val visual = categoryVisual(cat)
-                        val active = selectedCategoryId == cat.id
-                        Column(
-                            modifier = Modifier
-                                .width(78.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    HapticHelper.tick(context)
-                                    selectedCategoryId = cat.id
-                                }
-                                .padding(vertical = 2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            IconTile(
-                                icon = visual.icon,
-                                color = visual.color,
-                                size = 58.dp,
-                                iconSize = 26.dp,
-                                cornerRadius = 18.dp,
-                                selected = active
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = cat.localizedName(langCode),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                color = if (active) c.text else c.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 2.dp)
-                            )
-                        }
-                    }
-                }
+                // Category groups as tiles, subcategories of the opened group below
+                CategoryPickerRow(
+                    categories = categories,
+                    selectedId = selectedCategoryId,
+                    langCode = langCode,
+                    onSelect = { selectedCategoryId = it.id },
+                    recordType = recordType,
+                    tiles = true
+                )
             }
 
             // Payee

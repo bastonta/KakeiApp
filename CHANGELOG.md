@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Two-level category picker (record editor, capture card, review dialog, budgets, smart rules): top-level groups first, subcategories of the opened group in a second row with a "Whole group" chip.
+- Icons for every category `iconKey` seeded by the backend, including the extended tree from backend migration 11 (Car, Digital Services, Family, Education, Gifts & Charity, Finance, Work & Business).
+
+### Changed
+- `SmartMerchantMatcher` routes keywords to the backend's system category ids (mirroring the server keyword table, with the record type deciding income vs expense rules) and matches keywords at word starts; local name heuristics remain as fallback.
+- Analytics category donut rolls subcategories up into their top-level group.
+
+### Fixed
+- Budgets on a parent category counted only records filed directly under it; like the server, they now include the direct subcategories (also in the health score).
+- New records, rules, planned payments and unrecognized bank captures no longer default to the alphabetically first category (now "AI & Cloud"); they stay uncategorized until the user picks one.
+
 ## [1.1.1] - 2026-10-30
 
 ### Fixed

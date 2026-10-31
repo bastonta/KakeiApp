@@ -47,15 +47,26 @@ object FinancialCalculators {
         }
     }
 
+    /** [categoryIds] plus the ids of their direct subcategories (one level, as the backend does). */
+    fun expandWithSubcategories(categoryIds: List<String>, categories: List<CategoryDto>): Set<String> {
+        if (categoryIds.isEmpty()) return emptySet()
+        val ids = categoryIds.toSet()
+        return ids + categories.filter { it.parentId != null && it.parentId in ids }.map { it.id }
+    }
+
     /**
      * Recomputes spentAmount, remainingAmount, usagePercentage, dailyBurnRateLimit, and alertLevel
      * for each budget envelope based on local ledger transactions.
+     *
+     * Like the backend, a budget on a parent category also counts the expenses of its direct
+     * subcategories, so [categories] must be the full category tree.
      */
     fun evaluateBudgets(
         budgets: List<BudgetEnvelopeDto>,
         transactions: List<TransactionDto>,
         today: LocalDate = LocalDate.now(),
-        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
+        categories: List<CategoryDto> = emptyList()
     ): List<BudgetEnvelopeDto> {
         val currentMonthStart = today.withDayOfMonth(1)
         val currentMonthEnd = YearMonth.from(today).atEndOfMonth()
@@ -69,6 +80,7 @@ object FinancialCalculators {
                 ?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
                 ?: currentMonthEnd
 
+            val budgetCategoryIds = expandWithSubcategories(budget.categoryIds, categories)
             val matchingExpenses = transactions.filter { tx ->
                 tx.type == "EXPENSE" &&
                     tx.transferPairId == null &&
@@ -76,14 +88,14 @@ object FinancialCalculators {
                         val txDate = LocalDate.parse(tx.bookingDate.take(10))
                         !txDate.isBefore(periodStart) && !txDate.isAfter(periodEnd)
                     }.getOrDefault(false) &&
-                    (budget.categoryIds.isEmpty() ||
-                        (tx.categoryId != null && budget.categoryIds.contains(tx.categoryId)) ||
-                        tx.splits.any { it.categoryId != null && budget.categoryIds.contains(it.categoryId) })
+                    (budgetCategoryIds.isEmpty() ||
+                        (tx.categoryId != null && budgetCategoryIds.contains(tx.categoryId)) ||
+                        tx.splits.any { it.categoryId != null && budgetCategoryIds.contains(it.categoryId) })
             }
 
             val spent = matchingExpenses.fold(BigDecimal.ZERO) { acc, tx ->
-                val nominal = if (tx.splits.isNotEmpty() && budget.categoryIds.isNotEmpty()) {
-                    tx.splits.filter { it.categoryId != null && budget.categoryIds.contains(it.categoryId) }
+                val nominal = if (tx.splits.isNotEmpty() && budgetCategoryIds.isNotEmpty()) {
+                    tx.splits.filter { it.categoryId != null && budgetCategoryIds.contains(it.categoryId) }
                         .fold(BigDecimal.ZERO) { s, split -> s + split.amount }
                 } else {
                     tx.amount
@@ -131,7 +143,8 @@ object FinancialCalculators {
         lendingRecords: List<LendingRecordDto>,
         baseCurrency: String,
         today: LocalDate = LocalDate.now(),
-        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
+        categories: List<CategoryDto> = emptyList()
     ): FinancialHealthScoreDto {
         val windowStart = today.minusDays(30)
         val recentTx = transactions.filter { tx ->
@@ -163,7 +176,7 @@ object FinancialCalculators {
         // Savings score out of 100 (25%+ savings rate = 100 pts)
         val savingsScore = (savingsRatePct.toDouble() * 4.0).toInt().coerceIn(0, 100)
 
-        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates)
+        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates, categories)
         val compliantCount = evaluatedBudgets.count { it.usagePercentage <= BigDecimal("100") }
         val budgetCompliancePct = if (evaluatedBudgets.isNotEmpty()) {
             BigDecimal.valueOf(compliantCount * 100L)

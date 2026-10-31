@@ -526,7 +526,7 @@ fun HomeScreen(
     val reviewItem = reviewTargetRecord
     if (reviewItem != null) {
         var chosenCategory by remember(reviewItem.id) {
-            mutableStateOf(reviewItem.categoryId ?: categories.firstOrNull()?.id.orEmpty())
+            mutableStateOf(reviewItem.categoryId.orEmpty())
         }
         var createSmartRule by remember { mutableStateOf(true) }
 
@@ -841,31 +841,5 @@ private fun InstantCaptureCard(
             langCode = langCode,
             onSelect = onCategory
         )
-    }
-}
-
-/** Horizontally scrolling category chips with category icons; the active one uses the category color. */
-@Composable
-fun CategoryPickerRow(
-    categories: List<CategoryDto>,
-    selectedId: String?,
-    langCode: String,
-    onSelect: (CategoryDto) -> Unit
-) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        categories.forEach { cat ->
-            val visual = categoryVisual(cat)
-            KakeiChip(
-                text = cat.localizedName(langCode),
-                icon = visual.icon,
-                iconTint = visual.color,
-                color = visual.color,
-                selected = selectedId == cat.id,
-                onClick = { onSelect(cat) }
-            )
-        }
     }
 }

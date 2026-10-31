@@ -8,6 +8,7 @@ import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
+import com.kakei.app.core.util.SystemCategories
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.BudgetEnvelopeDto
 import com.kakei.app.data.remote.dto.CategoryDto
@@ -17,6 +18,7 @@ import com.kakei.app.data.remote.dto.PlannedObligationDto
 import com.kakei.app.data.remote.dto.SplitDto
 import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.domain.calculators.FinancialCalculators
+import com.kakei.app.ui.screens.CategoryTree
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -280,5 +282,98 @@ class UnitTest {
         assertEquals("480", CurrencyFormatter.formatRate(BigDecimal("480.0000")))
         assertEquals("1 234.5", CurrencyFormatter.formatRate(BigDecimal("1234.5")))
         assertEquals("0.0021", CurrencyFormatter.formatRate(BigDecimal("0.00208333")))
+    }
+
+    private val systemCategoryTree = listOf(
+        CategoryDto(id = "00000000-0000-0000-0000-000000000100", name = "Food & Dining"),
+        CategoryDto(id = SystemCategories.GROCERIES, parentId = "00000000-0000-0000-0000-000000000100", name = "Groceries"),
+        CategoryDto(id = SystemCategories.FOOD_DELIVERY, parentId = "00000000-0000-0000-0000-000000000100", name = "Food Delivery"),
+        CategoryDto(id = "00000000-0000-0000-0000-000000000200", name = "Transportation"),
+        CategoryDto(id = SystemCategories.TAXI, parentId = "00000000-0000-0000-0000-000000000200", name = "Taxi & Rideshare"),
+        CategoryDto(id = "00000000-0000-0000-0000-000000000900", name = "Car"),
+        CategoryDto(id = SystemCategories.FUEL, parentId = "00000000-0000-0000-0000-000000000900", name = "Fuel & Charging"),
+        CategoryDto(id = SystemCategories.PARKING, parentId = "00000000-0000-0000-0000-000000000900", name = "Parking"),
+        CategoryDto(id = "00000000-0000-0000-0000-000000001000", name = "Digital Services"),
+        CategoryDto(id = SystemCategories.STREAMING, parentId = "00000000-0000-0000-0000-000000001000", name = "Streaming & Media"),
+        CategoryDto(id = SystemCategories.AI_CLOUD, parentId = "00000000-0000-0000-0000-000000001000", name = "AI & Cloud"),
+        CategoryDto(id = SystemCategories.GAMES, parentId = "00000000-0000-0000-0000-000000001000", name = "Games"),
+        CategoryDto(id = "00000000-0000-0000-0000-000000001400", name = "Finance"),
+        CategoryDto(id = SystemCategories.TAXES, parentId = "00000000-0000-0000-0000-000000001400", name = "Taxes"),
+        CategoryDto(id = SystemCategories.INCOME, name = "Income"),
+        CategoryDto(id = SystemCategories.SALARY, parentId = SystemCategories.INCOME, name = "Salary & Payroll"),
+        CategoryDto(id = SystemCategories.INTEREST, parentId = SystemCategories.INCOME, name = "Interest & Dividends")
+    )
+
+    @Test
+    fun evaluateBudgets_parentCategoryIncludesSubcategories() {
+        val today = LocalDate.of(2026, 10, 18)
+        fun expense(id: String, categoryId: String, amount: String) = TransactionDto(
+            id = id, accountId = "acc-1", categoryId = categoryId, type = "EXPENSE",
+            amount = BigDecimal(amount), currency = "KZT", bookingDate = "2026-10-10T12:00:00Z"
+        )
+        val transactions = listOf(
+            expense("tx-fuel", SystemCategories.FUEL, "20000"),
+            expense("tx-parking", SystemCategories.PARKING, "1500"),
+            expense("tx-taxi", SystemCategories.TAXI, "3000")
+        )
+        val budgets = listOf(
+            BudgetEnvelopeDto(
+                id = "b-car",
+                name = "Car",
+                limitAmount = BigDecimal("50000"),
+                currency = "KZT",
+                categoryIds = listOf("00000000-0000-0000-0000-000000000900")
+            )
+        )
+
+        val withTree = FinancialCalculators.evaluateBudgets(budgets, transactions, today, categories = systemCategoryTree)
+        assertEquals(BigDecimal("21500.00"), withTree.first().spentAmount)
+
+        // Without the tree only exact category ids count (no subcategory is known).
+        val withoutTree = FinancialCalculators.evaluateBudgets(budgets, transactions, today)
+        assertEquals(BigDecimal("0.00"), withoutTree.first().spentAmount)
+    }
+
+    @Test
+    fun smartMerchantMatcher_routesKeywordsToSystemSubcategories() {
+        fun cat(payee: String, type: String = "EXPENSE") =
+            SmartMerchantMatcher.classify(payee, null, emptyList(), systemCategoryTree, type).categoryId
+
+        assertEquals(SystemCategories.FOOD_DELIVERY, cat("Wolt"))
+        assertEquals(SystemCategories.TAXI, cat("Яндекс такси"))
+        assertEquals(SystemCategories.AI_CLOUD, cat("Claude.ai subscription"))
+        assertEquals(SystemCategories.GAMES, cat("STEAM PURCHASE"))
+        assertEquals(SystemCategories.STREAMING, cat("YouTube Premium"))
+        assertEquals(SystemCategories.TAXES, cat("Налоги ИП"))
+        assertEquals(SystemCategories.PARKING, cat("Almaty Parking"))
+        assertEquals(SystemCategories.INTEREST, cat("Deposit interest", "INCOME"))
+        assertEquals(SystemCategories.SALARY, cat("Salary October", "INCOME"))
+        // "rent" must not fire inside "current"
+        assertNull(cat("Current balance 1000 KZT"))
+    }
+
+    @Test
+    fun smartMerchantMatcher_leavesUnknownMerchantUncategorized() {
+        val match = SmartMerchantMatcher.classify("ТОО Ромашка", null, emptyList(), systemCategoryTree, "EXPENSE")
+        assertNull(match.categoryId)
+        assertTrue(match.needsReview)
+        // A system id that is not loaded locally is not returned.
+        val noDelivery = systemCategoryTree.filter { it.id != SystemCategories.FOOD_DELIVERY }
+        val fallback = SmartMerchantMatcher.classify("Wolt", null, emptyList(), noDelivery, "EXPENSE")
+        assertTrue(fallback.categoryId != SystemCategories.FOOD_DELIVERY)
+    }
+
+    @Test
+    fun categoryTree_groupsSubcategoriesUnderParents() {
+        val orphan = CategoryDto(id = "orphan", parentId = "missing-parent", name = "Orphan")
+        val tree = CategoryTree.build(systemCategoryTree + orphan, "en")
+        assertTrue(tree.roots.none { it.parentId != null && it.id != "orphan" })
+        assertTrue(tree.roots.any { it.id == "orphan" })
+        assertEquals(
+            listOf("AI & Cloud", "Games", "Streaming & Media"),
+            tree.children["00000000-0000-0000-0000-000000001000"]!!.map { it.name }
+        )
+        assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf(SystemCategories.FUEL))
+        assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf("00000000-0000-0000-0000-000000000900"))
     }
 }
