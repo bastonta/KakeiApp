@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -93,6 +94,8 @@ fun iconForKey(iconKey: String?): ImageVector = when (iconKey?.lowercase()) {
     // Income & Finance
     "wallet" -> Icons.Outlined.AccountBalanceWallet
     "piggy-bank", "piggy", "savings" -> Icons.Outlined.Savings
+    "hand-coins" -> Icons.Outlined.CurrencyExchange
+    "chart-line" -> Icons.AutoMirrored.Outlined.ShowChart
     "briefcase", "salary", "work" -> Icons.Outlined.Work
     "briefcase-business" -> Icons.Outlined.BusinessCenter
     "rotate-ccw" -> Icons.Outlined.Replay
@@ -107,7 +110,7 @@ fun iconForKey(iconKey: String?): ImageVector = when (iconKey?.lowercase()) {
     "calculator" -> Icons.Outlined.Calculate
     "banknote" -> Icons.Outlined.Payments
     "swap", "transfer", "repeat", "arrow-left-right" -> Icons.Outlined.SwapHoriz
-    "ellipsis", "other" -> Icons.Outlined.MoreHoriz
+    "ellipsis", "circle-ellipsis", "other" -> Icons.Outlined.MoreHoriz
     "shield", "shield-check" -> Icons.Outlined.Shield
     // Family, Education, Gifts, Work
     "users" -> Icons.Outlined.People
