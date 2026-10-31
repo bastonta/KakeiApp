@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-01
+
+### Added
+- Planned payments: pick a start date, the day of the month for monthly payments (shorter months use their last day) or a fixed interval in days, and edit an existing planned payment from its menu (queued through the outbox as an `UPDATE` mutation). `ObligationSchedule` mirrors the server rules for the forecast and offline execution, so dates no longer drift after short months.
+- Categories from the backend regroup: Insurance, Tuition, Travel Tickets and Accommodation, with bank-capture keyword rules and icons for the `map`, `hotel`, `school`, `ellipsis`, `hand-coins`, `chart-line` and `circle-ellipsis` keys.
+
+### Changed
+- **Requires Kakei server 0.2.0:** system categories use the server's UUIDv7 ids, and planned-payment upserts send `startDate` / `dayOfMonth` / `intervalDays` instead of `nextDueDate`.
+- "New record" opens as a full-screen editor instead of a bottom sheet: payees/merchants are suggested from past records (filling in their last category), and account and category share one row, picked from bottom-sheet lists where categories drill down from groups into subcategories.
+
 ## [1.3.0] - 2026-10-31
 
 ### Added
