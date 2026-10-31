@@ -45,24 +45,9 @@ import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 
-/** Records shown on Home before the user taps "All". */
+/** Records shown on Home; the full history lives on the transactions page. */
 private const val RECENT_RECORDS_LIMIT = 15
-
-/** Period filter of the expanded ledger ("All"). */
-private enum class LedgerPeriod {
-    THIS_MONTH, LAST_MONTH, THREE_MONTHS, THIS_YEAR, ALL_TIME;
-
-    /** Inclusive booking-date range, or null for no limit. */
-    fun range(today: LocalDate): ClosedRange<LocalDate>? = when (this) {
-        THIS_MONTH -> YearMonth.from(today).let { it.atDay(1)..it.atEndOfMonth() }
-        LAST_MONTH -> YearMonth.from(today).minusMonths(1).let { it.atDay(1)..it.atEndOfMonth() }
-        THREE_MONTHS -> YearMonth.from(today).let { it.minusMonths(2).atDay(1)..it.atEndOfMonth() }
-        THIS_YEAR -> today.withDayOfYear(1)..today.withDayOfYear(today.lengthOfYear())
-        ALL_TIME -> null
-    }
-}
 
 /**
  * Tab 1: Home & Ledger Screen combining:
@@ -83,7 +68,8 @@ fun HomeScreen(
     forecast: CashFlowForecastDto,
     instantCapturedRecord: TransactionDto?,
     repository: KakeiRepository,
-    onOpenProfile: () -> Unit
+    onOpenProfile: () -> Unit,
+    onOpenTransactions: (accountId: String?, focusSearch: Boolean) -> Unit
 ) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
@@ -91,14 +77,9 @@ fun HomeScreen(
     val langCode = settings.language.code
 
     var selectedAccountFilter by remember { mutableStateOf<String?>(null) }
-    var searchVisible by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var showAllRecords by remember { mutableStateOf(false) }
-    var ledgerPeriod by remember { mutableStateOf(LedgerPeriod.THIS_MONTH) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
     var editAccount by remember { mutableStateOf<AccountDto?>(null) }
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
-    var menuRecordId by remember { mutableStateOf<String?>(null) }
     var showNoNotifications by remember { mutableStateOf(false) }
 
     val activeAccounts = accounts.filter { !it.isArchived }
@@ -151,31 +132,13 @@ fun HomeScreen(
     }
 
     val needsReviewItems = remember(transactions) { transactions.filter { it.needsReview } }
-    val filteredTransactions = remember(transactions, selectedAccountFilter, searchQuery) {
-        transactions.filter { tx ->
-            val matchesAcc = selectedAccountFilter == null || tx.accountId == selectedAccountFilter
-            val matchesQuery = searchQuery.isBlank() ||
-                (tx.payee?.contains(searchQuery, ignoreCase = true) == true) ||
-                (tx.note?.contains(searchQuery, ignoreCase = true) == true)
-            matchesAcc && matchesQuery
-        }
+    val accountTransactions = remember(transactions, selectedAccountFilter) {
+        if (selectedAccountFilter == null) transactions else transactions.filter { it.accountId == selectedAccountFilter }
     }
-    // The expanded ledger is limited to the selected period; the collapsed one shows the latest records.
-    val visibleTransactions = remember(filteredTransactions, showAllRecords, searchQuery, ledgerPeriod, today) {
-        when {
-            showAllRecords -> {
-                val range = ledgerPeriod.range(today)
-                if (range == null) filteredTransactions else filteredTransactions.filter { tx ->
-                    val date = bookingDateTime(tx.bookingDate)?.toLocalDate()
-                    date != null && !date.isBefore(range.start) && !date.isAfter(range.endInclusive)
-                }
-            }
-            searchQuery.isNotBlank() -> filteredTransactions
-            else -> filteredTransactions.take(RECENT_RECORDS_LIMIT)
-        }
-    }
-    val recordsByDay = remember(visibleTransactions) {
-        visibleTransactions.groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }.toList()
+    // Home only shows the latest records; the full, filterable history is a separate page.
+    val recordsByDay = remember(accountTransactions) {
+        accountTransactions.take(RECENT_RECORDS_LIMIT)
+            .groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }.toList()
     }
 
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
@@ -217,10 +180,7 @@ fun HomeScreen(
                 CircleIconButton(
                     icon = Icons.Outlined.Search,
                     contentDescription = s.searchPayeeHint,
-                    onClick = {
-                        searchVisible = !searchVisible
-                        if (!searchVisible) searchQuery = ""
-                    }
+                    onClick = { onOpenTransactions(selectedAccountFilter, true) }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Box {
@@ -240,20 +200,6 @@ fun HomeScreen(
                         )
                     }
                 }
-            }
-        }
-
-        if (searchVisible) {
-            item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text(s.searchPayeeHint) },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         }
 
@@ -360,54 +306,20 @@ fun HomeScreen(
             }
         }
 
-        // 6. Day-grouped ledger
+        // 6. Day-grouped ledger (latest records)
         item {
             SectionHeader(
                 title = s.recentTransactions,
-                action = when {
-                    showAllRecords -> s.pick("Свернуть", "Less")
-                    filteredTransactions.size <= RECENT_RECORDS_LIMIT -> null
-                    else -> s.pick("Все", "All")
-                },
-                onAction = {
-                    showAllRecords = !showAllRecords
-                    if (showAllRecords) ledgerPeriod = LedgerPeriod.THIS_MONTH
-                }
+                action = s.pick("Все", "All").takeIf { accountTransactions.isNotEmpty() },
+                onAction = { onOpenTransactions(selectedAccountFilter, false) }
             )
         }
 
-        if (showAllRecords) {
-            item {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    LedgerPeriod.entries.forEach { period ->
-                        KakeiChip(
-                            text = when (period) {
-                                LedgerPeriod.THIS_MONTH -> monthName(today.monthValue, s)
-                                LedgerPeriod.LAST_MONTH -> monthName(today.minusMonths(1).monthValue, s)
-                                LedgerPeriod.THREE_MONTHS -> s.pick("3 месяца", "3 months")
-                                LedgerPeriod.THIS_YEAR -> today.year.toString()
-                                LedgerPeriod.ALL_TIME -> s.pick("Всё время", "All time")
-                            },
-                            selected = ledgerPeriod == period,
-                            onClick = { ledgerPeriod = period }
-                        )
-                    }
-                }
-            }
-        }
-
-        if (visibleTransactions.isEmpty()) {
+        if (recordsByDay.isEmpty()) {
             item {
                 EmptyStateCard(
                     icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    title = if (showAllRecords) {
-                        s.pick("За этот период операций нет", "No records in this period")
-                    } else {
-                        s.pick("Операций пока нет", "No records yet")
-                    },
+                    title = s.pick("Операций пока нет", "No records yet"),
                     hint = s.pick(
                         "Нажмите «+», чтобы добавить расход или доход, или включите автозахват SMS в профиле.",
                         "Tap \"+\" to add an expense or income, or enable SMS capture in your profile."
@@ -443,72 +355,15 @@ fun HomeScreen(
                         }
                     }
                     dayRecords.forEach { tx ->
-                        val cat = tx.categoryId?.let { categoryMap[it] }
-                        val acc = accountMap[tx.accountId]
-                        val visual = recordVisual(tx, cat)
-                        val catName = cat?.localizedName(langCode)
-                        val txLabels = tx.labelIds.mapNotNull { labelMap[it] }
-                        val userNote = tx.note?.takeIf { it.isNotBlank() && !it.startsWith("[Auto-") }
-                        Box {
-                            TransactionRow(
-                                icon = visual.icon,
-                                iconColor = visual.color,
-                                title = tx.payee ?: catName ?: s.operationType(tx.type),
-                                // Without a payee the category is already the title; don't repeat it.
-                                subtitle = listOfNotNull(
-                                    catName.takeIf { tx.payee != null } ?: s.operationType(tx.type).takeIf { tx.type == "TRANSFER" },
-                                    acc?.name
-                                ).joinToString(" · "),
-                                amount = signedRecordAmount(tx),
-                                amountColor = when (tx.type) {
-                                    "INCOME" -> c.mint
-                                    "TRANSFER" -> c.cyan
-                                    else -> c.text
-                                },
-                                trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalTime()
-                                    ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
-                                badge = when {
-                                    tx.needsReview -> s.pick("Проверить", "Review")
-                                    tx.status == "UNCLEARED" -> s.clearingStatus(tx.status)
-                                    else -> null
-                                },
-                                badgeColor = if (tx.needsReview) c.amber else c.muted,
-                                extra = listOfNotNull(
-                                    userNote,
-                                    s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits").takeIf { tx.splits.isNotEmpty() },
-                                    txLabels.joinToString(" ") { "#${it.name}" }.takeIf { txLabels.isNotEmpty() }
-                                ).joinToString(" · ").ifBlank { null },
-                                modifier = Modifier.combinedClickable(
-                                    onClick = {
-                                        if (tx.needsReview) reviewTargetRecord = tx else menuRecordId = tx.id
-                                    },
-                                    onLongClick = { menuRecordId = tx.id }
-                                )
-                            )
-                            DropdownMenu(
-                                expanded = menuRecordId == tx.id,
-                                onDismissRequest = { menuRecordId = null }
-                            ) {
-                                if (tx.type != "TRANSFER") {
-                                    DropdownMenuItem(
-                                        text = { Text(s.confirmCategory) },
-                                        leadingIcon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
-                                        onClick = {
-                                            menuRecordId = null
-                                            reviewTargetRecord = tx
-                                        }
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text(s.deleteButton, color = c.coral) },
-                                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
-                                    onClick = {
-                                        menuRecordId = null
-                                        repository.deleteRecord(tx)
-                                    }
-                                )
-                            }
-                        }
+                        LedgerRecordItem(
+                            tx = tx,
+                            category = tx.categoryId?.let { categoryMap[it] },
+                            account = accountMap[tx.accountId],
+                            labels = tx.labelIds.mapNotNull { labelMap[it] },
+                            langCode = langCode,
+                            onReview = { reviewTargetRecord = it },
+                            onDelete = { repository.deleteRecord(it) }
+                        )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                 }
@@ -662,51 +517,13 @@ fun HomeScreen(
     }
 
     // Confirm Review Dialog (POST /records/{id}/review)
-    val reviewItem = reviewTargetRecord
-    if (reviewItem != null) {
-        var chosenCategory by remember(reviewItem.id) {
-            mutableStateOf(reviewItem.categoryId.orEmpty())
-        }
-        var createSmartRule by remember { mutableStateOf(true) }
-
-        AlertDialog(
-            onDismissRequest = { reviewTargetRecord = null },
-            title = { Text(s.confirmCategory) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "${reviewItem.payee ?: s.pick("Операция", "Record")} · ${signedRecordAmount(reviewItem)}",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    CategoryPickerRow(
-                        categories = categories,
-                        selectedId = chosenCategory,
-                        langCode = langCode,
-                        onSelect = { chosenCategory = it.id }
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = createSmartRule, onCheckedChange = { createSmartRule = it })
-                        Text(s.createSmartRule)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (chosenCategory.isNotBlank()) {
-                            repository.confirmReview(reviewItem, chosenCategory, createSmartRule)
-                            reviewTargetRecord = null
-                        }
-                    }
-                ) {
-                    Text(s.confirmCategory)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { reviewTargetRecord = null }) {
-                    Text(s.cancelButton)
-                }
-            }
+    reviewTargetRecord?.let { item ->
+        ReviewRecordDialog(
+            record = item,
+            categories = categories,
+            langCode = langCode,
+            onConfirm = { catId, createRule -> repository.confirmReview(item, catId, createRule) },
+            onDismiss = { reviewTargetRecord = null }
         )
     }
 }

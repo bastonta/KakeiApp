@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Period filter for the full ledger ("All" on Home): current month (default), previous month, 3 months, current year or all time.
+- Separate Transactions page, opened from "All" or the search button on Home: search by payee/note, period presets (current month by default, previous month, 3 months, current year, all time) or a custom date range, and filters by type (expense / income / transfer), account, categories (a group includes its subcategories, splits match too), merchant and the review queue, with income/expense totals for the selection. Every record is its own lazy list item, so long periods scroll smoothly; Home now only shows the latest records.
 - Long-press an account card on Home to rename it or set its current balance, either via a "Balance adjustment" income/expense record or directly on the account (shifts the opening balance, synced via `PATCH /accounts` `initialBalance`, no effect on statistics).
 - Two-level category picker (record editor, capture card, review dialog, budgets, smart rules): top-level groups first, subcategories of the opened group in a second row with a "Whole group" chip.
 - Icons for every category `iconKey` seeded by the backend, including the extended tree from backend migration 11 (Car, Digital Services, Family, Education, Gifts & Charity, Finance, Work & Business).

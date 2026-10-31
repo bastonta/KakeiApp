@@ -177,6 +177,8 @@ fun KakeiAppRoot(
     }
     var showQuickAddModal by remember { mutableStateOf(initialQuickAdd) }
     var showProfile by remember { mutableStateOf(false) }
+    // Full-screen transactions page opened from Home: (account filter, focus search).
+    var transactionsPage by remember { mutableStateOf<Pair<String?, Boolean>?>(null) }
 
     // Biometric app lock. Re-checked on resume: the user may have removed the device
     // screen lock meanwhile, and a lock that can never be passed must not engage.
@@ -215,8 +217,10 @@ fun KakeiAppRoot(
                     onUnlock = { onUnlockRequest(promptTitle, promptSubtitle) }
                 )
             } else {
-                // Profile is a full-screen page opened from the avatar on Home, not a tab.
+                // Profile and the transactions page are full-screen pages opened from Home, not tabs.
                 BackHandler(enabled = showProfile) { showProfile = false }
+                BackHandler(enabled = transactionsPage != null && !showProfile) { transactionsPage = null }
+                val fullScreenPage = showProfile || transactionsPage != null
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -225,7 +229,7 @@ fun KakeiAppRoot(
                     contentWindowInsets = WindowInsets.statusBars,
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     bottomBar = {
-                        if (!showProfile) {
+                        if (!fullScreenPage) {
                             KakeiBottomBar(
                                 items = listOf(
                                     BottomNavItem(appStrings.navHome, Icons.Outlined.Home),
@@ -258,6 +262,20 @@ fun KakeiAppRoot(
                                 repository = repository,
                                 onBack = { showProfile = false }
                             )
+                        } else if (transactionsPage != null) {
+                            val (accountId, focusSearch) = transactionsPage!!
+                            TransactionsScreen(
+                                baseCurrency = settings.profile.defaultCurrency,
+                                langCode = settings.language.code,
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                repository = repository,
+                                initialAccountId = accountId,
+                                focusSearch = focusSearch,
+                                onBack = { transactionsPage = null }
+                            )
                         } else when (currentTab) {
                             0 -> HomeScreen(
                                 settings = settings,
@@ -269,7 +287,8 @@ fun KakeiAppRoot(
                                 forecast = forecast,
                                 instantCapturedRecord = instantCapturedRecord,
                                 repository = repository,
-                                onOpenProfile = { showProfile = true }
+                                onOpenProfile = { showProfile = true },
+                                onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch }
                             )
                             1 -> InsightsAndBudgetsScreen(
                                 baseCurrency = settings.profile.defaultCurrency,
