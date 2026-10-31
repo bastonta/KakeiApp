@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-31
+
 ### Added
 - Passkey sign-in to Kakei Cloud via the Android Credential Manager (`POST /identity/passkey-login-start` / `-finish`): with an email the challenge is limited to that account's keys, without one the system sheet offers every Kakei passkey on the device.
 - Profile → Passkeys: create a passkey on this device (`POST /profile/passkeys/register-start` / `-finish`) and remove registered ones.
+- The account edit dialog has the "Exclude from Net Worth stats" checkbox; previously it could only be set when creating an account.
+
+### Changed
+- The sign-in screen no longer prefills a demo server URL (`10.0.2.2`), email or name; sign-in buttons stay disabled until a server URL is entered.
+- After 2FA or email confirmation the account email is resolved from the server profile instead of saving a placeholder.
+
+### Fixed
+- The selected app language reverted on every sync because the change only updated local preferences. It is now queued as a profile update, the profile pull keeps local values while that update is pending, and a language picked on the sign-in screen is pushed to the server after login.
 
 ## [1.2.0] - 2026-10-31
 
