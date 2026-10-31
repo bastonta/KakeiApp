@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Passkey sign-in to Kakei Cloud via the Android Credential Manager (`POST /identity/passkey-login-start` / `-finish`): with an email the challenge is limited to that account's keys, without one the system sheet offers every Kakei passkey on the device.
+- Profile → Passkeys: create a passkey on this device (`POST /profile/passkeys/register-start` / `-finish`) and remove registered ones.
+
 ## [1.2.0] - 2026-10-31
 
 ### Added

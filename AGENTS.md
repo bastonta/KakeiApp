@@ -199,9 +199,10 @@ Run all commands from the repository root:
   ```properties
   sdk.dir=/home/user/Android/Sdk
   ```
-- **Backend Server URL**: Configured dynamically in the app under Settings (`AppSettingsState.serverBaseUrl`), defaulting to:
+- **Backend Server URL**: Entered by the user on the sign-in screen or in Settings (`AppSettingsState.serverBaseUrl`); it is empty by default. Typical values:
   - `http://10.0.2.2:5144` for Android Emulator connecting to host machine Kakei server.
   - `http://<LAN_IP>:5144` for physical testing devices over Wi-Fi.
+  - Passkeys require an HTTPS server whose domain is the WebAuthn RP ID and serves `/.well-known/assetlinks.json` for `com.kakei.app`.
 - **Debug vs Release**:
   - `BuildConfig.DEBUG` is used dynamically across the codebase to toggle verbose logging, test environments, and development bypasses. Never pollute tracked configuration files with temporary debug flags.
 

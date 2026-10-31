@@ -79,6 +79,8 @@ fun ProfileAndHubScreen(
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showServerDialog by remember { mutableStateOf(false) }
     var showLockTimeoutDialog by remember { mutableStateOf(false) }
+    var showAddPasskeyDialog by remember { mutableStateOf(false) }
+    var passkeyToDelete by remember { mutableStateOf<UserPasskeyItem?>(null) }
     var sampleSmsIdx by remember { mutableIntStateOf(0) }
 
     val sampleBankAlerts = listOf(
@@ -313,31 +315,41 @@ fun ProfileAndHubScreen(
             item { GroupCaption("Passkeys") }
             item {
                 GroupCard {
-                    if (passkeys.isEmpty()) {
+                    passkeys.forEachIndexed { index, passkey ->
+                        if (index > 0) RowDivider(startIndent = 66.dp)
                         SettingsRow(
                             icon = Icons.Outlined.Key,
-                            iconColor = c.muted,
-                            title = s.pick("Нет passkeys", "No passkeys"),
-                            subtitle = s.pick("Добавьте ключ в веб-версии Kakei", "Add one in the Kakei web app"),
-                            showChevron = false
+                            iconColor = c.violet,
+                            title = passkey.name,
+                            subtitle = listOfNotNull(
+                                "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
+                                passkey.lastUsedAt?.let {
+                                    "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
+                                }
+                            ).joinToString(" · "),
+                            showChevron = false,
+                            trailing = {
+                                IconButton(onClick = { passkeyToDelete = passkey }) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = s.pick("Удалить passkey", "Remove passkey"),
+                                        tint = c.muted
+                                    )
+                                }
+                            }
                         )
-                    } else {
-                        passkeys.forEachIndexed { index, passkey ->
-                            if (index > 0) RowDivider(startIndent = 66.dp)
-                            SettingsRow(
-                                icon = Icons.Outlined.Key,
-                                iconColor = c.violet,
-                                title = passkey.name,
-                                subtitle = listOfNotNull(
-                                    "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
-                                    passkey.lastUsedAt?.let {
-                                        "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
-                                    }
-                                ).joinToString(" · "),
-                                showChevron = false
-                            )
-                        }
                     }
+                    if (passkeys.isNotEmpty()) RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Add,
+                        iconColor = c.mint,
+                        title = s.pick("Добавить passkey", "Add passkey"),
+                        subtitle = s.pick(
+                            "Вход по отпечатку или PIN-коду без пароля",
+                            "Sign in with fingerprint or screen lock, no password"
+                        ),
+                        onClick = { showAddPasskeyDialog = true }
+                    )
                 }
             }
         }
@@ -554,6 +566,66 @@ fun ProfileAndHubScreen(
                 showCurrencyDialog = false
             },
             onDismiss = { showCurrencyDialog = false }
+        )
+    }
+
+    // New passkey name, then the system Credential Manager sheet
+    if (showAddPasskeyDialog) {
+        var passkeyName by remember { mutableStateOf(android.os.Build.MODEL) }
+        AlertDialog(
+            onDismissRequest = { showAddPasskeyDialog = false },
+            title = { Text(s.pick("Новый passkey", "New passkey")) },
+            text = {
+                OutlinedTextField(
+                    value = passkeyName,
+                    onValueChange = { passkeyName = it.take(100) },
+                    label = { Text(s.pick("Название", "Name")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.registerPasskey(context, passkeyName)
+                        showAddPasskeyDialog = false
+                    },
+                    enabled = !settings.syncInProgress
+                ) {
+                    Text(s.pick("Создать", "Create"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddPasskeyDialog = false }) { Text(s.cancelButton) }
+            }
+        )
+    }
+
+    passkeyToDelete?.let { passkey ->
+        AlertDialog(
+            onDismissRequest = { passkeyToDelete = null },
+            title = { Text(s.pick("Удалить passkey?", "Remove passkey?")) },
+            text = {
+                Text(
+                    s.pick(
+                        "«${passkey.name}» больше не подойдёт для входа. Ключ на устройстве можно удалить в менеджере паролей.",
+                        "\"${passkey.name}\" will no longer sign you in. Remove the key itself in your password manager."
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        repository.deletePasskey(passkey.id)
+                        passkeyToDelete = null
+                    }
+                ) {
+                    Text(s.pick("Удалить", "Remove"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { passkeyToDelete = null }) { Text(s.cancelButton) }
+            }
         )
     }
 

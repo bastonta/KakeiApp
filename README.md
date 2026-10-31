@@ -194,8 +194,8 @@ To sign locally, put the same `keystore.properties` (`password`, `keyAlias`, `st
 ### Connecting to Kakei Backend Server
 
 1. Start the Kakei backend server (bound to port `5144` by default).
-2. When running in the Android Emulator, the server URL defaults to `http://10.0.2.2:5144`.
-3. When running on a physical device connected to your Wi-Fi network, navigate to **Profile & Hub ➔ Server Connection** and specify `http://<YOUR_LOCAL_IP>:5144`.
+2. There is no default server URL: enter it on the sign-in screen or under **Profile & Hub ➔ Server Connection** — `http://10.0.2.2:5144` from the Android Emulator, `http://<YOUR_LOCAL_IP>:5144` from a physical device on your Wi-Fi network.
+3. Passkeys only work against an HTTPS server whose domain is the WebAuthn RP ID and serves `/.well-known/assetlinks.json` for this app (see the backend's `WEBAUTHN_ANDROID_*` settings).
 
 ---
 

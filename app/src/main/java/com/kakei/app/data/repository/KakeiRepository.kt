@@ -10,6 +10,9 @@ import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.security.BiometricHelper
+import com.kakei.app.core.security.PasskeyCancelledException
+import com.kakei.app.core.security.PasskeyHelper
+import com.kakei.app.core.security.PasskeyNotFoundException
 import com.kakei.app.core.security.SecurePrefs
 import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
@@ -47,7 +50,7 @@ data class AppSettingsState(
     val pending2faUserId: String? = null,
     val pending2faToken: String? = null,
     val pendingEmailConfirmUserId: String? = null,
-    val serverBaseUrl: String = "http://10.0.2.2:5144",
+    val serverBaseUrl: String = "",
     val serverVersion: String? = null,
     val profile: ProfileInfoResponse = ProfileInfoResponse(
         userId = "local-user",
@@ -298,14 +301,14 @@ class KakeiRepository(
     private fun loadInitialSettings(): AppSettingsState {
         val token = loadAccessToken()
         val offline = prefs.getBoolean("offline_mode", false)
-        val serverUrl = prefs.getString("server_url", "http://10.0.2.2:5144") ?: "http://10.0.2.2:5144"
+        val serverUrl = prefs.getString("server_url", "") ?: ""
         val lang = AppLanguage.fromCode(prefs.getString("lang_code", "ru"))
         val theme = runCatching {
             ThemeMode.valueOf(prefs.getString("theme_mode", "DARK") ?: "DARK")
         }.getOrDefault(ThemeMode.DARK)
         val defaultCurrency = prefs.getString("default_currency", "KZT") ?: "KZT"
         val userName = prefs.getString("user_name", "Kakei User") ?: "Kakei User"
-        val userEmail = prefs.getString("user_email", "user@kakei.app") ?: "user@kakei.app"
+        val userEmail = prefs.getString("user_email", "") ?: ""
 
         return AppSettingsState(
             isAuthenticated = !token.isNullOrBlank() || apiClient.hasRefreshToken(),
@@ -385,10 +388,14 @@ class KakeiRepository(
     }
 
     fun setServerBaseUrl(url: String) {
-        val clean = url.trim().ifBlank { "http://10.0.2.2:5144" }
+        val clean = url.trim()
         prefs.edit { putString("server_url", clean) }
         apiClient.updateBaseUrl(clean)
         _settingsState.value = _settingsState.value.copy(serverBaseUrl = clean)
+        if (clean.isEmpty()) {
+            postMessage(tr("Укажите адрес сервера Kakei", "Enter the Kakei server URL"))
+            return
+        }
         scope.launch {
             apiClient.getVersion().onSuccess { ver ->
                 _settingsState.value = _settingsState.value.copy(
@@ -485,7 +492,7 @@ class KakeiRepository(
                     type = if (isRecovery) "recovery" else "code"
                 )
             ).onSuccess { resp ->
-                completeLoginSession(resp.userId, _settingsState.value.profile.email, resp.token)
+                completeLoginSession(resp.userId, accountEmail(), resp.token)
             }.onFailure { err ->
                 _settingsState.value = _settingsState.value.copy(
                     syncInProgress = false,
@@ -493,6 +500,86 @@ class KakeiRepository(
                 )
             }
         }
+    }
+
+    /**
+     * Passwordless sign-in through the Credential Manager. A blank [email] runs a discoverable
+     * ceremony (the system sheet lists every Kakei passkey on the device); otherwise the challenge
+     * is limited to that account's keys. [activityContext] hosts the system passkey sheet.
+     */
+    fun signInWithPasskey(activityContext: Context, email: String) {
+        scope.launch {
+            _settingsState.value = _settingsState.value.copy(syncInProgress = true)
+            val trimmedEmail = email.trim()
+            val result = runCatching {
+                val ceremony = apiClient.passkeyLoginStart(
+                    PasskeyLoginStartRequest(email = trimmedEmail.ifBlank { null })
+                ).getOrThrow()
+                val assertion = PasskeyHelper.getAssertion(activityContext, ceremony.challenge)
+                apiClient.passkeyLoginFinish(
+                    PasskeyLoginFinishRequest(ceremonyId = ceremony.ceremonyId, response = assertion)
+                ).getOrThrow()
+            }
+            result.onSuccess { resp ->
+                // The passkey picked may belong to another account than the typed email
+                completeLoginSession(resp.userId, accountEmail(), resp.token)
+            }.onFailure { err ->
+                _settingsState.value = _settingsState.value.copy(
+                    syncInProgress = false,
+                    statusMessage = passkeyErrorMessage(err)
+                )
+            }
+        }
+    }
+
+    /** Creates a passkey on this device and registers it on the signed-in Kakei account. */
+    fun registerPasskey(activityContext: Context, name: String) {
+        scope.launch {
+            _settingsState.value = _settingsState.value.copy(syncInProgress = true)
+            val result = runCatching {
+                val ceremony = apiClient.passkeyRegisterStart().getOrThrow()
+                val attestation = PasskeyHelper.createPasskey(activityContext, ceremony.challenge)
+                apiClient.passkeyRegisterFinish(
+                    PasskeyRegisterFinishRequest(
+                        ceremonyId = ceremony.ceremonyId,
+                        name = name.trim().ifBlank { android.os.Build.MODEL }.take(100),
+                        response = attestation
+                    )
+                ).getOrThrow()
+            }
+            result.onSuccess { created ->
+                _passkeys.value = _passkeys.value + created
+                _settingsState.value = _settingsState.value.copy(
+                    syncInProgress = false,
+                    statusMessage = tr("Passkey «${created.name}» добавлен", "Passkey \"${created.name}\" added")
+                )
+            }.onFailure { err ->
+                _settingsState.value = _settingsState.value.copy(
+                    syncInProgress = false,
+                    statusMessage = passkeyErrorMessage(err)
+                )
+            }
+        }
+    }
+
+    fun deletePasskey(id: String) {
+        scope.launch {
+            apiClient.deletePasskey(id).onSuccess {
+                _passkeys.value = _passkeys.value.filterNot { it.id == id }
+                postMessage(tr("Passkey удалён", "Passkey removed"))
+            }.onFailure { err ->
+                postMessage(tr("Не удалось удалить passkey: ${err.message}", "Could not remove passkey: ${err.message}"))
+            }
+        }
+    }
+
+    private fun passkeyErrorMessage(err: Throwable): String? = when (err) {
+        is PasskeyCancelledException -> null
+        is PasskeyNotFoundException -> tr(
+            "На устройстве нет passkey для Kakei",
+            "No Kakei passkey found on this device"
+        )
+        else -> tr("Ошибка passkey: ${err.message}", "Passkey error: ${err.message}")
     }
 
     fun registerAccount(name: String, email: String, password: String, defaultCurrency: String) {
@@ -530,12 +617,18 @@ class KakeiRepository(
         scope.launch {
             apiClient.confirmEmail(EmailConfirmRequest(userId = userId, code = code.trim()))
                 .onSuccess { resp ->
-                    completeLoginSession(userId, _settingsState.value.profile.email, resp.token)
+                    completeLoginSession(userId, accountEmail(), resp.token)
                 }.onFailure { err ->
                     postMessage(tr("Не удалось подтвердить email: ${err.message}", "Email confirmation failed: ${err.message}"))
                 }
         }
     }
+
+    /** Email of the account the freshly issued token belongs to (the 2FA / confirm steps do not echo it). */
+    private suspend fun accountEmail(): String =
+        apiClient.getProfileInfo().getOrNull()?.email
+            ?: prefs.getString("user_email", null)
+            ?: _settingsState.value.profile.email
 
     private suspend fun completeLoginSession(userId: String, email: String, token: String) {
         securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)

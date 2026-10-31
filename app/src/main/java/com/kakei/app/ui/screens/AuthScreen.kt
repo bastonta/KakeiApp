@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -287,11 +288,12 @@ private fun CloudSignInCard(
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
     var isLoginTab by remember { mutableStateOf(true) }
-    var email by remember { mutableStateOf("demo@kakei.app") }
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("Аблай") }
+    var name by remember { mutableStateOf("") }
     var selectedCurrency by remember { mutableStateOf(settings.profile.defaultCurrency) }
     var serverUrl by remember { mutableStateOf(settings.serverBaseUrl) }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -310,6 +312,7 @@ private fun CloudSignInCard(
             value = serverUrl,
             onValueChange = { serverUrl = it },
             label = { Text(s.authServerUrlLabel) },
+            placeholder = { Text("https://kakei.example.com") },
             trailingIcon = {
                 IconButton(onClick = { repository.setServerBaseUrl(serverUrl) }) {
                     Icon(
@@ -388,7 +391,7 @@ private fun CloudSignInCard(
                     repository.registerAccount(name, email, password, selectedCurrency)
                 }
             },
-            enabled = !settings.syncInProgress,
+            enabled = !settings.syncInProgress && serverUrl.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 52.dp),
@@ -405,6 +408,20 @@ private fun CloudSignInCard(
             Text(
                 text = if (isLoginTab) s.authSignInButton else s.authSignUpButton,
                 style = MaterialTheme.typography.titleMedium
+            )
+        }
+
+        if (isLoginTab) {
+            KakeiButton(
+                text = s.pick("Войти с passkey", "Sign in with a passkey"),
+                icon = Icons.Outlined.Key,
+                kind = KakeiButtonKind.OUTLINE,
+                onClick = {
+                    repository.setServerBaseUrl(serverUrl)
+                    repository.signInWithPasskey(context, email)
+                },
+                enabled = !settings.syncInProgress && serverUrl.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

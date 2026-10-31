@@ -4,6 +4,7 @@ import com.kakei.app.automation.BankSmsPatterns
 import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
+import com.kakei.app.core.security.PasskeyHelper
 import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
@@ -14,6 +15,7 @@ import com.kakei.app.data.remote.dto.BudgetEnvelopeDto
 import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.CounterpartyRuleDto
 import com.kakei.app.data.remote.dto.ImportStatementRequest
+import com.kakei.app.data.remote.dto.PasskeyCeremonyResponse
 import com.kakei.app.data.remote.dto.PlannedObligationDto
 import com.kakei.app.data.remote.dto.SplitDto
 import com.kakei.app.data.remote.dto.TransactionDto
@@ -375,5 +377,21 @@ class UnitTest {
         )
         assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf(SystemCategories.FUEL))
         assertEquals("00000000-0000-0000-0000-000000000900", tree.rootOf("00000000-0000-0000-0000-000000000900"))
+    }
+
+    @Test
+    fun passkeyChallengeUnwrapsWebauthnRsPublicKeyOptions() {
+        val ceremony = Json.decodeFromString<PasskeyCeremonyResponse>(
+            """{"ceremonyId":"0190a7c2-0000-7000-8000-000000000001","challenge":{"publicKey":{"challenge":"WaVSMQD-YQrg6LpC6IHxahSXltu1Osc5N4ubLNZTRCI","rpId":"kakei.app","userVerification":"preferred"},"mediation":"conditional"}}"""
+        )
+        val options = Json.parseToJsonElement(PasskeyHelper.extractPublicKeyOptions(ceremony.challenge))
+        assertEquals(
+            Json.parseToJsonElement("""{"challenge":"WaVSMQD-YQrg6LpC6IHxahSXltu1Osc5N4ubLNZTRCI","rpId":"kakei.app","userVerification":"preferred"}"""),
+            options
+        )
+
+        // Bare options (no publicKey wrapper) pass through unchanged
+        val bare = """{"challenge":"abc","rpId":"kakei.app"}"""
+        assertEquals(Json.parseToJsonElement(bare), Json.parseToJsonElement(PasskeyHelper.extractPublicKeyOptions(Json.parseToJsonElement(bare))))
     }
 }

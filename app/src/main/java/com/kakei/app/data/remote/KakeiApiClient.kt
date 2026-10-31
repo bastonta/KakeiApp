@@ -42,7 +42,7 @@ interface RefreshCookieStorage {
  * - HTTP 207 Multi-Status batch responses
  */
 class KakeiApiClient(
-    initialBaseUrl: String = "http://10.0.2.2:5144",
+    initialBaseUrl: String = "",
     initialToken: String? = null,
     private val refreshCookieStorage: RefreshCookieStorage? = null
 ) {
@@ -235,7 +235,9 @@ class KakeiApiClient(
     ): Result<T> = withContext(Dispatchers.IO) {
         runCatching {
             val fullUrlBuilder = "$baseUrl$path".toHttpUrlOrNull()?.newBuilder()
-                ?: throw IllegalArgumentException("Invalid API URL: $baseUrl$path")
+                ?: throw IllegalArgumentException(
+                    if (baseUrl == "/api") "Kakei server URL is not set" else "Invalid API URL: $baseUrl$path"
+                )
             queryParams.forEach { (k, v) ->
                 if (!v.isNullOrBlank()) {
                     fullUrlBuilder.addQueryParameter(k, v)
@@ -296,6 +298,14 @@ class KakeiApiClient(
             accessToken = it.token
         }
 
+    suspend fun passkeyLoginStart(req: PasskeyLoginStartRequest): Result<PasskeyCeremonyResponse> =
+        requestJson("POST", "/identity/passkey-login-start", json.encodeToString(req))
+
+    suspend fun passkeyLoginFinish(req: PasskeyLoginFinishRequest): Result<LoginResponse> =
+        requestJson<LoginResponse>("POST", "/identity/passkey-login-finish", json.encodeToString(req)).onSuccess {
+            accessToken = it.token
+        }
+
     suspend fun register(req: RegisterRequest): Result<RegisterResponse> =
         requestJson("POST", "/identity/register", json.encodeToString(req))
 
@@ -352,6 +362,12 @@ class KakeiApiClient(
 
     suspend fun listPasskeys(): Result<List<UserPasskeyItem>> =
         requestJson("GET", "/profile/passkeys")
+
+    suspend fun passkeyRegisterStart(): Result<PasskeyCeremonyResponse> =
+        requestJson("POST", "/profile/passkeys/register-start")
+
+    suspend fun passkeyRegisterFinish(req: PasskeyRegisterFinishRequest): Result<UserPasskeyItem> =
+        requestJson("POST", "/profile/passkeys/register-finish", json.encodeToString(req))
 
     suspend fun deletePasskey(id: String): Result<Unit> =
         requestJson("DELETE", "/profile/passkeys/$id")

@@ -93,6 +93,25 @@ data class LoginResponse(
     val hasPasskeys: Boolean = false
 )
 
+/** `POST /identity/passkey-login-start`; with [email] the challenge is limited to that user's keys. */
+@Serializable
+data class PasskeyLoginStartRequest(
+    val email: String? = null
+)
+
+/** WebAuthn ceremony issued by the server; [challenge] is the webauthn-rs options object. */
+@Serializable
+data class PasskeyCeremonyResponse(
+    val ceremonyId: String,
+    val challenge: JsonElement
+)
+
+@Serializable
+data class PasskeyLoginFinishRequest(
+    val ceremonyId: String,
+    val response: JsonElement
+)
+
 @Serializable
 data class Login2faRequest(
     val userId: String,
@@ -282,6 +301,13 @@ data class UserPasskeyItem(
     val name: String,
     val createdAt: String,
     val lastUsedAt: String? = null
+)
+
+@Serializable
+data class PasskeyRegisterFinishRequest(
+    val ceremonyId: String,
+    val name: String,
+    val response: JsonElement
 )
 
 // ============================================================================

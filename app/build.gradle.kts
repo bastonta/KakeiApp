@@ -76,6 +76,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.androidx.sqlite.ktx)
     implementation(libs.androidx.sqlite.framework)
     implementation(libs.sqlcipher.android)
