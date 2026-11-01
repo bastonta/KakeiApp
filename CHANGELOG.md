@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-01
+
+### Added
+- Edit existing records: "Edit" in the record menu opens the record editor prefilled (type and accounts stay fixed). Transfers are edited through the debit leg, with the credit leg and both balances following locally; only changed fields are queued as a `PATCH`.
+- The record editor's Date and Time fields open a calendar and a 24h clock dial. A new record left untouched is still booked at save time; an edit keeps its timestamp unless it is changed.
+- Labels can be created inline from the record editor ("+ Add label"); the new label is selected right away, and an existing label with the same name is reused. The labels section is shown even when there are no labels yet.
+
+### Changed
+- **Requires Kakei server 0.2.1:** clearing a record's payee or note sends an empty string, which older servers ignore.
+- Profile, Transactions and the record editor keep the back button and page title pinned above the scrolling content.
+
+### Fixed
+- The outbox re-reads each entry before sending, so ids swapped for server ones by earlier entries (e.g. an inline-created label) are used instead of the stale local id.
+
 ## [1.4.0] - 2026-11-01
 
 ### Added
