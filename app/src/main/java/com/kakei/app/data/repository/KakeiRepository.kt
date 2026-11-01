@@ -1880,7 +1880,9 @@ class KakeiRepository(
         status: String,
         splits: List<SplitDto>,
         labelIds: List<String>,
-        targetAmount: BigDecimal? = null
+        targetAmount: BigDecimal? = null,
+        /** New booking timestamp (ISO instant); null keeps the current one. Moves both transfer legs. */
+        bookingDateIso: String? = null
     ) {
         val legs = if (record.transferPairId != null) {
             database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS)
@@ -1897,6 +1899,9 @@ class KakeiRepository(
         val cleanPayee = payee?.trim()?.takeIf { it.isNotEmpty() }
         val cleanNote = note?.trim()?.takeIf { it.isNotEmpty() }
         val isTransfer = debit.type == "TRANSFER"
+        val newBookingDate = bookingDateIso?.takeIf {
+            runCatching { Instant.parse(it) != Instant.parse(debit.bookingDate) }.getOrDefault(true)
+        }
 
         val updatedDebit = debit.copy(
             amount = newAmount,
@@ -1910,6 +1915,7 @@ class KakeiRepository(
             needsReview = if (!isTransfer && categoryId != null) false else debit.needsReview,
             splits = if (isTransfer) debit.splits else splits,
             labelIds = labelIds,
+            bookingDate = newBookingDate ?: debit.bookingDate,
             updatedAt = now
         )
         // Same rule as the server: same currency → same amount; otherwise the stated credited
@@ -1927,6 +1933,7 @@ class KakeiRepository(
                 convertedAmount = CurrencyFormatter.convert(creditAmount, leg.currency, baseCurrency, rates)
                     ?: leg.convertedAmount,
                 status = status,
+                bookingDate = newBookingDate ?: leg.bookingDate,
                 updatedAt = now
             )
         }
@@ -1959,6 +1966,7 @@ class KakeiRepository(
             id = debit.id,
             categoryId = updatedDebit.categoryId.takeIf { it != debit.categoryId },
             amount = newAmount.takeIf { amountChanged },
+            bookingDate = newBookingDate,
             // An empty string clears the field on the server; null leaves it unchanged.
             payee = (cleanPayee ?: "").takeIf { cleanPayee != debit.payee },
             note = (cleanNote ?: "").takeIf { cleanNote != debit.note },

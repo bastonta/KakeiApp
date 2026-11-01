@@ -41,6 +41,8 @@ import com.kakei.app.ui.components.*
 import com.kakei.app.ui.theme.KakeiTheme
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -49,6 +51,7 @@ import java.util.UUID
  * - Built-in expression calculator keypad (`+`, `-`, `×`, `÷`, `⌫`; long-press `⌫` clears), evaluated live
  * - Account and Category (or Target Account) fields in one row, picked from bottom-sheet lists
  * - Payee autocomplete from past records, filling in the payee's last category
+ * - Booking date and time (defaults to now for a new record)
  * - Clearing Status (`UNCLEARED`, `CLEARED`, `RECONCILED`) selectors
  * - Multi-category Splits (`SplitDto`) editor
  * - Orthogonal Labels (`LabelDto`) multi-select chips
@@ -82,7 +85,9 @@ fun RecordEditorScreen(
         splits: List<SplitDto>,
         labelIds: List<String>,
         /** Cross-currency transfers: amount credited to the target account, in its currency. */
-        targetAmount: BigDecimal?
+        targetAmount: BigDecimal?,
+        /** ISO instant picked by the user, or null when left untouched (now / unchanged). */
+        bookingDateIso: String?
     ) -> Unit
 ) {
     val s = LocalAppStrings.current
@@ -124,6 +129,14 @@ fun RecordEditorScreen(
     var selectedLabels by remember { mutableStateOf(initialRecord?.labelIds?.toSet() ?: setOf()) }
     var splits by remember { mutableStateOf(initialRecord?.splits ?: listOf()) }
     var newLabelName by remember { mutableStateOf<String?>(null) }
+    var bookingAt by remember {
+        mutableStateOf(
+            initialRecord?.bookingDate?.let(::bookingDateTime)
+                ?: LocalDateTime.now().withSecond(0).withNano(0)
+        )
+    }
+    // Untouched: a new record is booked at the moment of saving, an edit keeps its timestamp.
+    var bookingTouched by remember { mutableStateOf(false) }
     var showDetails by remember {
         mutableStateOf(
             initialRecord != null && (!initialRecord.note.isNullOrBlank() || initialRecord.labelIds.isNotEmpty() ||
@@ -357,6 +370,14 @@ fun RecordEditorScreen(
                 }
             )
 
+            BookingDateTimeField(
+                value = bookingAt,
+                onChange = {
+                    bookingAt = it
+                    bookingTouched = true
+                }
+            )
+
             // Built-in calculator keypad
             val rows = listOf(
                 listOf("7", "8", "9", "÷"),
@@ -580,7 +601,8 @@ fun RecordEditorScreen(
                             if (recordType == "TRANSFER") targetAccountId else null,
                             splits,
                             selectedLabels.toList(),
-                            if (isCrossCurrency) effectiveReceived else null
+                            if (isCrossCurrency) effectiveReceived else null,
+                            if (bookingTouched) bookingAt.atZone(ZoneId.systemDefault()).toInstant().toString() else null
                         )
                     }
                 },

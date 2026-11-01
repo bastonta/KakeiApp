@@ -34,6 +34,7 @@ import com.kakei.app.ui.components.BottomNavItem
 import com.kakei.app.ui.components.KakeiBottomBar
 import com.kakei.app.ui.screens.*
 import com.kakei.app.ui.theme.KakeiTheme
+import java.time.Instant
 
 class MainActivity : FragmentActivity() {
 
@@ -272,7 +273,7 @@ fun KakeiAppRoot(
                                     rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
                                     initialRecord = recordToEdit,
                                     onDismiss = { editingRecord = null },
-                                    onSave = { _, _, amt, catId, payee, note, status, _, splits, labelIds, targetAmount ->
+                                    onSave = { _, _, amt, catId, payee, note, status, _, splits, labelIds, targetAmount, bookingDateIso ->
                                         repository.updateRecord(
                                             record = recordToEdit,
                                             amount = amt,
@@ -282,7 +283,8 @@ fun KakeiAppRoot(
                                             status = status,
                                             splits = splits,
                                             labelIds = labelIds,
-                                            targetAmount = targetAmount
+                                            targetAmount = targetAmount,
+                                            bookingDateIso = bookingDateIso
                                         )
                                         editingRecord = null
                                     }
@@ -298,7 +300,7 @@ fun KakeiAppRoot(
                                 onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
                                 rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
                                 onDismiss = { showQuickAddModal = false },
-                                onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount ->
+                                onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount, bookingDateIso ->
                                     repository.createRecord(
                                         accountId = accId,
                                         type = type,
@@ -310,7 +312,8 @@ fun KakeiAppRoot(
                                         transferTargetAccountId = targetAccId,
                                         splits = splits,
                                         labelIds = labelIds,
-                                        targetAmount = targetAmount
+                                        targetAmount = targetAmount,
+                                        bookingDateIso = bookingDateIso ?: Instant.now().toString()
                                     )
                                     showQuickAddModal = false
                                 }

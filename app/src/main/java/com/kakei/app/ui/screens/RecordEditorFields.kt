@@ -10,11 +10,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +39,10 @@ import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.ui.components.IconTile
 import com.kakei.app.ui.theme.KakeiTheme
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 /** A payee/merchant seen in past records, with the category it was last booked under per record type. */
 data class PayeeHistoryEntry(
@@ -418,6 +424,120 @@ fun CategoryPickerField(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Booking date and time of a record, side by side: the date opens a calendar, the time a
+ * clock dial. [value] is in the device time zone.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BookingDateTimeField(
+    value: LocalDateTime,
+    onChange: (LocalDateTime) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
+    var showDate by remember { mutableStateOf(false) }
+    var showTime by remember { mutableStateOf(false) }
+
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        DateTimeBox(
+            caption = s.pick("Дата", "Date"),
+            valueText = dayLabel(value.toLocalDate(), s),
+            icon = Icons.Outlined.CalendarToday,
+            onClick = { showDate = true },
+            modifier = Modifier.weight(1f)
+        )
+        DateTimeBox(
+            caption = s.pick("Время", "Time"),
+            valueText = value.format(DateTimeFormatter.ofPattern("HH:mm")),
+            icon = Icons.Outlined.Schedule,
+            onClick = { showTime = true },
+            modifier = Modifier.weight(1f)
+        )
+    }
+
+    if (showDate) {
+        // The picker works on UTC midnights; only the calendar day is taken from it.
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = value.toLocalDate().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDate = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let {
+                        val day = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                        onChange(value.with(day))
+                    }
+                    showDate = false
+                }) { Text(s.pick("Готово", "Done")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDate = false }) { Text(s.cancelButton) }
+            }
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
+    if (showTime) {
+        val timeState = rememberTimePickerState(
+            initialHour = value.hour,
+            initialMinute = value.minute,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showTime = false },
+            containerColor = c.surf,
+            confirmButton = {
+                TextButton(onClick = {
+                    onChange(value.withHour(timeState.hour).withMinute(timeState.minute).withSecond(0).withNano(0))
+                    showTime = false
+                }) { Text(s.pick("Готово", "Done")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTime = false }) { Text(s.cancelButton) }
+            },
+            text = { TimePicker(state = timeState) }
+        )
+    }
+}
+
+@Composable
+private fun DateTimeBox(
+    caption: String,
+    valueText: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val c = KakeiTheme.colors
+    Row(
+        modifier = modifier
+            .height(56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surf2)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = c.muted, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(caption, style = MaterialTheme.typography.labelSmall, color = c.muted, maxLines = 1)
+            Text(
+                text = valueText,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = c.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
