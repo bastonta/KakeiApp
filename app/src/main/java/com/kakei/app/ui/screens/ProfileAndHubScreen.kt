@@ -7,11 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
@@ -118,392 +118,388 @@ fun ProfileAndHubScreen(
     }
     val usdRate = if (baseCurrency.equals("USD", ignoreCase = true)) null else rateBook.rate("USD", baseCurrency)
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(c.bg),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 8.dp,
-            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        ),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        // Top bar
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
-                CircleIconButton(
-                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = s.pick("Назад", "Back"),
-                    onClick = onBack,
-                    size = 44.dp
-                )
-                Spacer(modifier = Modifier.width(14.dp))
-                Text(s.navProfile, style = MaterialTheme.typography.headlineMedium, color = c.text)
-            }
-        }
-
-        // 1. Profile & synchronization (Kakei API + offline Outbox queue)
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .kakeiCard(cornerRadius = 24.dp)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(name = settings.profile.name, color = c.mint, contentColor = c.mintInk, size = 68.dp)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            settings.profile.name,
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = c.text,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            "${s.baseCurrencyLabel} · $baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = c.muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background((if (settings.isAuthenticated) c.mint else c.muted).copy(alpha = 0.16f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                if (settings.isAuthenticated) Icons.Outlined.Cloud else Icons.Outlined.CloudOff,
-                                contentDescription = null,
-                                tint = if (settings.isAuthenticated) c.mint else c.muted,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                if (settings.isAuthenticated) "Kakei Cloud" else s.offlineModeBadge,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (settings.isAuthenticated) c.mint else c.muted
-                            )
-                        }
-                    }
-                }
-
+    Column(modifier = Modifier.fillMaxSize().background(c.bg)) {
+        val listState = rememberLazyListState()
+        PageTopBar(
+            title = s.navProfile,
+            backContentDescription = s.pick("Назад", "Back"),
+            onBack = onBack,
+            scrolled = listState.canScrollBackward
+        )
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 4.dp,
+                bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            ),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // 1. Profile & synchronization (Kakei API + offline Outbox queue)
+            item {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(c.surf2)
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .kakeiCard(cornerRadius = 24.dp)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Sync, contentDescription = null, tint = c.mint, modifier = Modifier.size(22.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                        Avatar(name = settings.profile.name, color = c.mint, contentColor = c.mintInk, size = 68.dp)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(
-                                text = when {
-                                    settings.syncInProgress -> s.pick("Синхронизация…", "Syncing…")
-                                    pendingMutations.isEmpty() -> s.pick("Синхронизировано", "Up to date")
-                                    else -> "${s.pendingMutationsLabel}: ${pendingMutations.size}"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                color = c.text
+                                settings.profile.name,
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = c.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = listOfNotNull(
-                                    settings.lastSyncTimestamp?.let { CurrencyFormatter.formatShortDate(it) },
-                                    if (pendingMutations.isEmpty()) s.pick("очередь пуста", "queue empty") else null,
-                                    settings.serverVersion?.let { "${s.pick("сервер", "server")} $it" }
-                                ).joinToString(" · ").ifBlank { s.pick("Сервер не подключён", "Server not connected") },
-                                style = MaterialTheme.typography.bodySmall,
+                                "${s.baseCurrencyLabel} · $baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = c.muted,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background((if (settings.isAuthenticated) c.mint else c.muted).copy(alpha = 0.16f))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (settings.isAuthenticated) Icons.Outlined.Cloud else Icons.Outlined.CloudOff,
+                                    contentDescription = null,
+                                    tint = if (settings.isAuthenticated) c.mint else c.muted,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    if (settings.isAuthenticated) "Kakei Cloud" else s.offlineModeBadge,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (settings.isAuthenticated) c.mint else c.muted
+                                )
+                            }
                         }
-                        KakeiButton(
-                            text = s.pick("Обновить", "Sync"),
-                            kind = KakeiButtonKind.TONAL,
-                            height = 40.dp,
-                            enabled = !settings.syncInProgress,
-                            onClick = { scope.launch { repository.synchronizeWithServer() } }
-                        )
                     }
-                    if (syncErrors.isNotEmpty()) {
-                        Text(
-                            text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
-                                "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = c.coral
-                        )
-                        Text(
-                            text = if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = c.muted,
-                            modifier = Modifier.clickable { repository.dismissSyncErrors() }
-                        )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(c.surf2)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Sync, contentDescription = null, tint = c.mint, modifier = Modifier.size(22.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = when {
+                                        settings.syncInProgress -> s.pick("Синхронизация…", "Syncing…")
+                                        pendingMutations.isEmpty() -> s.pick("Синхронизировано", "Up to date")
+                                        else -> "${s.pendingMutationsLabel}: ${pendingMutations.size}"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = c.text
+                                )
+                                Text(
+                                    text = listOfNotNull(
+                                        settings.lastSyncTimestamp?.let { CurrencyFormatter.formatShortDate(it) },
+                                        if (pendingMutations.isEmpty()) s.pick("очередь пуста", "queue empty") else null,
+                                        settings.serverVersion?.let { "${s.pick("сервер", "server")} $it" }
+                                    ).joinToString(" · ").ifBlank { s.pick("Сервер не подключён", "Server not connected") },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            KakeiButton(
+                                text = s.pick("Обновить", "Sync"),
+                                kind = KakeiButtonKind.TONAL,
+                                height = 40.dp,
+                                enabled = !settings.syncInProgress,
+                                onClick = { scope.launch { repository.synchronizeWithServer() } }
+                            )
+                        }
+                        if (syncErrors.isNotEmpty()) {
+                            Text(
+                                text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
+                                    "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.coral
+                            )
+                            Text(
+                                text = if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = c.muted,
+                                modifier = Modifier.clickable { repository.dismissSyncErrors() }
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // 2. Native SMS / Push capture & security toggles
-        item { GroupCaption(s.pick("Автозахват", "Auto-capture")) }
-        item {
-            GroupCard {
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Outlined.Chat,
-                    iconColor = c.cyan,
-                    title = s.pick("SMS банков", "Bank SMS"),
-                    subtitle = s.pick("Kaspi, Halyk, Freedom и другие", "Kaspi, Halyk, Freedom and more"),
-                    checked = settings.smsCaptureEnabled,
-                    onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Notifications,
-                    iconColor = c.amber,
-                    title = s.pick("Push-уведомления", "Push notifications"),
-                    subtitle = s.pick("Дедупликация 5 мин", "5-min deduplication"),
-                    checked = settings.pushCaptureEnabled,
-                    onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Bolt,
-                    iconColor = c.mint,
-                    title = s.pick("Быстрая категория", "Quick category"),
-                    subtitle = s.pick("Карточка на главной сразу после покупки", "Home card right after a purchase"),
-                    checked = settings.instantPopupEnabled,
-                    onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Fingerprint,
-                    iconColor = c.violet,
-                    title = s.pick("Вход по биометрии", "Biometric unlock"),
-                    checked = settings.biometricLockEnabled,
-                    onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
-                )
-                if (settings.biometricLockEnabled) {
+            // 2. Native SMS / Push capture & security toggles
+            item { GroupCaption(s.pick("Автозахват", "Auto-capture")) }
+            item {
+                GroupCard {
+                    SettingsRow(
+                        icon = Icons.AutoMirrored.Outlined.Chat,
+                        iconColor = c.cyan,
+                        title = s.pick("SMS банков", "Bank SMS"),
+                        subtitle = s.pick("Kaspi, Halyk, Freedom и другие", "Kaspi, Halyk, Freedom and more"),
+                        checked = settings.smsCaptureEnabled,
+                        onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
+                    )
                     RowDivider(startIndent = 66.dp)
                     SettingsRow(
-                        icon = Icons.Outlined.Timer,
-                        iconColor = c.violet,
-                        title = s.pick("Блокировать через", "Lock after"),
-                        subtitle = s.pick("Время в фоне до повторного входа", "Time in background before relock"),
-                        value = lockTimeoutLabel(settings.lockTimeoutSeconds),
-                        onClick = { showLockTimeoutDialog = true }
-                    )
-                }
-            }
-        }
-
-        // 2b. Auto-capture permissions, default capture account & alerts awaiting an account
-        item {
-            AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
-        }
-
-        // 2c. Passkeys registered on the Kakei account (refreshed on every sync)
-        if (settings.isAuthenticated) {
-            item { GroupCaption("Passkeys") }
-            item {
-                GroupCard {
-                    passkeys.forEachIndexed { index, passkey ->
-                        if (index > 0) RowDivider(startIndent = 66.dp)
-                        SettingsRow(
-                            icon = Icons.Outlined.Key,
-                            iconColor = c.violet,
-                            title = passkey.name,
-                            subtitle = listOfNotNull(
-                                "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
-                                passkey.lastUsedAt?.let {
-                                    "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
-                                }
-                            ).joinToString(" · "),
-                            showChevron = false,
-                            trailing = {
-                                IconButton(onClick = { passkeyToDelete = passkey }) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Delete,
-                                        contentDescription = s.pick("Удалить passkey", "Remove passkey"),
-                                        tint = c.muted
-                                    )
-                                }
-                            }
-                        )
-                    }
-                    if (passkeys.isNotEmpty()) RowDivider(startIndent = 66.dp)
-                    SettingsRow(
-                        icon = Icons.Outlined.Add,
-                        iconColor = c.mint,
-                        title = s.pick("Добавить passkey", "Add passkey"),
-                        subtitle = s.pick(
-                            "Вход по отпечатку или PIN-коду без пароля",
-                            "Sign in with fingerprint or screen lock, no password"
-                        ),
-                        onClick = { showAddPasskeyDialog = true }
-                    )
-                }
-            }
-        }
-
-        // 3. Appearance
-        item { GroupCaption(s.pick("Оформление", "Appearance")) }
-        item {
-            GroupCard {
-                SettingsRow(
-                    icon = Icons.Outlined.Language,
-                    iconColor = c.blue,
-                    title = s.languageLabel,
-                    value = settings.language.displayName,
-                    onClick = { showLanguageDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.DarkMode,
-                    iconColor = c.violet,
-                    title = s.themeLabel,
-                    value = themeTitle,
-                    onClick = { showThemeDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.AccountBalanceWallet,
-                    iconColor = c.mint,
-                    title = s.baseCurrencyLabel,
-                    value = "$baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
-                    onClick = { showCurrencyDialog = true }
-                )
-            }
-        }
-
-        // 4. Data hub: categories & smart rules, sharing, rates, import/export, backups, server
-        item { GroupCaption(s.pick("Данные", "Data")) }
-        item {
-            GroupCard {
-                SettingsRow(
-                    icon = Icons.Outlined.Sell,
-                    iconColor = c.amber,
-                    title = s.categoriesAndRulesTitle,
-                    value = "${categories.size} · ${rules.size}",
-                    onClick = { showCategoriesDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.People,
-                    iconColor = c.cyan,
-                    title = s.groupSharingTitle,
-                    value = "${groupMembers.size}",
-                    onClick = { showSharingDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.SwapHoriz,
-                    iconColor = c.blue,
-                    title = s.exchangeRatesTitle,
-                    value = usdRate?.let { "USD ${CurrencyFormatter.formatRate(it)}" },
-                    onClick = { showRatesSheet = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Download,
-                    iconColor = c.mint,
-                    title = s.importExportTitle,
-                    value = "CSV, OFX",
-                    onClick = { showExchangeDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Lock,
-                    iconColor = c.pink,
-                    title = s.pick("Зашифрованная копия", "Encrypted backup"),
-                    subtitle = "AES-256-GCM",
-                    onClick = { showBackupDialog = true }
-                )
-                RowDivider(startIndent = 66.dp)
-                SettingsRow(
-                    icon = Icons.Outlined.Dns,
-                    iconColor = c.muted,
-                    title = s.authServerUrlLabel,
-                    value = runCatching { URI(settings.serverBaseUrl).host }.getOrNull() ?: settings.serverBaseUrl,
-                    onClick = { showServerDialog = true }
-                )
-            }
-        }
-
-        // 5. Developer tools: synthetic alerts would book fake money into real accounts.
-        if (BuildConfig.DEBUG) {
-            item { GroupCaption(s.pick("Разработка", "Developer")) }
-            item {
-                GroupCard {
-                    SettingsRow(
-                        icon = Icons.Outlined.Sms,
+                        icon = Icons.Outlined.Notifications,
                         iconColor = c.amber,
-                        title = s.simulateSmsCaptureButton,
-                        showChevron = false,
-                        onClick = {
-                            val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
-                            sampleSmsIdx++
-                            repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
-                        }
+                        title = s.pick("Push-уведомления", "Push notifications"),
+                        subtitle = s.pick("Дедупликация 5 мин", "5-min deduplication"),
+                        checked = settings.pushCaptureEnabled,
+                        onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
                     )
-                    if (repository.canLoadDemoData && accounts.isEmpty()) {
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Bolt,
+                        iconColor = c.mint,
+                        title = s.pick("Быстрая категория", "Quick category"),
+                        subtitle = s.pick("Карточка на главной сразу после покупки", "Home card right after a purchase"),
+                        checked = settings.instantPopupEnabled,
+                        onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Fingerprint,
+                        iconColor = c.violet,
+                        title = s.pick("Вход по биометрии", "Biometric unlock"),
+                        checked = settings.biometricLockEnabled,
+                        onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
+                    )
+                    if (settings.biometricLockEnabled) {
                         RowDivider(startIndent = 66.dp)
                         SettingsRow(
-                            icon = Icons.Outlined.Inventory2,
+                            icon = Icons.Outlined.Timer,
                             iconColor = c.violet,
-                            title = s.loadDemoDataButton,
-                            showChevron = false,
-                            onClick = { repository.loadDemoDataForDevelopment() }
+                            title = s.pick("Блокировать через", "Lock after"),
+                            subtitle = s.pick("Время в фоне до повторного входа", "Time in background before relock"),
+                            value = lockTimeoutLabel(settings.lockTimeoutSeconds),
+                            onClick = { showLockTimeoutDialog = true }
                         )
                     }
                 }
             }
-        }
 
-        // 6. System & SQLCipher Diagnostics Panel
-        item { GroupCaption(s.diagnosticsTitle) }
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .kakeiCard()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                val status = health
-                if (status == null) {
-                    Text("…", color = c.muted)
-                } else {
-                    DiagnosticLine("SQLCipher AES-256", if (status.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE", status.sqlCipherActive)
-                    DiagnosticLine("NotificationListenerService", status.notificationListenerGranted.toString(), status.notificationListenerGranted)
-                    DiagnosticLine("System overlay", status.overlayPermissionGranted.toString(), status.overlayPermissionGranted)
-                    DiagnosticLine("Battery optimization ignored", status.batteryOptimizationIgnored.toString(), status.batteryOptimizationIgnored)
-                    DiagnosticLine("Biometric hardware", status.biometricAvailable.toString(), status.biometricAvailable)
-                }
-                DiagnosticLine("Home screen widgets", "7 + QS Tile", true)
+            // 2b. Auto-capture permissions, default capture account & alerts awaiting an account
+            item {
+                AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
             }
-        }
 
-        // 7. Sign out
-        item {
-            Spacer(modifier = Modifier.height(6.dp))
-            KakeiButton(
-                text = s.logoutButton,
-                icon = Icons.AutoMirrored.Outlined.Logout,
-                kind = KakeiButtonKind.TONAL,
-                color = c.coral,
-                onClick = { repository.logout() },
-                modifier = Modifier.fillMaxWidth(),
-                height = 56.dp
-            )
+            // 2c. Passkeys registered on the Kakei account (refreshed on every sync)
+            if (settings.isAuthenticated) {
+                item { GroupCaption("Passkeys") }
+                item {
+                    GroupCard {
+                        passkeys.forEachIndexed { index, passkey ->
+                            if (index > 0) RowDivider(startIndent = 66.dp)
+                            SettingsRow(
+                                icon = Icons.Outlined.Key,
+                                iconColor = c.violet,
+                                title = passkey.name,
+                                subtitle = listOfNotNull(
+                                    "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
+                                    passkey.lastUsedAt?.let {
+                                        "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
+                                    }
+                                ).joinToString(" · "),
+                                showChevron = false,
+                                trailing = {
+                                    IconButton(onClick = { passkeyToDelete = passkey }) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Delete,
+                                            contentDescription = s.pick("Удалить passkey", "Remove passkey"),
+                                            tint = c.muted
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                        if (passkeys.isNotEmpty()) RowDivider(startIndent = 66.dp)
+                        SettingsRow(
+                            icon = Icons.Outlined.Add,
+                            iconColor = c.mint,
+                            title = s.pick("Добавить passkey", "Add passkey"),
+                            subtitle = s.pick(
+                                "Вход по отпечатку или PIN-коду без пароля",
+                                "Sign in with fingerprint or screen lock, no password"
+                            ),
+                            onClick = { showAddPasskeyDialog = true }
+                        )
+                    }
+                }
+            }
+
+            // 3. Appearance
+            item { GroupCaption(s.pick("Оформление", "Appearance")) }
+            item {
+                GroupCard {
+                    SettingsRow(
+                        icon = Icons.Outlined.Language,
+                        iconColor = c.blue,
+                        title = s.languageLabel,
+                        value = settings.language.displayName,
+                        onClick = { showLanguageDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.DarkMode,
+                        iconColor = c.violet,
+                        title = s.themeLabel,
+                        value = themeTitle,
+                        onClick = { showThemeDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.AccountBalanceWallet,
+                        iconColor = c.mint,
+                        title = s.baseCurrencyLabel,
+                        value = "$baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
+                        onClick = { showCurrencyDialog = true }
+                    )
+                }
+            }
+
+            // 4. Data hub: categories & smart rules, sharing, rates, import/export, backups, server
+            item { GroupCaption(s.pick("Данные", "Data")) }
+            item {
+                GroupCard {
+                    SettingsRow(
+                        icon = Icons.Outlined.Sell,
+                        iconColor = c.amber,
+                        title = s.categoriesAndRulesTitle,
+                        value = "${categories.size} · ${rules.size}",
+                        onClick = { showCategoriesDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.People,
+                        iconColor = c.cyan,
+                        title = s.groupSharingTitle,
+                        value = "${groupMembers.size}",
+                        onClick = { showSharingDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.SwapHoriz,
+                        iconColor = c.blue,
+                        title = s.exchangeRatesTitle,
+                        value = usdRate?.let { "USD ${CurrencyFormatter.formatRate(it)}" },
+                        onClick = { showRatesSheet = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Download,
+                        iconColor = c.mint,
+                        title = s.importExportTitle,
+                        value = "CSV, OFX",
+                        onClick = { showExchangeDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Lock,
+                        iconColor = c.pink,
+                        title = s.pick("Зашифрованная копия", "Encrypted backup"),
+                        subtitle = "AES-256-GCM",
+                        onClick = { showBackupDialog = true }
+                    )
+                    RowDivider(startIndent = 66.dp)
+                    SettingsRow(
+                        icon = Icons.Outlined.Dns,
+                        iconColor = c.muted,
+                        title = s.authServerUrlLabel,
+                        value = runCatching { URI(settings.serverBaseUrl).host }.getOrNull() ?: settings.serverBaseUrl,
+                        onClick = { showServerDialog = true }
+                    )
+                }
+            }
+
+            // 5. Developer tools: synthetic alerts would book fake money into real accounts.
+            if (BuildConfig.DEBUG) {
+                item { GroupCaption(s.pick("Разработка", "Developer")) }
+                item {
+                    GroupCard {
+                        SettingsRow(
+                            icon = Icons.Outlined.Sms,
+                            iconColor = c.amber,
+                            title = s.simulateSmsCaptureButton,
+                            showChevron = false,
+                            onClick = {
+                                val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
+                                sampleSmsIdx++
+                                repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
+                            }
+                        )
+                        if (repository.canLoadDemoData && accounts.isEmpty()) {
+                            RowDivider(startIndent = 66.dp)
+                            SettingsRow(
+                                icon = Icons.Outlined.Inventory2,
+                                iconColor = c.violet,
+                                title = s.loadDemoDataButton,
+                                showChevron = false,
+                                onClick = { repository.loadDemoDataForDevelopment() }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 6. System & SQLCipher Diagnostics Panel
+            item { GroupCaption(s.diagnosticsTitle) }
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .kakeiCard()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val status = health
+                    if (status == null) {
+                        Text("…", color = c.muted)
+                    } else {
+                        DiagnosticLine("SQLCipher AES-256", if (status.sqlCipherActive) "ACTIVE" else "FALLBACK SQLITE", status.sqlCipherActive)
+                        DiagnosticLine("NotificationListenerService", status.notificationListenerGranted.toString(), status.notificationListenerGranted)
+                        DiagnosticLine("System overlay", status.overlayPermissionGranted.toString(), status.overlayPermissionGranted)
+                        DiagnosticLine("Battery optimization ignored", status.batteryOptimizationIgnored.toString(), status.batteryOptimizationIgnored)
+                        DiagnosticLine("Biometric hardware", status.biometricAvailable.toString(), status.biometricAvailable)
+                    }
+                    DiagnosticLine("Home screen widgets", "7 + QS Tile", true)
+                }
+            }
+
+            // 7. Sign out
+            item {
+                Spacer(modifier = Modifier.height(6.dp))
+                KakeiButton(
+                    text = s.logoutButton,
+                    icon = Icons.AutoMirrored.Outlined.Logout,
+                    kind = KakeiButtonKind.TONAL,
+                    color = c.coral,
+                    onClick = { repository.logout() },
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 56.dp
+                )
+            }
         }
     }
 

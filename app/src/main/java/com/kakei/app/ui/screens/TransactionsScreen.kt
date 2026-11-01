@@ -7,10 +7,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -184,254 +184,246 @@ fun TransactionsScreen(
         if (focusSearch) runCatching { focusRequester.requestFocus() }
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(c.bg),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp)
-    ) {
-        item(key = "header") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircleIconButton(
-                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = s.pick("Назад", "Back"),
-                    onClick = onBack,
-                    size = 44.dp
-                )
-                Spacer(modifier = Modifier.width(14.dp))
-                Text(
-                    s.pick("Операции", "Transactions"),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = c.text,
-                    modifier = Modifier.weight(1f)
-                )
-                if (activeFilterCount > 0 || query.isNotEmpty()) {
-                    TextButton(onClick = {
-                        query = ""
-                        typeFilter = null
-                        accountFilter = null
-                        categoryFilter = emptySet()
-                        payeeFilter = null
-                        reviewOnly = false
-                    }) {
-                        Text(s.pick("Сбросить", "Reset"), color = c.mint)
-                    }
+    Column(modifier = Modifier.fillMaxSize().background(c.bg)) {
+        val listState = rememberLazyListState()
+        PageTopBar(
+            title = s.pick("Операции", "Transactions"),
+            backContentDescription = s.pick("Назад", "Back"),
+            onBack = onBack,
+            scrolled = listState.canScrollBackward
+        ) {
+            if (activeFilterCount > 0 || query.isNotEmpty()) {
+                TextButton(onClick = {
+                    query = ""
+                    typeFilter = null
+                    accountFilter = null
+                    categoryFilter = emptySet()
+                    payeeFilter = null
+                    reviewOnly = false
+                }) {
+                    Text(s.pick("Сбросить", "Reset"), color = c.mint)
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
         }
-
-        item(key = "search") {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text(s.searchPayeeHint) },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Outlined.Close, contentDescription = s.pick("Очистить", "Clear"))
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp)
+        ) {
+            item(key = "search") {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text(s.searchPayeeHint) },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Outlined.Close, contentDescription = s.pick("Очистить", "Clear"))
+                            }
                         }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focusRequester)
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
-        // Period presets + custom range
-        item(key = "period") {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                LedgerPeriod.entries.forEach { p ->
-                    KakeiChip(
-                        text = when (p) {
-                            LedgerPeriod.THIS_MONTH -> monthName(today.monthValue, s)
-                            LedgerPeriod.LAST_MONTH -> monthName(today.minusMonths(1).monthValue, s)
-                            LedgerPeriod.THREE_MONTHS -> s.pick("3 месяца", "3 months")
-                            LedgerPeriod.THIS_YEAR -> today.year.toString()
-                            LedgerPeriod.ALL_TIME -> s.pick("Всё время", "All time")
-                            LedgerPeriod.CUSTOM -> customRange?.let { rangeLabel(it, s) } ?: s.pick("Даты…", "Dates…")
-                        },
-                        icon = Icons.Outlined.CalendarMonth.takeIf { p == LedgerPeriod.CUSTOM },
-                        selected = period == p,
-                        onClick = {
-                            if (p == LedgerPeriod.CUSTOM) showRangePicker = true else period = p
-                        }
-                    )
-                }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
             }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
 
-        // Type, account, category, merchant, review
-        item(key = "filters") {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(null, "EXPENSE", "INCOME", "TRANSFER").forEach { t ->
-                    KakeiChip(
-                        text = t?.let { s.operationType(it) } ?: s.pick("Все типы", "All types"),
-                        selected = typeFilter == t,
-                        color = when (t) {
-                            "INCOME" -> c.mint
-                            "TRANSFER" -> c.cyan
-                            "EXPENSE" -> c.coral
-                            else -> c.mint
-                        },
-                        onClick = { typeFilter = t }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box {
-                    KakeiChip(
-                        text = accountFilter?.let { accountMap[it]?.name } ?: s.pick("Все счета", "All accounts"),
-                        icon = Icons.Outlined.AccountBalanceWallet,
-                        selected = accountFilter != null,
-                        onClick = { showAccountMenu = true }
-                    )
-                    DropdownMenu(expanded = showAccountMenu, onDismissRequest = { showAccountMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text(s.allAccountsFilter) },
+            // Period presets + custom range
+            item(key = "period") {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LedgerPeriod.entries.forEach { p ->
+                        KakeiChip(
+                            text = when (p) {
+                                LedgerPeriod.THIS_MONTH -> monthName(today.monthValue, s)
+                                LedgerPeriod.LAST_MONTH -> monthName(today.minusMonths(1).monthValue, s)
+                                LedgerPeriod.THREE_MONTHS -> s.pick("3 месяца", "3 months")
+                                LedgerPeriod.THIS_YEAR -> today.year.toString()
+                                LedgerPeriod.ALL_TIME -> s.pick("Всё время", "All time")
+                                LedgerPeriod.CUSTOM -> customRange?.let { rangeLabel(it, s) } ?: s.pick("Даты…", "Dates…")
+                            },
+                            icon = Icons.Outlined.CalendarMonth.takeIf { p == LedgerPeriod.CUSTOM },
+                            selected = period == p,
                             onClick = {
-                                accountFilter = null
-                                showAccountMenu = false
+                                if (p == LedgerPeriod.CUSTOM) showRangePicker = true else period = p
                             }
                         )
-                        accounts.filter { !it.isArchived || it.id == accountFilter }.forEach { acc ->
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Type, account, category, merchant, review
+            item(key = "filters") {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(null, "EXPENSE", "INCOME", "TRANSFER").forEach { t ->
+                        KakeiChip(
+                            text = t?.let { s.operationType(it) } ?: s.pick("Все типы", "All types"),
+                            selected = typeFilter == t,
+                            color = when (t) {
+                                "INCOME" -> c.mint
+                                "TRANSFER" -> c.cyan
+                                "EXPENSE" -> c.coral
+                                else -> c.mint
+                            },
+                            onClick = { typeFilter = t }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box {
+                        KakeiChip(
+                            text = accountFilter?.let { accountMap[it]?.name } ?: s.pick("Все счета", "All accounts"),
+                            icon = Icons.Outlined.AccountBalanceWallet,
+                            selected = accountFilter != null,
+                            onClick = { showAccountMenu = true }
+                        )
+                        DropdownMenu(expanded = showAccountMenu, onDismissRequest = { showAccountMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text("${acc.name} · ${acc.currency}") },
-                                trailingIcon = if (acc.id == accountFilter) {
-                                    { Icon(Icons.Outlined.Check, contentDescription = null) }
-                                } else null,
+                                text = { Text(s.allAccountsFilter) },
                                 onClick = {
-                                    accountFilter = acc.id
+                                    accountFilter = null
                                     showAccountMenu = false
                                 }
                             )
+                            accounts.filter { !it.isArchived || it.id == accountFilter }.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} · ${acc.currency}") },
+                                    trailingIcon = if (acc.id == accountFilter) {
+                                        { Icon(Icons.Outlined.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        accountFilter = acc.id
+                                        showAccountMenu = false
+                                    }
+                                )
+                            }
                         }
                     }
-                }
-                KakeiChip(
-                    text = when (categoryFilter.size) {
-                        0 -> s.pick("Категории", "Categories")
-                        1 -> categoryMap[categoryFilter.first()]?.localizedName(langCode) ?: s.pick("Категория", "Category")
-                        else -> s.pick("Категорий: ${categoryFilter.size}", "${categoryFilter.size} categories")
-                    },
-                    icon = Icons.Outlined.Sell,
-                    selected = categoryFilter.isNotEmpty(),
-                    onClick = { showCategoryDialog = true }
-                )
-                KakeiChip(
-                    text = payeeFilter ?: s.pick("Мерчант", "Merchant"),
-                    icon = Icons.Outlined.Storefront,
-                    selected = payeeFilter != null,
-                    onClick = { showPayeeDialog = true }
-                )
-                KakeiChip(
-                    text = s.pick("Проверить", "Needs review"),
-                    icon = Icons.Outlined.Flag,
-                    color = c.amber,
-                    selected = reviewOnly,
-                    onClick = { reviewOnly = !reviewOnly }
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
-        item(key = "summary") {
-            val (income, expense) = totals
-            val n = filtered.size.toLong()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .kakeiCard(cornerRadius = 16.dp)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    s.pick("$n ${ruPlural(n, "операция", "операции", "операций")}", "$n ${if (n == 1L) "record" else "records"}"),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = c.muted,
-                    modifier = Modifier.weight(1f)
-                )
-                if (income.signum() > 0) {
-                    Text("+" + CurrencyFormatter.format(income, baseCurrency), style = MaterialTheme.typography.labelLarge, color = c.mint)
-                    Spacer(modifier = Modifier.width(10.dp))
-                }
-                Text("−" + CurrencyFormatter.format(expense, baseCurrency), style = MaterialTheme.typography.labelLarge, color = c.text)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (entries.isEmpty()) {
-            item(key = "empty") {
-                Spacer(modifier = Modifier.height(8.dp))
-                EmptyStateCard(
-                    icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    title = s.pick("Ничего не найдено", "Nothing found"),
-                    hint = s.pick(
-                        "Измените период или сбросьте фильтры.",
-                        "Change the period or reset the filters."
+                    KakeiChip(
+                        text = when (categoryFilter.size) {
+                            0 -> s.pick("Категории", "Categories")
+                            1 -> categoryMap[categoryFilter.first()]?.localizedName(langCode) ?: s.pick("Категория", "Category")
+                            else -> s.pick("Категорий: ${categoryFilter.size}", "${categoryFilter.size} categories")
+                        },
+                        icon = Icons.Outlined.Sell,
+                        selected = categoryFilter.isNotEmpty(),
+                        onClick = { showCategoryDialog = true }
                     )
-                )
+                    KakeiChip(
+                        text = payeeFilter ?: s.pick("Мерчант", "Merchant"),
+                        icon = Icons.Outlined.Storefront,
+                        selected = payeeFilter != null,
+                        onClick = { showPayeeDialog = true }
+                    )
+                    KakeiChip(
+                        text = s.pick("Проверить", "Needs review"),
+                        icon = Icons.Outlined.Flag,
+                        color = c.amber,
+                        selected = reviewOnly,
+                        onClick = { reviewOnly = !reviewOnly }
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
             }
-        } else {
-            // Every record is its own lazy item, so long periods scroll without composing whole days at once.
-            items(entries, key = { it.key }, contentType = { it::class }) { entry ->
-                when (entry) {
-                    is LedgerEntry.DayHeader -> Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 4.dp, end = 4.dp, top = 14.dp, bottom = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(entry.date?.let { dayLabel(it, s) } ?: "—", style = MaterialTheme.typography.labelLarge, color = c.muted)
-                        if (entry.expense.signum() > 0) {
-                            Text(
-                                "−" + CurrencyFormatter.format(entry.expense, baseCurrency),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = c.muted
-                            )
-                        }
+
+            item(key = "summary") {
+                val (income, expense) = totals
+                val n = filtered.size.toLong()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .kakeiCard(cornerRadius = 16.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        s.pick("$n ${ruPlural(n, "операция", "операции", "операций")}", "$n ${if (n == 1L) "record" else "records"}"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.muted,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (income.signum() > 0) {
+                        Text("+" + CurrencyFormatter.format(income, baseCurrency), style = MaterialTheme.typography.labelLarge, color = c.mint)
+                        Spacer(modifier = Modifier.width(10.dp))
                     }
-                    is LedgerEntry.Record -> {
-                        val corner = 20.dp
-                        val shape = RoundedCornerShape(
-                            topStart = if (entry.isFirst) corner else 0.dp,
-                            topEnd = if (entry.isFirst) corner else 0.dp,
-                            bottomStart = if (entry.isLast) corner else 0.dp,
-                            bottomEnd = if (entry.isLast) corner else 0.dp
+                    Text("−" + CurrencyFormatter.format(expense, baseCurrency), style = MaterialTheme.typography.labelLarge, color = c.text)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (entries.isEmpty()) {
+                item(key = "empty") {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    EmptyStateCard(
+                        icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                        title = s.pick("Ничего не найдено", "Nothing found"),
+                        hint = s.pick(
+                            "Измените период или сбросьте фильтры.",
+                            "Change the period or reset the filters."
                         )
-                        Column(
+                    )
+                }
+            } else {
+                // Every record is its own lazy item, so long periods scroll without composing whole days at once.
+                items(entries, key = { it.key }, contentType = { it::class }) { entry ->
+                    when (entry) {
+                        is LedgerEntry.DayHeader -> Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(shape)
-                                .background(c.surf)
+                                .padding(start = 4.dp, end = 4.dp, top = 14.dp, bottom = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            if (!entry.isFirst) RowDivider(startIndent = 74.dp)
-                            LedgerRecordItem(
-                                tx = entry.tx,
-                                category = entry.tx.categoryId?.let { categoryMap[it] },
-                                account = accountMap[entry.tx.accountId],
-                                labels = entry.tx.labelIds.mapNotNull { labelMap[it] },
-                                langCode = langCode,
-                                onReview = { reviewTarget = it },
-                                onEdit = onEditRecord,
-                                onDelete = { repository.deleteRecord(it) }
+                            Text(entry.date?.let { dayLabel(it, s) } ?: "—", style = MaterialTheme.typography.labelLarge, color = c.muted)
+                            if (entry.expense.signum() > 0) {
+                                Text(
+                                    "−" + CurrencyFormatter.format(entry.expense, baseCurrency),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = c.muted
+                                )
+                            }
+                        }
+                        is LedgerEntry.Record -> {
+                            val corner = 20.dp
+                            val shape = RoundedCornerShape(
+                                topStart = if (entry.isFirst) corner else 0.dp,
+                                topEnd = if (entry.isFirst) corner else 0.dp,
+                                bottomStart = if (entry.isLast) corner else 0.dp,
+                                bottomEnd = if (entry.isLast) corner else 0.dp
                             )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(shape)
+                                    .background(c.surf)
+                            ) {
+                                if (!entry.isFirst) RowDivider(startIndent = 74.dp)
+                                LedgerRecordItem(
+                                    tx = entry.tx,
+                                    category = entry.tx.categoryId?.let { categoryMap[it] },
+                                    account = accountMap[entry.tx.accountId],
+                                    labels = entry.tx.labelIds.mapNotNull { labelMap[it] },
+                                    langCode = langCode,
+                                    onReview = { reviewTarget = it },
+                                    onEdit = onEditRecord,
+                                    onDelete = { repository.deleteRecord(it) }
+                                )
+                            }
                         }
                     }
                 }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
@@ -544,6 +545,51 @@ fun ScreenHeader(
             overflow = TextOverflow.Ellipsis
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = trailing)
+    }
+}
+
+/**
+ * Pinned top bar of a full-screen page: back button + title, kept above the scrolling content.
+ * [scrolled] shows a hairline under the bar once content has moved beneath it.
+ */
+@Composable
+fun PageTopBar(
+    title: String,
+    backContentDescription: String,
+    onBack: () -> Unit,
+    scrolled: Boolean,
+    modifier: Modifier = Modifier,
+    trailing: @Composable RowScope.() -> Unit = {}
+) {
+    val c = KakeiTheme.colors
+    val lineColor by animateColorAsState(if (scrolled) c.line else Color.Transparent, label = "topBarLine")
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(c.bg)
+            .drawBehind {
+                val stroke = 1.dp.toPx()
+                drawLine(lineColor, Offset(0f, size.height - stroke / 2f), Offset(size.width, size.height - stroke / 2f), stroke)
+            }
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircleIconButton(
+            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+            contentDescription = backContentDescription,
+            onClick = onBack,
+            size = 44.dp
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = c.text,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        trailing()
     }
 }
 

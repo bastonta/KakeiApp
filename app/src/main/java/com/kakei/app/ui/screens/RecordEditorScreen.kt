@@ -13,7 +13,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -193,35 +192,27 @@ fun RecordEditorScreen(
 
     BackHandler(onBack = onDismiss)
 
-    Box(
+    val scrollState = rememberScrollState()
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(c.bg)
     ) {
+        PageTopBar(
+            title = if (editing) s.pick("Изменить операцию", "Edit record") else s.quickAddTransaction,
+            backContentDescription = s.pick("Назад", "Back"),
+            onBack = onDismiss,
+            scrolled = scrollState.canScrollBackward
+        )
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(scrollState)
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Back & title
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircleIconButton(
-                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = s.pick("Назад", "Back"),
-                    onClick = onDismiss,
-                    size = 44.dp
-                )
-                Spacer(modifier = Modifier.width(14.dp))
-                Text(
-                    text = if (editing) s.pick("Изменить операцию", "Edit record") else s.quickAddTransaction,
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = c.text,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
             // Type Tabs: EXPENSE / INCOME / TRANSFER (fixed once the record exists)
             if (!editing) {
                 KakeiSegmented(
