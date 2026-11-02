@@ -1,13 +1,11 @@
 package com.kakei.app.ui.screens
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,11 +21,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,19 +36,21 @@ import com.kakei.app.ui.theme.kakeiCard
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.YearMonth
 
 /** Records shown on Home; the full history lives on the transactions page. */
-private const val RECENT_RECORDS_LIMIT = 15
+private const val RECENT_RECORDS_LIMIT = 5
+
+/** Window of the "Структура расходов" donut. */
+private const val SPEND_WINDOW_DAYS = 30L
 
 /**
- * Tab 1: Home & Ledger Screen combining:
- * - Greeting header with profile avatar, search and review notifications
- * - Net Worth hero card with 30-day balance trend, forecast and top budget burn rate
+ * Tab 1: Home combining:
+ * - "Главная" header with search, review notifications and the profile avatar
+ * - Net Worth hero card with the month delta and the month's income / expense
  * - Instant Captured Alert card with one-tap categorization
- * - Horizontal multi-currency accounts carousel (doubles as the ledger account filter) + Create Account dialog
- * - `NeedsReview` queue banner and the day-grouped ledger with splits, labels and clearing badges
+ * - Two-column accounts grid (tap opens the account's records) + Create Account dialog
+ * - `NeedsReview` queue banner, 30-day spending structure and the latest records
  */
 @Composable
 fun HomeScreen(
@@ -64,8 +59,6 @@ fun HomeScreen(
     categories: List<CategoryDto>,
     labels: List<LabelDto>,
     transactions: List<TransactionDto>,
-    budgets: List<BudgetEnvelopeDto>,
-    forecast: CashFlowForecastDto,
     instantCapturedRecord: TransactionDto?,
     repository: KakeiRepository,
     onOpenProfile: () -> Unit,
@@ -77,7 +70,6 @@ fun HomeScreen(
     val baseCurrency = settings.profile.defaultCurrency
     val langCode = settings.language.code
 
-    var selectedAccountFilter by remember { mutableStateOf<String?>(null) }
     var showCreateAccountDialog by remember { mutableStateOf(false) }
     var editAccount by remember { mutableStateOf<AccountDto?>(null) }
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
@@ -121,26 +113,54 @@ fun HomeScreen(
     val monthDeltaPercent = if (monthStartWorth.signum() > 0 && monthNet.signum() != 0) {
         monthNet.multiply(BigDecimal(100)).divide(monthStartWorth, 1, RoundingMode.HALF_UP)
     } else null
-    // Walk back from today's net worth to reconstruct the last 30 days of balances.
-    val trend = remember(dailyNet, netWorth) {
-        val points = ArrayList<BigDecimal>(31)
-        var running = netWorth
-        for (offset in 0..30) {
-            points.add(running)
-            running -= dailyNet[today.minusDays(offset.toLong())] ?: BigDecimal.ZERO
+    // This month's income and expense in the base currency (transfers excluded).
+    val (monthIncome, monthExpense) = remember(transactions, rateBook, baseCurrency) {
+        var income = BigDecimal.ZERO
+        var expense = BigDecimal.ZERO
+        transactions.forEach { tx ->
+            if (tx.type == "TRANSFER") return@forEach
+            val date = bookingDateTime(tx.bookingDate)?.toLocalDate() ?: return@forEach
+            if (YearMonth.from(date) != currentMonth) return@forEach
+            val converted = CurrencyFormatter.convert(tx.amount.abs(), tx.currency, baseCurrency, rateBook)
+                ?: return@forEach
+            if (tx.type == "INCOME") income += converted else expense += converted
         }
-        points.reversed()
+        income to expense
     }
 
+    // Expenses per top-level category over the last 30 days, and the 30 days before for the delta.
+    // Split records count towards their split categories; records without a known rate are left out.
+    val (windowSpend, previousWindowTotal) = remember(transactions, categories, rateBook, baseCurrency) {
+        val parentOf = categories.associate { it.id to it.parentId }
+        fun topLevel(catId: String?): String? = catId?.let { parentOf[it] ?: it }
+        val windowStart = today.minusDays(SPEND_WINDOW_DAYS - 1)
+        val previousStart = windowStart.minusDays(SPEND_WINDOW_DAYS)
+        val totals = linkedMapOf<String?, BigDecimal>()
+        var previous = BigDecimal.ZERO
+        transactions.forEach { tx ->
+            if (tx.type != "EXPENSE") return@forEach
+            val date = bookingDateTime(tx.bookingDate)?.toLocalDate() ?: return@forEach
+            if (date < previousStart || date > today) return@forEach
+            if (date < windowStart) {
+                previous += CurrencyFormatter.convert(tx.amount.abs(), tx.currency, baseCurrency, rateBook) ?: BigDecimal.ZERO
+                return@forEach
+            }
+            val parts = if (tx.splits.isNotEmpty()) tx.splits.map { topLevel(it.categoryId) to it.amount } else listOf(topLevel(tx.categoryId) to tx.amount)
+            parts.forEach { (catId, amt) ->
+                val converted = CurrencyFormatter.convert(amt.abs(), tx.currency, baseCurrency, rateBook) ?: return@forEach
+                totals[catId] = (totals[catId] ?: BigDecimal.ZERO) + converted
+            }
+        }
+        totals.entries.sortedByDescending { it.value }.map { it.key to it.value } to previous
+    }
+    val windowTotal = windowSpend.fold(BigDecimal.ZERO) { acc, p -> acc + p.second }
+    val windowDelta = if (previousWindowTotal.signum() > 0 && windowTotal.signum() > 0) {
+        (windowTotal - previousWindowTotal).multiply(BigDecimal(100)).divide(previousWindowTotal, 1, RoundingMode.HALF_UP)
+    } else null
+
     val needsReviewItems = remember(transactions) { transactions.filter { it.needsReview } }
-    val accountTransactions = remember(transactions, selectedAccountFilter) {
-        if (selectedAccountFilter == null) transactions else transactions.filter { it.accountId == selectedAccountFilter }
-    }
     // Home only shows the latest records; the full, filterable history is a separate page.
-    val recordsByDay = remember(accountTransactions) {
-        accountTransactions.take(RECENT_RECORDS_LIMIT)
-            .groupBy { bookingDateTime(it.bookingDate)?.toLocalDate() }.toList()
-    }
+    val recentRecords = remember(transactions) { transactions.take(RECENT_RECORDS_LIMIT) }
 
     val categoryMap = remember(categories) { categories.associateBy { it.id } }
     val accountMap = remember(accounts) { accounts.associateBy { it.id } }
@@ -153,42 +173,21 @@ fun HomeScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Greeting header: avatar (opens Profile), month, search and notifications
+        // 1. Header: search, notifications and the profile avatar
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Avatar(
-                    name = settings.profile.name,
-                    color = c.mint,
-                    contentColor = c.mintInk,
-                    size = 44.dp,
-                    modifier = Modifier.clickable(onClick = onOpenProfile)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${monthName(today.monthValue, s)} ${today.year}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.muted
-                    )
-                    Text(
-                        text = greeting(s),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = c.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+            ScreenHeader(title = s.navHome) {
                 CircleIconButton(
                     icon = Icons.Outlined.Search,
                     contentDescription = s.searchPayeeHint,
-                    onClick = { onOpenTransactions(selectedAccountFilter, true) }
+                    onClick = { onOpenTransactions(null, true) },
+                    size = 44.dp
                 )
-                Spacer(modifier = Modifier.width(8.dp))
                 Box {
                     CircleIconButton(
                         icon = Icons.Outlined.Notifications,
                         contentDescription = s.needsReviewBanner,
                         badge = needsReviewItems.isNotEmpty(),
+                        size = 44.dp,
                         onClick = {
                             val first = needsReviewItems.firstOrNull()
                             if (first != null) reviewTargetRecord = first else showNoNotifications = true
@@ -201,6 +200,13 @@ fun HomeScreen(
                         )
                     }
                 }
+                Avatar(
+                    name = settings.profile.name,
+                    color = c.mint,
+                    contentColor = c.mintInk,
+                    size = 44.dp,
+                    modifier = Modifier.clickable(onClick = onOpenProfile)
+                )
             }
         }
 
@@ -212,9 +218,8 @@ fun HomeScreen(
                 unconverted = netWorthUnconverted,
                 monthNet = monthNet,
                 monthDeltaPercent = monthDeltaPercent,
-                trend = trend,
-                forecast = forecast,
-                topBudget = budgets.firstOrNull()
+                monthIncome = monthIncome,
+                monthExpense = monthExpense
             )
         }
 
@@ -233,42 +238,32 @@ fun HomeScreen(
             }
         }
 
-        // 4. Accounts carousel (also filters the ledger below)
+        // 4. Accounts grid; a tap opens the account's records, a long press edits it.
+        // One item, so the grid keeps its own 10dp rhythm instead of the list's 16dp gaps.
         item {
-            SectionHeader(
-                title = s.accountsTitle,
-                action = s.pick("+ Добавить", "+ Add"),
-                actionColor = c.mint,
-                onAction = { showCreateAccountDialog = true }
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    AccountCard(
-                        tile = { LetterTile("Σ", c.mint, contentColor = c.mintInk) },
-                        caption = s.pick("Активных: ${activeAccounts.size}", "${activeAccounts.size} active"),
-                        name = s.allAccountsFilter,
-                        amount = formatCompactMoney(netWorth, baseCurrency, s),
-                        selected = selectedAccountFilter == null,
-                        onClick = { selectedAccountFilter = null }
-                    )
-                }
-                items(activeAccounts, key = { it.id }) { acc ->
-                    val isSelected = selectedAccountFilter == acc.id
-                    AccountCard(
-                        tile = { LetterTile(acc.name.take(1).uppercase(), accentForName(acc.name)) },
-                        // Permission is only worth showing on accounts shared with the user.
-                        caption = listOfNotNull(
-                            s.accountType(acc.accountType),
-                            acc.permissionLevel.takeIf { it != "ADMIN" }?.let { s.permissionLevel(it) }
-                        ).joinToString(" · "),
-                        name = acc.name,
-                        amount = formatMoney(acc.currentBalance, acc.currency),
-                        selected = isSelected,
-                        onClick = { selectedAccountFilter = if (isSelected) null else acc.id },
-                        // Only account admins may rename it or change its opening balance.
-                        onLongClick = { editAccount = acc }.takeIf { acc.permissionLevel == "ADMIN" }
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionHeader(
+                    title = s.accountsTitle,
+                    action = s.pick("+ Добавить", "+ Add"),
+                    onAction = { showCreateAccountDialog = true }
+                )
+                activeAccounts.chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { acc ->
+                            AccountCard(
+                                letter = acc.name.take(1).uppercase(),
+                                color = accentForName(acc.name),
+                                name = acc.name,
+                                amount = formatMoney(acc.currentBalance, acc.currency),
+                                negative = acc.currentBalance.signum() < 0,
+                                onClick = { onOpenTransactions(acc.id, false) },
+                                // Only account admins may rename it or change its opening balance.
+                                onLongClick = { editAccount = acc }.takeIf { acc.permissionLevel == "ADMIN" },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -307,17 +302,25 @@ fun HomeScreen(
             }
         }
 
-        // 6. Day-grouped ledger (latest records)
-        item {
-            SectionHeader(
-                title = s.recentTransactions,
-                action = s.pick("Все", "All").takeIf { accountTransactions.isNotEmpty() },
-                onAction = { onOpenTransactions(selectedAccountFilter, false) }
-            )
+        // 6. Spending structure over the last 30 days
+        if (windowSpend.isNotEmpty()) {
+            item {
+                CategoryDonutCard(
+                    spend = windowSpend,
+                    categories = categories,
+                    langCode = langCode,
+                    currency = baseCurrency,
+                    title = s.pick("Структура расходов", "Spending structure"),
+                    subtitle = s.pick("Последние 30 дней", "Last 30 days"),
+                    delta = windowDelta,
+                    deltaSuffix = s.pick("к прошлому", "vs previous")
+                )
+            }
         }
 
-        if (recordsByDay.isEmpty()) {
-            item {
+        // 7. Latest records
+        item {
+            if (recentRecords.isEmpty()) {
                 EmptyStateCard(
                     icon = Icons.AutoMirrored.Outlined.ReceiptLong,
                     title = s.pick("Операций пока нет", "No records yet"),
@@ -326,36 +329,18 @@ fun HomeScreen(
                         "Tap \"+\" to add an expense or income, or enable SMS capture in your profile."
                     )
                 )
-            }
-        } else {
-            // One lazy item per day: composing the whole history inside a single item froze the UI.
-            items(recordsByDay, key = { (date, _) -> "day-${date ?: "none"}" }) { (date, dayRecords) ->
+            } else {
                 GroupCard {
-                    val dayExpense = remember(dayRecords, rateBook, baseCurrency) {
-                        dayRecords.filter { it.type == "EXPENSE" }.mapNotNull {
-                            CurrencyFormatter.convert(it.amount.abs(), it.currency, baseCurrency, rateBook)
-                        }.fold(BigDecimal.ZERO, BigDecimal::add)
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = date?.let { dayLabel(it, s) } ?: "—",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = c.muted
-                        )
-                        if (dayExpense.signum() > 0) {
-                            Text(
-                                text = "−" + CurrencyFormatter.format(dayExpense, baseCurrency),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = c.muted
-                            )
+                    SectionHeader(
+                        title = s.pick("Последние операции", "Recent records"),
+                        action = s.pick("Все", "All"),
+                        onAction = { onOpenTransactions(null, false) },
+                        modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 2.dp)
+                    )
+                    recentRecords.forEachIndexed { index, tx ->
+                        if (index > 0) {
+                            Box(modifier = Modifier.padding(horizontal = 16.dp)) { RowDivider() }
                         }
-                    }
-                    dayRecords.forEach { tx ->
                         LedgerRecordItem(
                             tx = tx,
                             category = tx.categoryId?.let { categoryMap[it] },
@@ -364,7 +349,8 @@ fun HomeScreen(
                             langCode = langCode,
                             onReview = { reviewTargetRecord = it },
                             onEdit = onEditRecord,
-                            onDelete = { repository.deleteRecord(it) }
+                            onDelete = { repository.deleteRecord(it) },
+                            trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalDate()?.let { dayLabel(it, s) }
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
@@ -535,13 +521,6 @@ fun HomeScreen(
     }
 }
 
-private fun greeting(s: com.kakei.app.core.i18n.AppStrings): String = when (LocalTime.now().hour) {
-    in 5..11 -> s.pick("Доброе утро", "Good morning")
-    in 12..17 -> s.pick("Добрый день", "Good afternoon")
-    in 18..22 -> s.pick("Добрый вечер", "Good evening")
-    else -> s.pick("Доброй ночи", "Good night")
-}
-
 @Composable
 private fun NetWorthHeroCard(
     netWorth: BigDecimal,
@@ -549,14 +528,13 @@ private fun NetWorthHeroCard(
     unconverted: String,
     monthNet: BigDecimal,
     monthDeltaPercent: BigDecimal?,
-    trend: List<BigDecimal>,
-    forecast: CashFlowForecastDto,
-    topBudget: BudgetEnvelopeDto?
+    monthIncome: BigDecimal,
+    monthExpense: BigDecimal
 ) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
     val onHero = Color.White
-    val onHeroMuted = Color.White.copy(alpha = 0.72f)
+    val onHeroMuted = Color.White.copy(alpha = 0.75f)
     val shape = RoundedCornerShape(24.dp)
 
     Column(
@@ -564,28 +542,10 @@ private fun NetWorthHeroCard(
             .fillMaxWidth()
             .clip(shape)
             .background(Brush.linearGradient(listOf(c.heroA, c.heroB), start = Offset.Zero, end = Offset.Infinite))
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = s.netWorthTitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = onHeroMuted,
-                modifier = Modifier.weight(1f)
-            )
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color.White.copy(alpha = 0.14f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Outlined.Language, contentDescription = null, tint = onHero, modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(baseCurrency, style = MaterialTheme.typography.labelMedium, color = onHero)
-            }
-        }
+        Text(s.pick("Капитал", "Net worth"), style = MaterialTheme.typography.bodyMedium, color = onHeroMuted)
         Text(
             text = formatMoney(netWorth, baseCurrency),
             style = MaterialTheme.typography.displayLarge,
@@ -602,67 +562,39 @@ private fun NetWorthHeroCard(
         if (monthNet.signum() != 0) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (monthDeltaPercent != null) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(alpha = 0.14f))
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            if (monthNet.signum() >= 0) Icons.Outlined.NorthEast else Icons.Outlined.SouthEast,
-                            contentDescription = null,
-                            tint = onHero,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = (if (monthDeltaPercent.signum() > 0) "+" else "") +
-                                monthDeltaPercent.stripTrailingZeros().toPlainString().replace('.', ',') + "%",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = onHero
-                        )
-                    }
+                    KakeiBadge(
+                        text = (if (monthDeltaPercent.signum() >= 0) "▲ " else "▼ ") +
+                            monthDeltaPercent.abs().stripTrailingZeros().toPlainString().replace('.', ',') + "%",
+                        color = onHero
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
                 Text(
                     text = "${formatMoney(monthNet, baseCurrency, showPlus = true)} ${s.pick("за", "in")} " +
                         monthName(LocalDate.now().monthValue, s).lowercase(localeFor(s)),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = onHeroMuted
                 )
             }
         }
-
-        Sparkline(
-            points = trend,
-            color = Color.White.copy(alpha = 0.85f),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-        )
-
+        Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HeroMiniTile(
-                caption = s.pick("Прогноз · 30 дней", "Forecast · 30 days"),
-                value = formatMoney(forecast.forecastedEndBalance, baseCurrency),
-                valueColor = if (forecast.liquidityDeficitAlert) Color(0xFFFFB4A9) else onHero,
+                caption = s.pick("Доходы", "Income"),
+                value = formatMoney(monthIncome, baseCurrency, showPlus = true),
                 modifier = Modifier.weight(1f)
             )
-            if (topBudget != null) {
-                HeroMiniTile(
-                    caption = "${topBudget.name} · ${topBudget.usagePercentage}%",
-                    value = "${formatMoney(topBudget.dailyBurnRateLimit, topBudget.currency)} ${s.pick("/ день", "/ day")}",
-                    valueColor = onHero,
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            HeroMiniTile(
+                caption = s.pick("Расходы", "Expenses"),
+                value = (if (monthExpense.signum() > 0) "−" else "") + formatMoney(monthExpense, baseCurrency),
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
 @Composable
-private fun HeroMiniTile(caption: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
+private fun HeroMiniTile(caption: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
@@ -671,89 +603,44 @@ private fun HeroMiniTile(caption: String, value: String, valueColor: Color, modi
     ) {
         Text(
             caption,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.7f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Text(value, style = MaterialTheme.typography.titleMedium, color = valueColor, maxLines = 1)
-    }
-}
-
-/** Smooth balance trend line; values are only normalized to pixels, never used as money. */
-@Composable
-private fun Sparkline(points: List<BigDecimal>, color: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        if (points.size < 2) return@Canvas
-        val min = points.minOrNull() ?: return@Canvas
-        val max = points.maxOrNull() ?: return@Canvas
-        val range = max - min
-        val stroke = 2.dp.toPx()
-        val usable = size.height - stroke * 2
-        fun y(v: BigDecimal): Float = if (range.signum() == 0) {
-            size.height / 2f
-        } else {
-            stroke + usable * (1f - (v - min).divide(range, 6, RoundingMode.HALF_UP).toFloat())
-        }
-        val stepX = size.width / (points.size - 1)
-        val path = Path()
-        points.forEachIndexed { i, v ->
-            val x = i * stepX
-            if (i == 0) {
-                path.moveTo(x, y(v))
-            } else {
-                val prevX = (i - 1) * stepX
-                val prevY = y(points[i - 1])
-                val midX = (prevX + x) / 2f
-                path.cubicTo(midX, prevY, midX, y(v), x, y(v))
-            }
-        }
-        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
     }
 }
 
 @Composable
 private fun AccountCard(
-    tile: @Composable () -> Unit,
-    caption: String,
+    letter: String,
+    color: Color,
     name: String,
     amount: String,
-    selected: Boolean,
+    negative: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier = Modifier
 ) {
     val c = KakeiTheme.colors
     Column(
-        modifier = Modifier
-            .width(172.dp)
-            .kakeiCard(
-                cornerRadius = 20.dp,
-                color = if (selected) c.mint.copy(alpha = 0.07f).compositeOver(c.surf) else c.surf,
-                borderColor = if (selected) c.mint else c.line,
-                borderWidth = if (selected) 1.5.dp else 1.dp
-            )
+        modifier = modifier
+            .kakeiCard(cornerRadius = 16.dp)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(14.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            tile()
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                caption,
-                style = MaterialTheme.typography.bodySmall,
-                color = c.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 8.dp)
-            )
+            LetterTile(letter, color)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(name, style = MaterialTheme.typography.bodyMedium, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Spacer(modifier = Modifier.height(18.dp))
-        Text(name, style = MaterialTheme.typography.bodyMedium, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             amount,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = c.text,
+            color = if (negative) c.coral else c.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

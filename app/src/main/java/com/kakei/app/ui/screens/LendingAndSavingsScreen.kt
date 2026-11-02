@@ -564,70 +564,47 @@ fun SavingsScreen(
     val totalSaved = baseGoals.fold(BigDecimal.ZERO) { acc, g -> acc + g.currentAmount }
     val totalTarget = baseGoals.fold(BigDecimal.ZERO) { acc, g -> acc + g.targetAmount }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(c.bg),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(c.bg)
+    ) {
+    LazyColumn(
+        modifier = Modifier.weight(1f),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            ScreenHeader(title = s.savingsGoalsTitle) {
-                CircleIconButton(
-                    icon = Icons.Outlined.Add,
-                    contentDescription = s.createGoalButton,
-                    onClick = { showCreateGoalDialog = true },
-                    size = 48.dp,
-                    containerColor = c.mint,
-                    contentColor = c.mintInk,
-                    bordered = false
-                )
-            }
+            ScreenHeader(title = s.navGoals)
         }
 
         // Total saved across goals in the base currency
         if (baseGoals.isNotEmpty()) {
             item {
-                val ratio = if (totalTarget.signum() > 0) {
-                    totalSaved.divide(totalTarget, 4, RoundingMode.HALF_UP)
+                val percent = if (totalTarget.signum() > 0) {
+                    totalSaved.multiply(BigDecimal(100)).divide(totalTarget, 0, RoundingMode.HALF_UP)
                 } else BigDecimal.ZERO
+                val n = baseGoals.size.toLong()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(
-                            Brush.linearGradient(
-                                if (c.isDark) listOf(Color(0xFF7C5CE0), Color(0xFF3F2A8C))
-                                else listOf(Color(0xFF8B6CF0), Color(0xFF5B3CC4))
-                            )
-                        )
-                        .padding(20.dp),
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(c.violet.copy(alpha = 0.14f))
+                        .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(s.pick("Всего накоплено", "Total saved"), style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.75f))
-                        Text(formatMoney(totalSaved, baseCurrency), style = MaterialTheme.typography.displayMedium, color = Color.White, maxLines = 1)
-                        val n = baseGoals.size.toLong()
+                        Text(s.pick("Накоплено всего", "Total saved"), style = MaterialTheme.typography.bodySmall, color = c.muted)
+                        Text(formatMoney(totalSaved, baseCurrency), style = MaterialTheme.typography.headlineLarge, color = c.text, maxLines = 1)
                         Text(
-                            "${s.pick("из", "of")} ${CurrencyFormatter.format(totalTarget, baseCurrency)} · " +
-                                s.pick("$n ${ruPlural(n, "цель", "цели", "целей")}", "$n ${if (n == 1L) "goal" else "goals"}"),
+                            "${s.pick("из", "of")} ${formatMoney(totalTarget, baseCurrency)} " +
+                                s.pick("на $n ${ruPlural(n, "цель", "цели", "целей")}", "across $n ${if (n == 1L) "goal" else "goals"}"),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.75f)
+                            color = c.muted
                         )
                     }
-                    KakeiRing(
-                        progress = ratio.toFloat(),
-                        color = Color.White,
-                        trackColor = Color.White.copy(alpha = 0.22f),
-                        size = 88.dp,
-                        strokeWidth = 9.dp
-                    ) {
-                        Text(
-                            "${ratio.multiply(BigDecimal(100)).setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White
-                        )
-                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    KakeiBadge(text = "${percent.toPlainString()}%", color = c.violet, large = true)
                 }
             }
         }
@@ -651,85 +628,70 @@ fun SavingsScreen(
             } else {
                 parseHexColor(goal.colorHex, c.mint)
             }
-            // Bigger goals get bigger one-tap steps.
-            val steps = if (goal.targetAmount >= BigDecimal(200_000)) listOf(5_000L, 10_000L, 20_000L) else listOf(500L, 1_000L, 2_000L)
 
             Box {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .kakeiCard(cornerRadius = 24.dp)
-                        .combinedClickable(onClick = {}, onLongClick = { menuId = goal.id })
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .kakeiCard()
+                        // Tap adds money to the goal; long press opens the menu.
+                        .combinedClickable(onClick = { customTarget = goal }, onLongClick = { menuId = goal.id })
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        KakeiRing(
-                            progress = goal.progressPercentage.toFloat() / 100f,
+                        IconTile(
+                            icon = iconForKey(goal.iconKey),
                             color = color,
-                            size = 76.dp,
-                            strokeWidth = 7.dp
-                        ) {
-                            Icon(iconForKey(goal.iconKey), contentDescription = null, tint = color, modifier = Modifier.size(26.dp))
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
+                            size = 44.dp,
+                            iconSize = 22.dp,
+                            cornerRadius = 22.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 goal.title,
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color = c.text,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = listOfNotNull(
-                                    shortDate(goal.deadlineDate, s, withYear = true)?.let { s.pick("до $it", "by $it") }
-                                        ?: s.pick("без срока", "no deadline"),
-                                    goal.requiredMonthlyContribution?.let {
-                                        "${CurrencyFormatter.format(it, goal.currency)}${s.pick("/мес", "/mo")}"
-                                    }
-                                ).joinToString(" · "),
-                                style = MaterialTheme.typography.bodyMedium,
+                                shortDate(goal.deadlineDate, s, withYear = true)?.let { s.pick("Цель до $it", "Due $it") }
+                                    ?: s.pick("Без срока", "No deadline"),
+                                style = MaterialTheme.typography.bodySmall,
                                 color = c.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                maxLines = 1
                             )
-                            Row(verticalAlignment = Alignment.Bottom) {
-                                Text(
-                                    formatMoney(goal.currentAmount, goal.currency),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = color
-                                )
-                                Text(
-                                    " / ${CurrencyFormatter.format(goal.targetAmount, goal.currency)}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = c.faint,
-                                    modifier = Modifier.padding(bottom = 2.dp)
-                                )
-                            }
                         }
+                        Text(
+                            "${goal.progressPercentage.setScale(0, RoundingMode.DOWN).toPlainString()}%",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = color
+                        )
                     }
-
-                    // Quick steppers + custom amount
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        steps.forEach { step ->
-                            StepButton(
-                                text = "+" + CurrencyFormatter.format(BigDecimal.valueOf(step), goal.currency).substringBeforeLast(' '),
-                                color = color,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                repository.addSavingsContribution(goal, BigDecimal.valueOf(step))
-                            }
-                        }
-                        StepButton(
-                            text = s.pick("Своя", "Custom"),
-                            color = c.muted,
-                            neutral = true,
+                    KakeiProgressBar(progress = goal.progressPercentage.toFloat() / 100f, color = color, height = 8.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            s.pick("Накоплено ", "Saved ") + formatMoney(goal.currentAmount, goal.currency),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = color,
                             modifier = Modifier.weight(1f)
-                        ) {
-                            customTarget = goal
-                        }
+                        )
+                        Text(
+                            s.pick("Цель ", "Target ") + formatMoney(goal.targetAmount, goal.currency),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.muted
+                        )
+                    }
+                    goal.requiredMonthlyContribution?.takeIf { it.signum() > 0 }?.let {
+                        Text(
+                            s.pick("Откладывать ", "Put aside ") +
+                                "${CurrencyFormatter.format(it, goal.currency)}${s.pick("/мес", "/mo")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.faint
+                        )
                     }
                 }
                 DropdownMenu(expanded = menuId == goal.id, onDismissRequest = { menuId = null }) {
@@ -744,6 +706,16 @@ fun SavingsScreen(
                 }
             }
         }
+    }
+    KakeiButton(
+        text = s.createGoalButton,
+        onClick = { showCreateGoalDialog = true },
+        icon = Icons.Outlined.Add,
+        color = c.violet,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)
+    )
     }
 
     if (showCreateGoalDialog) {
@@ -809,12 +781,28 @@ fun SavingsScreen(
             onDismissRequest = { customTarget = null },
             title = { Text(customGoal.title) },
             text = {
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text("${s.amountLabel} (${customGoal.currency})") },
-                    singleLine = true
-                )
+                // Bigger goals get bigger one-tap steps.
+                val steps = if (customGoal.targetAmount >= BigDecimal(200_000)) listOf(5_000L, 10_000L, 20_000L) else listOf(500L, 1_000L, 2_000L)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        steps.forEach { step ->
+                            StepButton(
+                                text = "+" + CurrencyFormatter.format(BigDecimal.valueOf(step), customGoal.currency).substringBeforeLast(' '),
+                                color = c.violet,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                repository.addSavingsContribution(customGoal, BigDecimal.valueOf(step))
+                                customTarget = null
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = amount,
+                        onValueChange = { amount = it },
+                        label = { Text("${s.amountLabel} (${customGoal.currency})") },
+                        singleLine = true
+                    )
+                }
             },
             confirmButton = {
                 Button(
@@ -841,22 +829,20 @@ private fun StepButton(
     text: String,
     color: Color,
     modifier: Modifier = Modifier,
-    neutral: Boolean = false,
     onClick: () -> Unit
 ) {
-    val c = KakeiTheme.colors
     Box(
         modifier = modifier
             .height(48.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (neutral) c.surf2 else color.copy(alpha = 0.14f))
+            .background(color.copy(alpha = 0.14f))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text,
             style = MaterialTheme.typography.titleSmall,
-            color = if (neutral) c.muted else color,
+            color = color,
             maxLines = 1
         )
     }

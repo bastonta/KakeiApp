@@ -451,13 +451,15 @@ fun KakeiSegmented(
 // Progress
 // ============================================================================
 
+/** Rounded bar; [forecast] (when above [progress]) draws a translucent projection behind the value. */
 @Composable
 fun KakeiProgressBar(
     progress: Float,
     color: Color,
     modifier: Modifier = Modifier,
     height: Dp = 6.dp,
-    trackColor: Color = KakeiTheme.colors.surf2
+    trackColor: Color = KakeiTheme.colors.surf2,
+    forecast: Float? = null
 ) {
     Canvas(
         modifier = modifier
@@ -466,6 +468,14 @@ fun KakeiProgressBar(
     ) {
         val r = CornerRadius(size.height / 2f)
         drawRoundRect(color = trackColor, cornerRadius = r)
+        val f = forecast?.coerceIn(0f, 1f)
+        if (f != null && f > progress) {
+            drawRoundRect(
+                color = color.copy(alpha = 0.35f),
+                size = Size((size.width * f).coerceAtLeast(size.height), size.height),
+                cornerRadius = r
+            )
+        }
         val p = progress.coerceIn(0f, 1f)
         if (p > 0f) {
             drawRoundRect(

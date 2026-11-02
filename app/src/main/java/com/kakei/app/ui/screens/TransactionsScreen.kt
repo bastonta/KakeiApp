@@ -593,7 +593,9 @@ internal fun LedgerRecordItem(
     langCode: String,
     onReview: (TransactionDto) -> Unit,
     onEdit: (TransactionDto) -> Unit,
-    onDelete: (TransactionDto) -> Unit
+    onDelete: (TransactionDto) -> Unit,
+    /** Replaces the booking time under the amount (Home shows "Сегодня" / "Вчера"). */
+    trailingCaption: String? = null
 ) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
@@ -617,7 +619,7 @@ internal fun LedgerRecordItem(
                 "TRANSFER" -> c.cyan
                 else -> c.text
             },
-            trailingCaption = bookingDateTime(tx.bookingDate)?.toLocalTime()
+            trailingCaption = trailingCaption ?: bookingDateTime(tx.bookingDate)?.toLocalTime()
                 ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
             badge = when {
                 tx.needsReview -> s.pick("Проверить", "Review")

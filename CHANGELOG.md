@@ -9,9 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Full-screen category picker in the record editor: search by category or subcategory name, the categories used most often for the record type as tiles, and groups that open in place with a "Whole group" row.
+- Home shows a "Spending structure" donut for the last 30 days, with the change against the previous 30 days.
+- Budget bars show the end-of-period forecast at the current pace, with "At risk" and "Over" badges.
 
 ### Changed
 - The record editor's main page keeps only the type, amount, account, category and keypad; payee, note, date and time, labels, clearing status and splits moved to a separate details page, summarised in a "Details" row. The keypad and save button sit at the bottom of the screen, and the amount takes the space left above them.
+- Home follows the wallet screens design: a "Home" header with search, notifications and the profile avatar; the net worth card shows the month delta and the month's income and expense; accounts are a two-column grid where a tap opens the account's records; the latest five records sit in one card.
+- The budgets summary shows a usage ring with the amount left in the month; budget cards are compact and the "Create budget" button is pinned at the bottom.
+- Goals show the total saved on a violet card and compact goal cards; tapping a goal opens the top-up dialog with the quick amounts, and "New goal" is pinned at the bottom.
 
 ## [1.5.0] - 2026-11-01
 

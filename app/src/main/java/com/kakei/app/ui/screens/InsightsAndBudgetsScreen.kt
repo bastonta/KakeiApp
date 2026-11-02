@@ -54,11 +54,12 @@ import java.time.ZoneOffset
 import java.time.Month
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.time.format.TextStyle
 import java.util.Locale
 
 /** Category slices shown in the donut before the rest are grouped into "Other". */
-private const val DONUT_TOP_CATEGORIES = 4
+private const val DONUT_TOP_CATEGORIES = 5
 
 /**
  * Tab 2: Analytics — Overview (health score, 30-day cash flow forecast, category split,
@@ -432,7 +433,10 @@ private fun AnalyticsInsightsSubScreen(
                 categories = categories,
                 langCode = langCode,
                 currency = spendCurrency,
-                monthOverMonth = insights.monthOverMonthDeltaPercentage.takeIf { insights.previousMonthSpent.signum() > 0 }
+                title = s.pick("Расходы по категориям", "Spending by category"),
+                subtitle = monthName(LocalDate.now().monthValue, s),
+                delta = insights.monthOverMonthDeltaPercentage.takeIf { insights.previousMonthSpent.signum() > 0 },
+                deltaSuffix = s.pick("к прошлому", "vs last")
             )
         }
         item { SpendingHeatmapCard(heatmaps, streaks) }
@@ -842,14 +846,20 @@ private fun ForecastChart(forecast: CashFlowForecastDto) {
     }
 }
 
-/** Donut of this month's spending by category with a legend; the center shows the total and the MoM change. */
+/**
+ * Spending by category: donut with a share legend and the total. Used for this month on
+ * Analytics and for the last 30 days on Home. [delta] is the change vs the previous period, in %.
+ */
 @Composable
-private fun CategoryDonutCard(
+internal fun CategoryDonutCard(
     spend: List<Pair<String?, BigDecimal>>,
     categories: List<CategoryDto>,
     langCode: String,
     currency: String,
-    monthOverMonth: BigDecimal?
+    title: String,
+    subtitle: String,
+    delta: BigDecimal?,
+    deltaSuffix: String
 ) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
@@ -870,7 +880,7 @@ private fun CategoryDonutCard(
             )
         }
         val rest = spend.drop(DONUT_TOP_CATEGORIES).fold(BigDecimal.ZERO) { acc, p -> acc + p.second }
-        if (rest.signum() > 0) add(Slice(s.pick("Прочее", "Other"), rest, c.faint))
+        if (rest.signum() > 0) add(Slice(s.pick("Остальное", "The rest"), rest, c.faint))
     }
     fun share(amount: BigDecimal): BigDecimal =
         if (total.signum() == 0) BigDecimal.ZERO else amount.multiply(BigDecimal(100)).divide(total, 0, RoundingMode.HALF_UP)
@@ -878,93 +888,80 @@ private fun CategoryDonutCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .kakeiCard(cornerRadius = 24.dp)
-            .padding(18.dp),
+            .kakeiCard()
+            .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                s.pick("Расходы по категориям", "Spending by category"),
-                style = MaterialTheme.typography.titleLarge,
-                color = c.text,
-                modifier = Modifier.weight(1f)
-            )
-            Text(monthName(LocalDate.now().monthValue, s), style = MaterialTheme.typography.bodyMedium, color = c.muted)
+        Row(verticalAlignment = Alignment.Top) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, color = c.text)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.muted)
+            }
+            val pct = delta?.setScale(0, RoundingMode.HALF_UP)
+            if (pct != null && pct.signum() != 0) {
+                KakeiBadge(
+                    text = (if (pct.signum() > 0) "+" else "−") + pct.abs().toPlainString() + "% " + deltaSuffix,
+                    color = if (pct.signum() > 0) c.coral else c.mint
+                )
+            }
         }
         if (slices.isEmpty()) {
             Text(
-                s.pick("В этом месяце расходов пока нет.", "No spending this month yet."),
+                s.pick("Расходов за этот период пока нет.", "No spending in this period yet."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = c.muted
             )
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(140.dp), contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val stroke = 22.dp.toPx()
-                    val inset = stroke / 2f
-                    val arcSize = Size(size.width - stroke, size.height - stroke)
-                    val gap = if (slices.size > 1) 2.5f else 0f
-                    var start = -90f
-                    slices.forEach { slice ->
-                        val sweep = if (total.signum() == 0) 0f else
-                            slice.amount.divide(total, 6, RoundingMode.HALF_UP).toFloat() * 360f
-                        drawArc(
-                            color = slice.color,
-                            startAngle = start + gap / 2f,
-                            sweepAngle = (sweep - gap).coerceAtLeast(0.5f),
-                            useCenter = false,
-                            topLeft = Offset(inset, inset),
-                            size = arcSize,
-                            style = Stroke(stroke)
-                        )
-                        start += sweep
-                    }
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        formatCompactMoney(total, currency, s),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = c.text,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 26.dp),
-                        textAlign = TextAlign.Center
+            Canvas(modifier = Modifier.size(132.dp)) {
+                val stroke = 18.dp.toPx()
+                val inset = stroke / 2f
+                val arcSize = Size(size.width - stroke, size.height - stroke)
+                val gap = if (slices.size > 1) 2.5f else 0f
+                var start = -90f
+                slices.forEach { slice ->
+                    val sweep = if (total.signum() == 0) 0f else
+                        slice.amount.divide(total, 6, RoundingMode.HALF_UP).toFloat() * 360f
+                    drawArc(
+                        color = slice.color,
+                        startAngle = start + gap / 2f,
+                        sweepAngle = (sweep - gap).coerceAtLeast(0.5f),
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(stroke)
                     )
-                    if (monthOverMonth != null && monthOverMonth.signum() != 0) {
-                        val pct = monthOverMonth.setScale(0, RoundingMode.HALF_UP)
-                        val prev = monthName(LocalDate.now().minusMonths(1).monthValue, s).take(4).lowercase(localeFor(s))
-                        Text(
-                            (if (pct.signum() > 0) "+" else "−") + pct.abs().toPlainString() + "% " + s.pick("к $prev.", "vs $prev"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (pct.signum() > 0) c.coral else c.mint
-                        )
-                    }
+                    start += sweep
                 }
             }
             Spacer(modifier = Modifier.width(18.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 slices.forEach { slice ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
+                                .size(8.dp)
                                 .clip(CircleShape)
                                 .background(slice.color)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             slice.label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = c.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.muted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("${share(slice.amount)}%", style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                        Text("${share(slice.amount)}%", style = MaterialTheme.typography.labelMedium, color = c.text)
                     }
                 }
             }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(s.pick("Всего", "Total"), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
+            Text(formatMoney(total, currency), style = MaterialTheme.typography.headlineMedium, color = c.text, maxLines = 1)
         }
     }
 }
@@ -1100,135 +1097,174 @@ private fun BudgetsSubScreen(
     val catMap = remember(categories) { categories.associateBy { it.id } }
     var menuBudgetId by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Month summary across all budgets in the base currency
-        val summed = budgets.filter { it.currency.equals(baseCurrency, ignoreCase = true) }
-        if (summed.isNotEmpty()) {
-            item {
-                BudgetSummaryCard(summed, baseCurrency, catMap)
+    Column(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Period summary across all budgets in the base currency
+            val summed = budgets.filter { it.currency.equals(baseCurrency, ignoreCase = true) }
+            if (summed.isNotEmpty()) {
+                item {
+                    BudgetSummaryCard(summed, baseCurrency)
+                }
             }
-        }
 
-        if (budgets.isEmpty()) {
-            item {
-                EmptyStateCard(
-                    icon = Icons.Outlined.AccountBalanceWallet,
-                    title = s.pick("Бюджетов пока нет", "No budgets yet"),
-                    hint = s.pick(
-                        "Задайте лимит на категории — приложение покажет остаток и безопасную сумму на день.",
-                        "Set a limit for some categories to track what's left and a safe daily amount."
+            if (budgets.isEmpty()) {
+                item {
+                    EmptyStateCard(
+                        icon = Icons.Outlined.AccountBalanceWallet,
+                        title = s.pick("Бюджетов пока нет", "No budgets yet"),
+                        hint = s.pick(
+                            "Задайте лимит на категории — приложение покажет остаток и безопасную сумму на день.",
+                            "Set a limit for some categories to track what's left and a safe daily amount."
+                        )
                     )
-                )
+                }
             }
-        }
 
-        items(budgets, key = { it.id }) { b ->
-            val exceeded = b.alertLevel == "EXCEEDED_100" || b.alertLevel == "CRITICAL_100"
-            val warning = b.alertLevel == "WARNING_75" || b.alertLevel == "WARNING_90"
-            val barColor = when {
-                exceeded -> c.coral
-                warning -> c.amber
-                else -> c.mint
-            }
-            val cat = b.categoryIds.firstNotNullOfOrNull { catMap[it] }
-            val visual = cat?.let { categoryVisual(it) } ?: CategoryVisual(Icons.Outlined.AccountBalanceWallet, c.mint)
+            items(budgets, key = { it.id }) { b ->
+                val exceeded = b.spentAmount > b.limitAmount ||
+                    b.alertLevel == "EXCEEDED_100" || b.alertLevel == "CRITICAL_100"
+                val projected = projectedSpend(b)
+                val atRisk = !exceeded && projected != null && projected > b.limitAmount
+                val cat = b.categoryIds.firstNotNullOfOrNull { catMap[it] }
+                val visual = cat?.let { categoryVisual(it) } ?: CategoryVisual(Icons.Outlined.AccountBalanceWallet, c.mint)
+                val barColor = when {
+                    exceeded -> c.coral
+                    atRisk -> c.amber
+                    else -> visual.color
+                }
+                val caption = when {
+                    exceeded -> s.pick("Сверх лимита на ", "Over the limit by ") +
+                        formatMoney(b.spentAmount - b.limitAmount, b.currency)
+                    atRisk -> {
+                        val end = shortDate(b.periodEnd, s)
+                        s.pick("Прогноз", "Forecast") + (end?.let { s.pick(" к $it", " by $it") } ?: "") +
+                            ": " + formatMoney(projected!!, b.currency)
+                    }
+                    projected != null -> s.pick("В пределах · прогноз ", "On track · forecast ") +
+                        formatMoney(projected, b.currency)
+                    else -> "${s.period(b.periodType)} · ${s.pick("осталось", "left")} ${s.days(b.remainingDaysInPeriod)}"
+                }
+                val limit = b.limitAmount.takeIf { it.signum() > 0 }
 
-            Box {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .kakeiCard(cornerRadius = 24.dp)
-                        .combinedClickable(onClick = { menuBudgetId = b.id }, onLongClick = { menuBudgetId = b.id })
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconTile(icon = visual.icon, color = visual.color, size = 48.dp, iconSize = 24.dp, cornerRadius = 14.dp)
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                b.name,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = c.text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                "${s.period(b.periodType)} · ${s.pick("осталось", "left")} ${s.days(b.remainingDaysInPeriod)}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = c.muted
-                            )
+                Box {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .kakeiCard()
+                            .combinedClickable(onClick = { menuBudgetId = b.id }, onLongClick = { menuBudgetId = b.id })
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconTile(icon = visual.icon, color = visual.color)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        b.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = c.text,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    if (exceeded || atRisk) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        KakeiBadge(
+                                            text = if (exceeded) s.pick("Превышен", "Over") else s.pick("Риск превышения", "At risk"),
+                                            color = barColor
+                                        )
+                                    }
+                                }
+                                Text(
+                                    caption,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    formatMoney(b.spentAmount, b.currency),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = if (exceeded) c.coral else c.text,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    "${s.pick("из", "of")} ${CurrencyFormatter.format(b.limitAmount, b.currency).substringBeforeLast(' ')}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.faint,
+                                    maxLines = 1
+                                )
+                            }
                         }
-                        KakeiBadge(
-                            text = if (exceeded) s.pick("Превышен", "Over") else "${b.usagePercentage.setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
+                        KakeiProgressBar(
+                            progress = b.usagePercentage.toFloat() / 100f,
                             color = barColor,
-                            large = true
+                            height = 8.dp,
+                            forecast = if (limit != null && projected != null) {
+                                projected.divide(limit, 4, RoundingMode.HALF_UP).toFloat()
+                            } else null
                         )
                     }
-                    KakeiProgressBar(progress = b.usagePercentage.toFloat() / 100f, color = barColor, height = 8.dp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "${formatMoney(b.spentAmount, b.currency)} ${s.pick("из", "of")} ${formatMoney(b.limitAmount, b.currency)}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = c.text,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = if (exceeded) {
-                                "+" + CurrencyFormatter.format((b.spentAmount - b.limitAmount).max(BigDecimal.ZERO), b.currency)
-                            } else {
-                                "${CurrencyFormatter.format(b.dailyBurnRateLimit, b.currency)}${s.pick("/день", "/day")}"
-                            },
-                            style = MaterialTheme.typography.titleSmall,
-                            color = when {
-                                exceeded -> c.coral
-                                warning -> c.amber
-                                else -> c.muted
+                    DropdownMenu(expanded = menuBudgetId == b.id, onDismissRequest = { menuBudgetId = null }) {
+                        if (b.categoryIds.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        b.categoryIds.mapNotNull { catMap[it]?.name }.joinToString(", "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = c.muted
+                                    )
+                                },
+                                enabled = false,
+                                onClick = {}
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(s.deleteButton, color = c.coral) },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
+                            onClick = {
+                                menuBudgetId = null
+                                onDelete(b.id)
                             }
                         )
                     }
                 }
-                DropdownMenu(expanded = menuBudgetId == b.id, onDismissRequest = { menuBudgetId = null }) {
-                    if (b.categoryIds.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    b.categoryIds.mapNotNull { catMap[it]?.name }.joinToString(", "),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = c.muted
-                                )
-                            },
-                            enabled = false,
-                            onClick = {}
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(s.deleteButton, color = c.coral) },
-                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
-                        onClick = {
-                            menuBudgetId = null
-                            onDelete(b.id)
-                        }
-                    )
-                }
             }
         }
 
-        item {
-            DashedAddButton(text = s.pick("Новый бюджет", "New budget"), onClick = onOpenCreate)
-        }
+        KakeiButton(
+            text = s.pick("Создать бюджет", "Create budget"),
+            onClick = onOpenCreate,
+            icon = Icons.Outlined.Add,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp)
+        )
     }
 }
 
+/**
+ * Spend at the end of the period if the current pace holds; null before the period has data.
+ * [BudgetEnvelopeDto.remainingDaysInPeriod] counts today, so the period is elapsed-before-today + remaining.
+ */
+private fun projectedSpend(b: BudgetEnvelopeDto): BigDecimal? {
+    val start = runCatching { LocalDate.parse(b.periodStart.take(10)) }.getOrNull() ?: return null
+    val before = ChronoUnit.DAYS.between(start, LocalDate.now())
+    if (before < 0 || b.remainingDaysInPeriod <= 0) return null
+    val total = before + b.remainingDaysInPeriod
+    return b.spentAmount.multiply(BigDecimal(total)).divide(BigDecimal(before + 1), 0, RoundingMode.HALF_UP)
+}
+
 @Composable
-private fun BudgetSummaryCard(
-    budgets: List<BudgetEnvelopeDto>,
-    currency: String,
-    catMap: Map<String, CategoryDto>
-) {
+private fun BudgetSummaryCard(budgets: List<BudgetEnvelopeDto>, currency: String) {
     val s = LocalAppStrings.current
     val c = KakeiTheme.colors
     val spent = budgets.fold(BigDecimal.ZERO) { acc, b -> acc + b.spentAmount }
@@ -1236,7 +1272,6 @@ private fun BudgetSummaryCard(
     val remaining = budgets.fold(BigDecimal.ZERO) { acc, b -> acc + b.remainingAmount.max(BigDecimal.ZERO) }
     val today = LocalDate.now()
     val daysLeft = (today.lengthOfMonth() - today.dayOfMonth + 1).toLong()
-    val perDay = remaining.divide(BigDecimal(daysLeft), 0, RoundingMode.DOWN)
     val usage = if (limit.signum() == 0) BigDecimal.ZERO else spent.multiply(BigDecimal(100)).divide(limit, 0, RoundingMode.HALF_UP)
     val ringColor = when {
         usage >= BigDecimal(100) -> c.coral
@@ -1244,90 +1279,36 @@ private fun BudgetSummaryCard(
         else -> c.mint
     }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(Brush.verticalGradient(listOf(c.mint.copy(alpha = 0.10f), c.surf)))
-            .kakeiCard(cornerRadius = 24.dp, color = Color.Transparent, borderColor = c.mint.copy(alpha = 0.45f))
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .kakeiCard()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(spentInMonthLabel(today.month, s), style = MaterialTheme.typography.bodyMedium, color = c.muted)
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(formatMoney(spent, currency), style = MaterialTheme.typography.headlineLarge, color = c.text, maxLines = 1)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        "/ ${CurrencyFormatter.format(limit, currency)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.faint,
-                        maxLines = 1,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                }
-            }
-            KakeiRing(progress = usage.toFloat() / 100f, color = ringColor, size = 76.dp, strokeWidth = 8.dp) {
-                Text("${usage.toPlainString()}%", style = MaterialTheme.typography.titleSmall, color = c.text)
-            }
+        KakeiRing(progress = usage.toFloat() / 100f, color = ringColor, size = 72.dp, strokeWidth = 7.dp) {
+            Text("${usage.toPlainString()}%", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = c.text)
         }
-        // Stacked bar: each budget's share of the combined limit, in its category color.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(c.surf2),
-            horizontalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            if (limit.signum() > 0) {
-                budgets.forEach { b ->
-                    val w = b.spentAmount.min(b.limitAmount).divide(limit, 4, RoundingMode.HALF_UP).toFloat()
-                    if (w > 0f) {
-                        val color = b.categoryIds.firstNotNullOfOrNull { catMap[it] }?.let { categoryVisual(it).color } ?: c.mint
-                        Box(
-                            modifier = Modifier
-                                .weight(w)
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(color)
-                        )
-                    }
-                }
-                val unused = BigDecimal.ONE - budgets.fold(BigDecimal.ZERO) { acc, b ->
-                    acc + b.spentAmount.min(b.limitAmount).divide(limit, 4, RoundingMode.HALF_UP)
-                }
-                if (unused.signum() > 0) Spacer(modifier = Modifier.weight(unused.toFloat()))
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.CalendarToday, contentDescription = null, tint = c.muted, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                s.pick(
-                    "$daysLeft ${ruPlural(daysLeft, "день", "дня", "дней")} до конца месяца · можно ${CurrencyFormatter.format(perDay, currency)} в день",
-                    "$daysLeft ${if (daysLeft == 1L) "day" else "days"} left this month · ${CurrencyFormatter.format(perDay, currency)} a day"
+                "${monthName(today.monthValue, s)} · " + s.pick(
+                    "осталось $daysLeft ${ruPlural(daysLeft, "день", "дня", "дней")}",
+                    "$daysLeft ${if (daysLeft == 1L) "day" else "days"} left"
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = c.muted
             )
+            Text(formatMoney(remaining, currency), style = MaterialTheme.typography.headlineLarge, color = c.text, maxLines = 1)
+            Text(
+                s.pick("свободно из ", "free of ") + formatMoney(limit, currency),
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.muted,
+                maxLines = 1
+            )
         }
     }
 }
-
-private val RU_MONTHS_PREPOSITIONAL = listOf(
-    "январе", "феврале", "марте", "апреле", "мае", "июне",
-    "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"
-)
-
-/** "Потрачено в октябре" / "Spent in October". */
-private fun spentInMonthLabel(month: Month, s: AppStrings): String =
-    if (s.language == AppLanguage.RU) {
-        "Потрачено в ${RU_MONTHS_PREPOSITIONAL[month.value - 1]}"
-    } else {
-        "Spent in ${month.getDisplayName(TextStyle.FULL_STANDALONE, Locale.ENGLISH)}"
-    }
 
 // ============================================================================
 // Plan

@@ -351,8 +351,6 @@ fun KakeiAppRoot(
                                 categories = categories,
                                 labels = labels,
                                 transactions = transactions,
-                                budgets = budgets,
-                                forecast = forecast,
                                 instantCapturedRecord = instantCapturedRecord,
                                 repository = repository,
                                 onOpenProfile = { showProfile = true },
