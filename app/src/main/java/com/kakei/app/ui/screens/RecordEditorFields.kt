@@ -9,8 +9,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -25,11 +25,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.CategoryDto
@@ -102,7 +103,7 @@ fun PayeeAutocompleteField(
     langCode: String,
     onPick: (PayeeHistoryEntry) -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var focused by remember { mutableStateOf(false) }
     val suggestions = remember(history, value, recordType) { suggestPayees(history, value, recordType) }
@@ -111,7 +112,7 @@ fun PayeeAutocompleteField(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            placeholder = { Text(s.payeeLabel) },
+            placeholder = { Text(s.getString(R.string.payee_label)) },
             leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null, tint = c.muted) },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
@@ -226,7 +227,7 @@ private fun PickerField(
 /** Sheet header: an optional back arrow and a title. */
 @Composable
 private fun PickerSheetHeader(title: String, onBack: (() -> Unit)? = null) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     Row(
         modifier = Modifier
@@ -236,7 +237,7 @@ private fun PickerSheetHeader(title: String, onBack: (() -> Unit)? = null) {
     ) {
         if (onBack != null) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.pick("Назад", "Back"), tint = c.text)
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = s.getString(R.string.back), tint = c.text)
             }
             Spacer(modifier = Modifier.width(4.dp))
         }
@@ -380,21 +381,21 @@ fun BookingDateTimeField(
     onChange: (LocalDateTime) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var showDate by remember { mutableStateOf(false) }
     var showTime by remember { mutableStateOf(false) }
 
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         DateTimeBox(
-            caption = s.pick("Дата", "Date"),
+            caption = s.getString(R.string.date),
             valueText = dayLabel(value.toLocalDate(), s),
             icon = Icons.Outlined.CalendarToday,
             onClick = { showDate = true },
             modifier = Modifier.weight(1f)
         )
         DateTimeBox(
-            caption = s.pick("Время", "Time"),
+            caption = s.getString(R.string.time),
             valueText = value.format(DateTimeFormatter.ofPattern("HH:mm")),
             icon = Icons.Outlined.Schedule,
             onClick = { showTime = true },
@@ -416,10 +417,10 @@ fun BookingDateTimeField(
                         onChange(value.with(day))
                     }
                     showDate = false
-                }) { Text(s.pick("Готово", "Done")) }
+                }) { Text(s.getString(R.string.done)) }
             },
             dismissButton = {
-                TextButton(onClick = { showDate = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showDate = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         ) {
             DatePicker(state = pickerState)
@@ -439,10 +440,10 @@ fun BookingDateTimeField(
                 TextButton(onClick = {
                     onChange(value.withHour(timeState.hour).withMinute(timeState.minute).withSecond(0).withNano(0))
                     showTime = false
-                }) { Text(s.pick("Готово", "Done")) }
+                }) { Text(s.getString(R.string.done)) }
             },
             dismissButton = {
-                TextButton(onClick = { showTime = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showTime = false }) { Text(s.getString(R.string.cancel_button)) }
             },
             text = { TimePicker(state = timeState) }
         )

@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
@@ -22,10 +22,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
+import com.kakei.app.core.i18n.accountType
 import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.*
@@ -66,7 +68,7 @@ fun HomeScreen(
     onOpenTransactions: (accountId: String?, focusSearch: Boolean) -> Unit,
     onEditRecord: (TransactionDto) -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val baseCurrency = settings.profile.defaultCurrency
     val langCode = settings.language.code
@@ -177,17 +179,17 @@ fun HomeScreen(
     ) {
         // 1. Header: search, notifications and the profile avatar
         item {
-            ScreenHeader(title = s.navHome) {
+            ScreenHeader(title = s.getString(R.string.nav_home)) {
                 CircleIconButton(
                     icon = Icons.Outlined.Search,
-                    contentDescription = s.searchPayeeHint,
+                    contentDescription = s.getString(R.string.search_payee_hint),
                     onClick = { onOpenTransactions(null, true) },
                     size = 44.dp
                 )
                 Box {
                     CircleIconButton(
                         icon = Icons.Outlined.Notifications,
-                        contentDescription = s.needsReviewBanner,
+                        contentDescription = s.getString(R.string.needs_review_banner),
                         badge = needsReviewItems.isNotEmpty(),
                         size = 44.dp,
                         onClick = {
@@ -197,7 +199,7 @@ fun HomeScreen(
                     )
                     DropdownMenu(expanded = showNoNotifications, onDismissRequest = { showNoNotifications = false }) {
                         DropdownMenuItem(
-                            text = { Text(s.pick("Новых уведомлений нет", "No new notifications")) },
+                            text = { Text(s.getString(R.string.no_new_notifications)) },
                             onClick = { showNoNotifications = false }
                         )
                     }
@@ -245,10 +247,10 @@ fun HomeScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader(
-                    title = s.accountsTitle,
-                    action = s.pick("+ Добавить", "+ Add"),
+                    title = s.getString(R.string.accounts_title),
+                    action = s.getString(R.string.add),
                     onAction = { showCreateAccountDialog = true },
-                    secondaryAction = s.pick("Порядок", "Order").takeIf { activeAccounts.size > 1 },
+                    secondaryAction = s.getString(R.string.order).takeIf { activeAccounts.size > 1 },
                     onSecondaryAction = { showReorderAccountsDialog = true }
                 )
                 activeAccounts.chunked(2).forEach { row ->
@@ -287,15 +289,12 @@ fun HomeScreen(
                     Icon(Icons.Outlined.Sell, contentDescription = null, tint = c.amber, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = s.pick(
-                            "$n ${ruPlural(n, "операция ждёт", "операции ждут", "операций ждут")} категорию",
-                            "$n ${if (n == 1L) "record needs" else "records need"} a category"
-                        ),
+                        text = s.getQuantityString(R.plurals.records_need_category, n.toInt(), n),
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.text,
                         modifier = Modifier.weight(1f)
                     )
-                    Text(s.pick("Разобрать", "Review"), style = MaterialTheme.typography.labelLarge, color = c.amber)
+                    Text(s.getString(R.string.review), style = MaterialTheme.typography.labelLarge, color = c.amber)
                     Icon(
                         Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                         contentDescription = null,
@@ -314,10 +313,10 @@ fun HomeScreen(
                     categories = categories,
                     langCode = langCode,
                     currency = baseCurrency,
-                    title = s.pick("Структура расходов", "Spending structure"),
-                    subtitle = s.pick("Последние 30 дней", "Last 30 days"),
+                    title = s.getString(R.string.spending_structure),
+                    subtitle = s.getString(R.string.last_30_days),
                     delta = windowDelta,
-                    deltaSuffix = s.pick("к прошлому", "vs previous")
+                    deltaSuffix = s.getString(R.string.vs_previous)
                 )
             }
         }
@@ -327,17 +326,14 @@ fun HomeScreen(
             if (recentRecords.isEmpty()) {
                 EmptyStateCard(
                     icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    title = s.pick("Операций пока нет", "No records yet"),
-                    hint = s.pick(
-                        "Нажмите «+», чтобы добавить расход или доход, или включите автозахват SMS в профиле.",
-                        "Tap \"+\" to add an expense or income, or enable SMS capture in your profile."
-                    )
+                    title = s.getString(R.string.no_records_yet),
+                    hint = s.getString(R.string.tap_to_add_an_expense)
                 )
             } else {
                 GroupCard {
                     SectionHeader(
-                        title = s.pick("Последние операции", "Recent records"),
-                        action = s.pick("Все", "All"),
+                        title = s.getString(R.string.recent_records),
+                        action = s.getString(R.string.all),
                         onAction = { onOpenTransactions(null, false) },
                         modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 2.dp)
                     )
@@ -373,13 +369,13 @@ fun HomeScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateAccountDialog = false },
-            title = { Text(s.addAccount) },
+            title = { Text(s.getString(R.string.add_account)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = accName,
                         onValueChange = { accName = it },
-                        label = { Text(s.pick("Название счёта", "Account Name")) },
+                        label = { Text(s.getString(R.string.account_name)) },
                         singleLine = true
                     )
                     Row(
@@ -401,12 +397,12 @@ fun HomeScreen(
                     OutlinedTextField(
                         value = accBalance,
                         onValueChange = { accBalance = it },
-                        label = { Text(s.pick("Начальный баланс", "Initial Balance")) },
+                        label = { Text(s.getString(R.string.initial_balance)) },
                         singleLine = true
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = excluded, onCheckedChange = { excluded = it })
-                        Text(s.pick("Не учитывать в чистом капитале", "Exclude from Net Worth stats"))
+                        Text(s.getString(R.string.exclude_from_net_worth_stats))
                     }
                 }
             },
@@ -420,12 +416,12 @@ fun HomeScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateAccountDialog = false }) {
-                    Text(s.cancelButton)
+                    Text(s.getString(R.string.cancel_button))
                 }
             }
         )
@@ -443,24 +439,24 @@ fun HomeScreen(
 
         AlertDialog(
             onDismissRequest = { editAccount = null },
-            title = { Text(s.pick("Изменить счёт", "Edit account")) },
+            title = { Text(s.getString(R.string.edit_account)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = accName,
                         onValueChange = { accName = it },
-                        label = { Text(s.pick("Название счёта", "Account Name")) },
+                        label = { Text(s.getString(R.string.account_name)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = accBalance,
                         onValueChange = { accBalance = it },
-                        label = { Text(s.pick("Текущий баланс", "Current balance") + ", ${acc.currency}") },
+                        label = { Text(s.getString(R.string.current_balance) + ", ${acc.currency}") },
                         isError = targetBalance == null,
                         singleLine = true
                     )
                     KakeiSegmented(
-                        options = listOf(s.pick("Операцией", "Via record"), s.pick("В счёте", "On account")),
+                        options = listOf(s.getString(R.string.via_record), s.getString(R.string.on_account)),
                         selectedIndex = if (viaRecord) 0 else 1,
                         onSelect = { viaRecord = it == 0 }
                     )
@@ -469,22 +465,16 @@ fun HomeScreen(
                     }
                     Text(
                         text = when {
-                            diff == null -> s.pick("Баланс не меняется.", "The balance stays the same.")
-                            viaRecord -> s.pick(
-                                "Будет добавлена операция «Корректировка баланса» на $diff. Она войдёт в доходы/расходы.",
-                                "A \"Balance adjustment\" record of $diff will be added. It counts as income/expense."
-                            )
-                            else -> s.pick(
-                                "Начальный баланс изменится на $diff, без операции и без влияния на статистику.",
-                                "The opening balance changes by $diff, with no record and no effect on statistics."
-                            )
+                            diff == null -> s.getString(R.string.the_balance_stays_the_same)
+                            viaRecord -> s.getString(R.string.a_balance_adjustment_record_of, diff)
+                            else -> s.getString(R.string.the_opening_balance_changes_by, diff)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = c.muted
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = excluded, onCheckedChange = { excluded = it })
-                        Text(s.pick("Не учитывать в чистом капитале", "Exclude from Net Worth stats"))
+                        Text(s.getString(R.string.exclude_from_net_worth_stats))
                     }
                 }
             },
@@ -502,12 +492,12 @@ fun HomeScreen(
                         editAccount = null
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { editAccount = null }) {
-                    Text(s.cancelButton)
+                    Text(s.getString(R.string.cancel_button))
                 }
             }
         )
@@ -547,7 +537,7 @@ private fun NetWorthHeroCard(
     monthIncome: BigDecimal,
     monthExpense: BigDecimal
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val onHero = Color.White
     val onHeroMuted = Color.White.copy(alpha = 0.75f)
@@ -561,7 +551,7 @@ private fun NetWorthHeroCard(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(s.pick("Капитал", "Net worth"), style = MaterialTheme.typography.bodyMedium, color = onHeroMuted)
+        Text(s.getString(R.string.net_worth), style = MaterialTheme.typography.bodyMedium, color = onHeroMuted)
         Text(
             text = formatMoney(netWorth, baseCurrency),
             style = MaterialTheme.typography.displayLarge,
@@ -570,7 +560,7 @@ private fun NetWorthHeroCard(
         )
         if (unconverted.isNotEmpty()) {
             Text(
-                text = "+ $unconverted · ${s.fxRateUnavailable}",
+                text = "+ $unconverted · ${s.getString(R.string.fx_rate_unavailable)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = onHeroMuted
             )
@@ -586,7 +576,7 @@ private fun NetWorthHeroCard(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
                 Text(
-                    text = "${formatMoney(monthNet, baseCurrency, showPlus = true)} ${s.pick("за", "in")} " +
+                    text = "${formatMoney(monthNet, baseCurrency, showPlus = true)} ${s.getString(R.string.in_period)} " +
                         monthName(LocalDate.now().monthValue, s).lowercase(localeFor(s)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = onHeroMuted
@@ -596,12 +586,12 @@ private fun NetWorthHeroCard(
         Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             HeroMiniTile(
-                caption = s.pick("Доходы", "Income"),
+                caption = s.getString(R.string.income),
                 value = formatMoney(monthIncome, baseCurrency, showPlus = true),
                 modifier = Modifier.weight(1f)
             )
             HeroMiniTile(
-                caption = s.pick("Расходы", "Expenses"),
+                caption = s.getString(R.string.expenses),
                 value = (if (monthExpense.signum() > 0) "−" else "") + formatMoney(monthExpense, baseCurrency),
                 modifier = Modifier.weight(1f)
             )
@@ -669,7 +659,7 @@ private fun ReorderAccountsDialog(
     onSave: (List<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val order = remember { accounts.toMutableStateList() }
 
@@ -679,7 +669,7 @@ private fun ReorderAccountsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(s.pick("Порядок счетов", "Account order")) },
+        title = { Text(s.getString(R.string.account_order)) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 order.forEachIndexed { index, acc ->
@@ -702,10 +692,10 @@ private fun ReorderAccountsDialog(
                             )
                         }
                         IconButton(onClick = { move(index, index - 1) }, enabled = index > 0) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = s.pick("Выше", "Move up"))
+                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = s.getString(R.string.move_up))
                         }
                         IconButton(onClick = { move(index, index + 1) }, enabled = index < order.lastIndex) {
-                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = s.pick("Ниже", "Move down"))
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = s.getString(R.string.move_down))
                         }
                     }
                 }
@@ -713,12 +703,12 @@ private fun ReorderAccountsDialog(
         },
         confirmButton = {
             Button(onClick = { onSave(order.map { it.id }) }) {
-                Text(s.saveButton)
+                Text(s.getString(R.string.save_button))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(s.cancelButton)
+                Text(s.getString(R.string.cancel_button))
             }
         }
     )
@@ -732,7 +722,7 @@ private fun InstantCaptureCard(
     onCategory: (CategoryDto) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     Column(
         modifier = Modifier
@@ -746,12 +736,12 @@ private fun InstantCaptureCard(
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = s.pick("Новая операция", "New transaction"),
+                    text = s.getString(R.string.new_transaction),
                     style = MaterialTheme.typography.titleMedium,
                     color = c.text
                 )
                 Text(
-                    text = "${record.payee ?: s.pick("Банковское уведомление", "Bank alert")} · ${s.pick("только что", "just now")}",
+                    text = "${record.payee ?: s.getString(R.string.bank_alert)} · ${s.getString(R.string.just_now)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = c.muted,
                     maxLines = 1,
@@ -760,7 +750,7 @@ private fun InstantCaptureCard(
             }
             Text(signedRecordAmount(record), style = MaterialTheme.typography.titleLarge, color = c.text)
             IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = s.dismissButton, tint = c.muted, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Close, contentDescription = s.getString(R.string.dismiss_button), tint = c.muted, modifier = Modifier.size(18.dp))
             }
         }
         CategoryPickerRow(

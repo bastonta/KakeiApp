@@ -1,5 +1,6 @@
 package com.kakei.app.ui.screens
 
+import android.content.res.Resources
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -20,10 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.AppStrings
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
+import com.kakei.app.core.i18n.clearingStatus
+import com.kakei.app.core.i18n.operationType
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.data.remote.dto.AccountDto
@@ -93,7 +96,7 @@ fun TransactionsScreen(
     onEditRecord: (TransactionDto) -> Unit,
     onBack: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val today = LocalDate.now()
     val rateBook by repository.rateBook.collectAsState()
@@ -187,8 +190,8 @@ fun TransactionsScreen(
     Column(modifier = Modifier.fillMaxSize().background(c.bg)) {
         val listState = rememberLazyListState()
         PageTopBar(
-            title = s.pick("Операции", "Transactions"),
-            backContentDescription = s.pick("Назад", "Back"),
+            title = s.getString(R.string.recent_transactions),
+            backContentDescription = s.getString(R.string.back),
             onBack = onBack,
             scrolled = listState.canScrollBackward
         ) {
@@ -201,7 +204,7 @@ fun TransactionsScreen(
                     payeeFilter = null
                     reviewOnly = false
                 }) {
-                    Text(s.pick("Сбросить", "Reset"), color = c.mint)
+                    Text(s.getString(R.string.exchange_rate_reset_button), color = c.mint)
                 }
             }
         }
@@ -216,12 +219,12 @@ fun TransactionsScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text(s.searchPayeeHint) },
+                    placeholder = { Text(s.getString(R.string.search_payee_hint)) },
                     leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Outlined.Close, contentDescription = s.pick("Очистить", "Clear"))
+                                Icon(Icons.Outlined.Close, contentDescription = s.getString(R.string.clear))
                             }
                         }
                     },
@@ -245,10 +248,10 @@ fun TransactionsScreen(
                             text = when (p) {
                                 LedgerPeriod.THIS_MONTH -> monthName(today.monthValue, s)
                                 LedgerPeriod.LAST_MONTH -> monthName(today.minusMonths(1).monthValue, s)
-                                LedgerPeriod.THREE_MONTHS -> s.pick("3 месяца", "3 months")
+                                LedgerPeriod.THREE_MONTHS -> s.getString(R.string.n_3_months)
                                 LedgerPeriod.THIS_YEAR -> today.year.toString()
-                                LedgerPeriod.ALL_TIME -> s.pick("Всё время", "All time")
-                                LedgerPeriod.CUSTOM -> customRange?.let { rangeLabel(it, s) } ?: s.pick("Даты…", "Dates…")
+                                LedgerPeriod.ALL_TIME -> s.getString(R.string.all_time)
+                                LedgerPeriod.CUSTOM -> customRange?.let { rangeLabel(it, s) } ?: s.getString(R.string.dates)
                             },
                             icon = Icons.Outlined.CalendarMonth.takeIf { p == LedgerPeriod.CUSTOM },
                             selected = period == p,
@@ -269,7 +272,7 @@ fun TransactionsScreen(
                 ) {
                     listOf(null, "EXPENSE", "INCOME", "TRANSFER").forEach { t ->
                         KakeiChip(
-                            text = t?.let { s.operationType(it) } ?: s.pick("Все типы", "All types"),
+                            text = t?.let { s.operationType(it) } ?: s.getString(R.string.all_types),
                             selected = typeFilter == t,
                             color = when (t) {
                                 "INCOME" -> c.mint
@@ -288,14 +291,14 @@ fun TransactionsScreen(
                 ) {
                     Box {
                         KakeiChip(
-                            text = accountFilter?.let { accountMap[it]?.name } ?: s.pick("Все счета", "All accounts"),
+                            text = accountFilter?.let { accountMap[it]?.name } ?: s.getString(R.string.all_accounts),
                             icon = Icons.Outlined.AccountBalanceWallet,
                             selected = accountFilter != null,
                             onClick = { showAccountMenu = true }
                         )
                         DropdownMenu(expanded = showAccountMenu, onDismissRequest = { showAccountMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text(s.allAccountsFilter) },
+                                text = { Text(s.getString(R.string.all_accounts_filter)) },
                                 onClick = {
                                     accountFilter = null
                                     showAccountMenu = false
@@ -317,22 +320,22 @@ fun TransactionsScreen(
                     }
                     KakeiChip(
                         text = when (categoryFilter.size) {
-                            0 -> s.pick("Категории", "Categories")
-                            1 -> categoryMap[categoryFilter.first()]?.localizedName(langCode) ?: s.pick("Категория", "Category")
-                            else -> s.pick("Категорий: ${categoryFilter.size}", "${categoryFilter.size} categories")
+                            0 -> s.getString(R.string.categories)
+                            1 -> categoryMap[categoryFilter.first()]?.localizedName(langCode) ?: s.getString(R.string.category_label)
+                            else -> s.getString(R.string.categories_count, categoryFilter.size)
                         },
                         icon = Icons.Outlined.Sell,
                         selected = categoryFilter.isNotEmpty(),
                         onClick = { showCategoryDialog = true }
                     )
                     KakeiChip(
-                        text = payeeFilter ?: s.pick("Мерчант", "Merchant"),
+                        text = payeeFilter ?: s.getString(R.string.merchant),
                         icon = Icons.Outlined.Storefront,
                         selected = payeeFilter != null,
                         onClick = { showPayeeDialog = true }
                     )
                     KakeiChip(
-                        text = s.pick("Проверить", "Needs review"),
+                        text = s.getString(R.string.needs_review),
                         icon = Icons.Outlined.Flag,
                         color = c.amber,
                         selected = reviewOnly,
@@ -353,7 +356,7 @@ fun TransactionsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        s.pick("$n ${ruPlural(n, "операция", "операции", "операций")}", "$n ${if (n == 1L) "record" else "records"}"),
+                        s.getQuantityString(R.plurals.records_count, n.toInt(), n),
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.muted,
                         modifier = Modifier.weight(1f)
@@ -372,11 +375,8 @@ fun TransactionsScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     EmptyStateCard(
                         icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                        title = s.pick("Ничего не найдено", "Nothing found"),
-                        hint = s.pick(
-                            "Измените период или сбросьте фильтры.",
-                            "Change the period or reset the filters."
-                        )
+                        title = s.getString(R.string.nothing_found),
+                        hint = s.getString(R.string.change_the_period_or_reset)
                     )
                 }
             } else {
@@ -451,10 +451,10 @@ fun TransactionsScreen(
                         }
                         showRangePicker = false
                     }
-                ) { Text(s.pick("Применить", "Apply")) }
+                ) { Text(s.getString(R.string.apply)) }
             },
             dismissButton = {
-                TextButton(onClick = { showRangePicker = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showRangePicker = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         ) {
             DateRangePicker(
@@ -469,11 +469,11 @@ fun TransactionsScreen(
         var draft by remember { mutableStateOf(categoryFilter) }
         AlertDialog(
             onDismissRequest = { showCategoryDialog = false },
-            title = { Text(s.pick("Категории", "Categories")) },
+            title = { Text(s.getString(R.string.categories)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        s.pick("Можно выбрать несколько. Группа включает подкатегории.", "Pick one or more. A group includes its subcategories."),
+                        s.getString(R.string.pick_one_or_more_a),
                         style = MaterialTheme.typography.bodySmall,
                         color = c.muted
                     )
@@ -490,13 +490,13 @@ fun TransactionsScreen(
                 Button(onClick = {
                     categoryFilter = draft
                     showCategoryDialog = false
-                }) { Text(s.pick("Применить", "Apply")) }
+                }) { Text(s.getString(R.string.apply)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     categoryFilter = emptySet()
                     showCategoryDialog = false
-                }) { Text(s.pick("Сбросить", "Reset")) }
+                }) { Text(s.getString(R.string.exchange_rate_reset_button)) }
             }
         )
     }
@@ -508,13 +508,13 @@ fun TransactionsScreen(
         }
         AlertDialog(
             onDismissRequest = { showPayeeDialog = false },
-            title = { Text(s.pick("Мерчант", "Merchant")) },
+            title = { Text(s.getString(R.string.merchant)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = payeeQuery,
                         onValueChange = { payeeQuery = it },
-                        placeholder = { Text(s.pick("Поиск", "Search")) },
+                        placeholder = { Text(s.getString(R.string.search)) },
                         leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -547,14 +547,14 @@ fun TransactionsScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showPayeeDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showPayeeDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             },
             dismissButton = {
                 if (payeeFilter != null) {
                     TextButton(onClick = {
                         payeeFilter = null
                         showPayeeDialog = false
-                    }) { Text(s.pick("Сбросить", "Reset")) }
+                    }) { Text(s.getString(R.string.exchange_rate_reset_button)) }
                 }
             }
         )
@@ -574,7 +574,7 @@ fun TransactionsScreen(
 private fun convert(tx: TransactionDto, baseCurrency: String, rateBook: ExchangeRateBook): BigDecimal? =
     CurrencyFormatter.convert(tx.amount.abs(), tx.currency, baseCurrency, rateBook)
 
-private fun rangeLabel(range: ClosedRange<LocalDate>, s: AppStrings): String {
+private fun rangeLabel(range: ClosedRange<LocalDate>, s: Resources): String {
     val fmt = DateTimeFormatter.ofPattern("dd.MM.yy", localeFor(s))
     return if (range.start == range.endInclusive) fmt.format(range.start)
     else "${fmt.format(range.start)} – ${fmt.format(range.endInclusive)}"
@@ -597,7 +597,7 @@ internal fun LedgerRecordItem(
     /** Replaces the booking time under the amount (Home shows "Сегодня" / "Вчера"). */
     trailingCaption: String? = null
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var menuOpen by remember { mutableStateOf(false) }
     val visual = recordVisual(tx, category)
@@ -622,14 +622,14 @@ internal fun LedgerRecordItem(
             trailingCaption = trailingCaption ?: bookingDateTime(tx.bookingDate)?.toLocalTime()
                 ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
             badge = when {
-                tx.needsReview -> s.pick("Проверить", "Review")
+                tx.needsReview -> s.getString(R.string.review_check)
                 tx.status == "UNCLEARED" -> s.clearingStatus(tx.status)
                 else -> null
             },
             badgeColor = if (tx.needsReview) c.amber else c.muted,
             extra = listOfNotNull(
                 userNote,
-                s.pick("Частей: ${tx.splits.size}", "${tx.splits.size} splits").takeIf { tx.splits.isNotEmpty() },
+                s.getString(R.string.splits_count, tx.splits.size).takeIf { tx.splits.isNotEmpty() },
                 labels.joinToString(" ") { "#${it.name}" }.takeIf { labels.isNotEmpty() }
             ).joinToString(" · ").ifBlank { null },
             modifier = Modifier.combinedClickable(
@@ -639,7 +639,7 @@ internal fun LedgerRecordItem(
         )
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
-                text = { Text(s.pick("Изменить", "Edit")) },
+                text = { Text(s.getString(R.string.edit)) },
                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                 onClick = {
                     menuOpen = false
@@ -648,7 +648,7 @@ internal fun LedgerRecordItem(
             )
             if (tx.type != "TRANSFER") {
                 DropdownMenuItem(
-                    text = { Text(s.confirmCategory) },
+                    text = { Text(s.getString(R.string.confirm_category)) },
                     leadingIcon = { Icon(Icons.Outlined.Sell, contentDescription = null) },
                     onClick = {
                         menuOpen = false
@@ -657,7 +657,7 @@ internal fun LedgerRecordItem(
                 )
             }
             DropdownMenuItem(
-                text = { Text(s.deleteButton, color = c.coral) },
+                text = { Text(s.getString(R.string.delete_button), color = c.coral) },
                 leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
                 onClick = {
                     menuOpen = false
@@ -677,17 +677,17 @@ internal fun ReviewRecordDialog(
     onConfirm: (categoryId: String, createRule: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     var chosenCategory by remember(record.id) { mutableStateOf(record.categoryId.orEmpty()) }
     var createSmartRule by remember { mutableStateOf(true) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(s.confirmCategory) },
+        title = { Text(s.getString(R.string.confirm_category)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "${record.payee ?: s.pick("Операция", "Record")} · ${signedRecordAmount(record)}",
+                    text = "${record.payee ?: s.getString(R.string.record)} · ${signedRecordAmount(record)}",
                     style = MaterialTheme.typography.titleMedium
                 )
                 CategoryPickerRow(
@@ -698,7 +698,7 @@ internal fun ReviewRecordDialog(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = createSmartRule, onCheckedChange = { createSmartRule = it })
-                    Text(s.createSmartRule)
+                    Text(s.getString(R.string.create_smart_rule))
                 }
             }
         },
@@ -711,12 +711,12 @@ internal fun ReviewRecordDialog(
                     }
                 }
             ) {
-                Text(s.confirmCategory)
+                Text(s.getString(R.string.confirm_category))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(s.cancelButton)
+                Text(s.getString(R.string.cancel_button))
             }
         }
     )

@@ -1,7 +1,6 @@
 package com.kakei.app.ui.screens
 
 import android.content.Intent
-import com.kakei.app.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -21,12 +20,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
+import com.kakei.app.BuildConfig
+import com.kakei.app.R
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.core.i18n.permissionLevel
 import com.kakei.app.core.security.HealthCheckHelper
 import com.kakei.app.core.security.SystemHealthStatus
 import com.kakei.app.core.util.CurrencyFormatter
@@ -38,13 +43,10 @@ import com.kakei.app.ui.components.*
 import com.kakei.app.ui.theme.KakeiTheme
 import com.kakei.app.ui.theme.ThemeMode
 import com.kakei.app.ui.theme.kakeiCard
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.currentStateAsState
+import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.URI
 
 /**
  * Profile page (opened from the Home avatar): Synchronization, SMS/Push Automation & Biometrics,
@@ -63,9 +65,8 @@ fun ProfileAndHubScreen(
     repository: KakeiRepository,
     onBack: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
-    val isRu = s.language == AppLanguage.RU
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -105,15 +106,15 @@ fun ProfileAndHubScreen(
     val rateBook by repository.rateBook.collectAsState()
     val baseCurrency = settings.profile.defaultCurrency
     val themeTitle = when (settings.themeMode) {
-        ThemeMode.DARK -> s.themeDark
-        ThemeMode.LIGHT -> s.themeLight
-        ThemeMode.SYSTEM -> s.themeSystem
+        ThemeMode.DARK -> s.getString(R.string.theme_dark)
+        ThemeMode.LIGHT -> s.getString(R.string.theme_light)
+        ThemeMode.SYSTEM -> s.getString(R.string.theme_system)
     }
     val lockTimeoutLabel: (Int) -> String = { seconds ->
         when {
-            seconds == 0 -> s.pick("Сразу", "Immediately")
-            seconds < 60 -> s.pick("$seconds сек", "$seconds sec")
-            else -> s.pick("${seconds / 60} мин", "${seconds / 60} min")
+            seconds == 0 -> s.getString(R.string.immediately)
+            seconds < 60 -> s.getString(R.string.lock_after_seconds, seconds)
+            else -> s.getString(R.string.lock_after_minutes, seconds / 60)
         }
     }
     val usdRate = if (baseCurrency.equals("USD", ignoreCase = true)) null else rateBook.rate("USD", baseCurrency)
@@ -121,8 +122,8 @@ fun ProfileAndHubScreen(
     Column(modifier = Modifier.fillMaxSize().background(c.bg)) {
         val listState = rememberLazyListState()
         PageTopBar(
-            title = s.navProfile,
-            backContentDescription = s.pick("Назад", "Back"),
+            title = s.getString(R.string.nav_profile),
+            backContentDescription = s.getString(R.string.back),
             onBack = onBack,
             scrolled = listState.canScrollBackward
         )
@@ -160,7 +161,7 @@ fun ProfileAndHubScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "${s.baseCurrencyLabel} · $baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
+                                "${s.getString(R.string.auth_default_currency_label)} · $baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = c.muted,
                                 maxLines = 1,
@@ -181,7 +182,7 @@ fun ProfileAndHubScreen(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    if (settings.isAuthenticated) "Kakei Cloud" else s.offlineModeBadge,
+                                    if (settings.isAuthenticated) "Kakei Cloud" else s.getString(R.string.offline_mode_badge),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = if (settings.isAuthenticated) c.mint else c.muted
                                 )
@@ -203,9 +204,9 @@ fun ProfileAndHubScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = when {
-                                        settings.syncInProgress -> s.pick("Синхронизация…", "Syncing…")
-                                        pendingMutations.isEmpty() -> s.pick("Синхронизировано", "Up to date")
-                                        else -> "${s.pendingMutationsLabel}: ${pendingMutations.size}"
+                                        settings.syncInProgress -> s.getString(R.string.syncing)
+                                        pendingMutations.isEmpty() -> s.getString(R.string.up_to_date)
+                                        else -> "${s.getString(R.string.pending_mutations_label)}: ${pendingMutations.size}"
                                     },
                                     style = MaterialTheme.typography.titleSmall,
                                     color = c.text
@@ -213,9 +214,9 @@ fun ProfileAndHubScreen(
                                 Text(
                                     text = listOfNotNull(
                                         settings.lastSyncTimestamp?.let { CurrencyFormatter.formatShortDate(it) },
-                                        if (pendingMutations.isEmpty()) s.pick("очередь пуста", "queue empty") else null,
-                                        settings.serverVersion?.let { "${s.pick("сервер", "server")} $it" }
-                                    ).joinToString(" · ").ifBlank { s.pick("Сервер не подключён", "Server not connected") },
+                                        if (pendingMutations.isEmpty()) s.getString(R.string.queue_empty) else null,
+                                        settings.serverVersion?.let { "${s.getString(R.string.server)} $it" }
+                                    ).joinToString(" · ").ifBlank { s.getString(R.string.server_not_connected) },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = c.muted,
                                     maxLines = 1,
@@ -223,7 +224,7 @@ fun ProfileAndHubScreen(
                                 )
                             }
                             KakeiButton(
-                                text = s.pick("Обновить", "Sync"),
+                                text = s.getString(R.string.sync),
                                 kind = KakeiButtonKind.TONAL,
                                 height = 40.dp,
                                 enabled = !settings.syncInProgress,
@@ -232,13 +233,13 @@ fun ProfileAndHubScreen(
                         }
                         if (syncErrors.isNotEmpty()) {
                             Text(
-                                text = (if (isRu) "Отклонено сервером: " else "Rejected by server: ") +
+                                text = s.getString(R.string.rejected_by_server) +
                                     "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.coral
                             )
                             Text(
-                                text = if (isRu) "Скрыть ошибки синхронизации" else "Dismiss sync errors",
+                                text = s.getString(R.string.dismiss_sync_errors),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = c.muted,
                                 modifier = Modifier.clickable { repository.dismissSyncErrors() }
@@ -249,14 +250,14 @@ fun ProfileAndHubScreen(
             }
 
             // 2. Native SMS / Push capture & security toggles
-            item { GroupCaption(s.pick("Автозахват", "Auto-capture")) }
+            item { GroupCaption(s.getString(R.string.auto_capture)) }
             item {
                 GroupCard {
                     SettingsRow(
                         icon = Icons.AutoMirrored.Outlined.Chat,
                         iconColor = c.cyan,
-                        title = s.pick("SMS банков", "Bank SMS"),
-                        subtitle = s.pick("Kaspi, Halyk, Freedom и другие", "Kaspi, Halyk, Freedom and more"),
+                        title = s.getString(R.string.bank_sms),
+                        subtitle = s.getString(R.string.kaspi_halyk_freedom_and_more),
                         checked = settings.smsCaptureEnabled,
                         onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
                     )
@@ -264,8 +265,8 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Notifications,
                         iconColor = c.amber,
-                        title = s.pick("Push-уведомления", "Push notifications"),
-                        subtitle = s.pick("Дедупликация 5 мин", "5-min deduplication"),
+                        title = s.getString(R.string.push_notifications),
+                        subtitle = s.getString(R.string.n_5_min_deduplication),
                         checked = settings.pushCaptureEnabled,
                         onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
                     )
@@ -273,8 +274,8 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Bolt,
                         iconColor = c.mint,
-                        title = s.pick("Быстрая категория", "Quick category"),
-                        subtitle = s.pick("Карточка на главной сразу после покупки", "Home card right after a purchase"),
+                        title = s.getString(R.string.quick_category),
+                        subtitle = s.getString(R.string.home_card_right_after_a),
                         checked = settings.instantPopupEnabled,
                         onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
                     )
@@ -282,7 +283,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Fingerprint,
                         iconColor = c.violet,
-                        title = s.pick("Вход по биометрии", "Biometric unlock"),
+                        title = s.getString(R.string.biometric_unlock),
                         checked = settings.biometricLockEnabled,
                         onCheckedChange = { repository.updateAutomationToggles(biometricEnabled = it) }
                     )
@@ -291,8 +292,8 @@ fun ProfileAndHubScreen(
                         SettingsRow(
                             icon = Icons.Outlined.Timer,
                             iconColor = c.violet,
-                            title = s.pick("Блокировать через", "Lock after"),
-                            subtitle = s.pick("Время в фоне до повторного входа", "Time in background before relock"),
+                            title = s.getString(R.string.lock_after),
+                            subtitle = s.getString(R.string.time_in_background_before_relock),
                             value = lockTimeoutLabel(settings.lockTimeoutSeconds),
                             onClick = { showLockTimeoutDialog = true }
                         )
@@ -317,9 +318,9 @@ fun ProfileAndHubScreen(
                                 iconColor = c.violet,
                                 title = passkey.name,
                                 subtitle = listOfNotNull(
-                                    "${s.pick("создан", "created")} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
+                                    "${s.getString(R.string.created)} ${CurrencyFormatter.formatShortDate(passkey.createdAt)}",
                                     passkey.lastUsedAt?.let {
-                                        "${s.pick("использован", "last used")} ${CurrencyFormatter.formatShortDate(it)}"
+                                        "${s.getString(R.string.last_used)} ${CurrencyFormatter.formatShortDate(it)}"
                                     }
                                 ).joinToString(" · "),
                                 showChevron = false,
@@ -327,7 +328,7 @@ fun ProfileAndHubScreen(
                                     IconButton(onClick = { passkeyToDelete = passkey }) {
                                         Icon(
                                             imageVector = Icons.Outlined.Delete,
-                                            contentDescription = s.pick("Удалить passkey", "Remove passkey"),
+                                            contentDescription = s.getString(R.string.remove_passkey),
                                             tint = c.muted
                                         )
                                     }
@@ -338,11 +339,8 @@ fun ProfileAndHubScreen(
                         SettingsRow(
                             icon = Icons.Outlined.Add,
                             iconColor = c.mint,
-                            title = s.pick("Добавить passkey", "Add passkey"),
-                            subtitle = s.pick(
-                                "Вход по отпечатку или PIN-коду без пароля",
-                                "Sign in with fingerprint or screen lock, no password"
-                            ),
+                            title = s.getString(R.string.add_passkey),
+                            subtitle = s.getString(R.string.sign_in_with_fingerprint_or),
                             onClick = { showAddPasskeyDialog = true }
                         )
                     }
@@ -350,13 +348,13 @@ fun ProfileAndHubScreen(
             }
 
             // 3. Appearance
-            item { GroupCaption(s.pick("Оформление", "Appearance")) }
+            item { GroupCaption(s.getString(R.string.appearance)) }
             item {
                 GroupCard {
                     SettingsRow(
                         icon = Icons.Outlined.Language,
                         iconColor = c.blue,
-                        title = s.languageLabel,
+                        title = s.getString(R.string.language_label),
                         value = settings.language.displayName,
                         onClick = { showLanguageDialog = true }
                     )
@@ -364,7 +362,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.DarkMode,
                         iconColor = c.violet,
-                        title = s.themeLabel,
+                        title = s.getString(R.string.theme_label),
                         value = themeTitle,
                         onClick = { showThemeDialog = true }
                     )
@@ -372,7 +370,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.AccountBalanceWallet,
                         iconColor = c.mint,
-                        title = s.baseCurrencyLabel,
+                        title = s.getString(R.string.auth_default_currency_label),
                         value = "$baseCurrency ${CurrencyFormatter.symbolFor(baseCurrency)}",
                         onClick = { showCurrencyDialog = true }
                     )
@@ -380,13 +378,13 @@ fun ProfileAndHubScreen(
             }
 
             // 4. Data hub: categories & smart rules, sharing, rates, import/export, backups, server
-            item { GroupCaption(s.pick("Данные", "Data")) }
+            item { GroupCaption(s.getString(R.string.data)) }
             item {
                 GroupCard {
                     SettingsRow(
                         icon = Icons.Outlined.Sell,
                         iconColor = c.amber,
-                        title = s.categoriesAndRulesTitle,
+                        title = s.getString(R.string.categories_and_rules_title),
                         value = "${categories.size} · ${rules.size}",
                         onClick = { showCategoriesDialog = true }
                     )
@@ -394,7 +392,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.People,
                         iconColor = c.cyan,
-                        title = s.groupSharingTitle,
+                        title = s.getString(R.string.group_sharing_title),
                         value = "${groupMembers.size}",
                         onClick = { showSharingDialog = true }
                     )
@@ -402,7 +400,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.SwapHoriz,
                         iconColor = c.blue,
-                        title = s.exchangeRatesTitle,
+                        title = s.getString(R.string.exchange_rates_title),
                         value = usdRate?.let { "USD ${CurrencyFormatter.formatRate(it)}" },
                         onClick = { showRatesSheet = true }
                     )
@@ -410,7 +408,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Download,
                         iconColor = c.mint,
-                        title = s.importExportTitle,
+                        title = s.getString(R.string.import_export_title),
                         value = "CSV, OFX",
                         onClick = { showExchangeDialog = true }
                     )
@@ -418,7 +416,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Lock,
                         iconColor = c.pink,
-                        title = s.pick("Зашифрованная копия", "Encrypted backup"),
+                        title = s.getString(R.string.encrypted_backup),
                         subtitle = "AES-256-GCM",
                         onClick = { showBackupDialog = true }
                     )
@@ -426,7 +424,7 @@ fun ProfileAndHubScreen(
                     SettingsRow(
                         icon = Icons.Outlined.Dns,
                         iconColor = c.muted,
-                        title = s.authServerUrlLabel,
+                        title = s.getString(R.string.auth_server_url_label),
                         value = runCatching { URI(settings.serverBaseUrl).host }.getOrNull() ?: settings.serverBaseUrl,
                         onClick = { showServerDialog = true }
                     )
@@ -435,13 +433,13 @@ fun ProfileAndHubScreen(
 
             // 5. Developer tools: synthetic alerts would book fake money into real accounts.
             if (BuildConfig.DEBUG) {
-                item { GroupCaption(s.pick("Разработка", "Developer")) }
+                item { GroupCaption(s.getString(R.string.developer)) }
                 item {
                     GroupCard {
                         SettingsRow(
                             icon = Icons.Outlined.Sms,
                             iconColor = c.amber,
-                            title = s.simulateSmsCaptureButton,
+                            title = s.getString(R.string.simulate_sms_capture_button),
                             showChevron = false,
                             onClick = {
                                 val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
@@ -454,7 +452,7 @@ fun ProfileAndHubScreen(
                             SettingsRow(
                                 icon = Icons.Outlined.Inventory2,
                                 iconColor = c.violet,
-                                title = s.loadDemoDataButton,
+                                title = s.getString(R.string.load_demo_data_button),
                                 showChevron = false,
                                 onClick = { repository.loadDemoDataForDevelopment() }
                             )
@@ -464,7 +462,7 @@ fun ProfileAndHubScreen(
             }
 
             // 6. System & SQLCipher Diagnostics Panel
-            item { GroupCaption(s.diagnosticsTitle) }
+            item { GroupCaption(s.getString(R.string.diagnostics_title)) }
             item {
                 Column(
                     modifier = Modifier
@@ -491,7 +489,7 @@ fun ProfileAndHubScreen(
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 KakeiButton(
-                    text = s.logoutButton,
+                    text = s.getString(R.string.logout_button),
                     icon = Icons.AutoMirrored.Outlined.Logout,
                     kind = KakeiButtonKind.TONAL,
                     color = c.coral,
@@ -506,7 +504,7 @@ fun ProfileAndHubScreen(
     // Language
     if (showLanguageDialog) {
         ChoiceDialog(
-            title = s.languageLabel,
+            title = s.getString(R.string.language_label),
             options = AppLanguage.entries.map { it to it.displayName },
             selected = settings.language,
             onSelect = {
@@ -520,12 +518,12 @@ fun ProfileAndHubScreen(
     // Theme
     if (showThemeDialog) {
         ChoiceDialog(
-            title = s.themeLabel,
+            title = s.getString(R.string.theme_label),
             options = ThemeMode.entries.map { mode ->
                 mode to when (mode) {
-                    ThemeMode.DARK -> s.themeDark
-                    ThemeMode.LIGHT -> s.themeLight
-                    ThemeMode.SYSTEM -> s.themeSystem
+                    ThemeMode.DARK -> s.getString(R.string.theme_dark)
+                    ThemeMode.LIGHT -> s.getString(R.string.theme_light)
+                    ThemeMode.SYSTEM -> s.getString(R.string.theme_system)
                 }
             },
             selected = settings.themeMode,
@@ -540,7 +538,7 @@ fun ProfileAndHubScreen(
     // Biometric relock delay
     if (showLockTimeoutDialog) {
         ChoiceDialog(
-            title = s.pick("Блокировать через", "Lock after"),
+            title = s.getString(R.string.lock_after),
             options = AppSettingsState.LOCK_TIMEOUT_OPTIONS.map { it to lockTimeoutLabel(it) },
             selected = settings.lockTimeoutSeconds,
             onSelect = {
@@ -554,7 +552,7 @@ fun ProfileAndHubScreen(
     // Base currency
     if (showCurrencyDialog) {
         ChoiceDialog(
-            title = s.baseCurrencyLabel,
+            title = s.getString(R.string.auth_default_currency_label),
             options = CurrencyFormatter.supportedCurrencies.map { it to "$it ${CurrencyFormatter.symbolFor(it)}" },
             selected = baseCurrency,
             onSelect = {
@@ -570,12 +568,12 @@ fun ProfileAndHubScreen(
         var passkeyName by remember { mutableStateOf(android.os.Build.MODEL) }
         AlertDialog(
             onDismissRequest = { showAddPasskeyDialog = false },
-            title = { Text(s.pick("Новый passkey", "New passkey")) },
+            title = { Text(s.getString(R.string.new_passkey)) },
             text = {
                 OutlinedTextField(
                     value = passkeyName,
                     onValueChange = { passkeyName = it.take(100) },
-                    label = { Text(s.pick("Название", "Name")) },
+                    label = { Text(s.getString(R.string.category_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -588,11 +586,11 @@ fun ProfileAndHubScreen(
                     },
                     enabled = !settings.syncInProgress
                 ) {
-                    Text(s.pick("Создать", "Create"))
+                    Text(s.getString(R.string.create))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAddPasskeyDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showAddPasskeyDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -600,13 +598,10 @@ fun ProfileAndHubScreen(
     passkeyToDelete?.let { passkey ->
         AlertDialog(
             onDismissRequest = { passkeyToDelete = null },
-            title = { Text(s.pick("Удалить passkey?", "Remove passkey?")) },
+            title = { Text(s.getString(R.string.remove_passkey_confirm)) },
             text = {
                 Text(
-                    s.pick(
-                        "«${passkey.name}» больше не подойдёт для входа. Ключ на устройстве можно удалить в менеджере паролей.",
-                        "\"${passkey.name}\" will no longer sign you in. Remove the key itself in your password manager."
-                    )
+                    s.getString(R.string.will_no_longer_sign_you, passkey.name)
                 )
             },
             confirmButton = {
@@ -616,11 +611,11 @@ fun ProfileAndHubScreen(
                         passkeyToDelete = null
                     }
                 ) {
-                    Text(s.pick("Удалить", "Remove"))
+                    Text(s.getString(R.string.remove))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { passkeyToDelete = null }) { Text(s.cancelButton) }
+                TextButton(onClick = { passkeyToDelete = null }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -630,7 +625,7 @@ fun ProfileAndHubScreen(
         var serverUrlInput by remember(settings.serverBaseUrl) { mutableStateOf(settings.serverBaseUrl) }
         AlertDialog(
             onDismissRequest = { showServerDialog = false },
-            title = { Text(s.authServerUrlLabel) },
+            title = { Text(s.getString(R.string.auth_server_url_label)) },
             text = {
                 OutlinedTextField(
                     value = serverUrlInput,
@@ -647,11 +642,11 @@ fun ProfileAndHubScreen(
                         showServerDialog = false
                     }
                 ) {
-                    Text(s.syncNowButton)
+                    Text(s.getString(R.string.sync_now_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showServerDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showServerDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -685,25 +680,25 @@ fun ProfileAndHubScreen(
             SmartMerchantMatcher.classify(simulatorInput, null, rules, categories)
         }
         val simCategoryName = categories.firstOrNull { it.id == simResult.categoryId }
-            ?.localizedName(settings.language.code) ?: s.pick("нет", "None")
+            ?.localizedName(settings.language.code) ?: s.getString(R.string.none)
 
         AlertDialog(
             onDismissRequest = { showCategoriesDialog = false },
-            title = { Text(s.categoriesAndRulesTitle) },
+            title = { Text(s.getString(R.string.categories_and_rules_title)) },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(s.pick("Проверка правил:", "Smart Rule Simulator:"), fontWeight = FontWeight.Bold)
+                    Text(s.getString(R.string.smart_rule_simulator), fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = simulatorInput,
                         onValueChange = { simulatorInput = it },
-                        label = { Text(s.pick("Текст для проверки", "Test Merchant Text")) },
+                        label = { Text(s.getString(R.string.test_merchant_text)) },
                         singleLine = true
                     )
                     Text(
-                        text = "➔ ${s.categoryLabel}: $simCategoryName (${simResult.confidenceLabel})",
+                        text = "➔ ${s.getString(R.string.category_label)}: $simCategoryName (${simResult.confidenceLabel})",
                         color = c.mint,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -711,7 +706,7 @@ fun ProfileAndHubScreen(
                     OutlinedTextField(
                         value = newRulePattern,
                         onValueChange = { newRulePattern = it },
-                        label = { Text(s.pick("Шаблон правила (например, Wolt)", "New Rule Pattern (e.g. Wolt)")) },
+                        label = { Text(s.getString(R.string.new_rule_pattern_e_g)) },
                         singleLine = true
                     )
                     Row(
@@ -721,9 +716,9 @@ fun ProfileAndHubScreen(
                         listOf("EXACT", "PREFIX", "CONTAINS").forEach { mt ->
                             KakeiChip(
                                 text = when (mt) {
-                                    "EXACT" -> s.pick("Совпадает", "Exact")
-                                    "PREFIX" -> s.pick("Начинается с", "Prefix")
-                                    else -> s.pick("Содержит", "Contains")
+                                    "EXACT" -> s.getString(R.string.exact)
+                                    "PREFIX" -> s.getString(R.string.prefix)
+                                    else -> s.getString(R.string.contains)
                                 },
                                 selected = newRuleMatchType == mt,
                                 onClick = { newRuleMatchType = mt }
@@ -744,12 +739,12 @@ fun ProfileAndHubScreen(
                             }
                         }
                     ) {
-                        Text(s.pick("+ Добавить правило", "+ Add Smart Rule"))
+                        Text(s.getString(R.string.add_smart_rule))
                     }
                     OutlinedTextField(
                         value = newCatName,
                         onValueChange = { newCatName = it },
-                        label = { Text(s.pick("Название категории", "New Category Name")) },
+                        label = { Text(s.getString(R.string.new_category_name)) },
                         singleLine = true
                     )
                     OutlinedButton(
@@ -760,12 +755,12 @@ fun ProfileAndHubScreen(
                             }
                         }
                     ) {
-                        Text(s.pick("+ Добавить категорию", "+ Add Category"))
+                        Text(s.getString(R.string.add_category))
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showCategoriesDialog = false }) { Text(s.pick("Готово", "Done")) }
+                TextButton(onClick = { showCategoriesDialog = false }) { Text(s.getString(R.string.done)) }
             }
         )
     }
@@ -778,13 +773,13 @@ fun ProfileAndHubScreen(
 
         AlertDialog(
             onDismissRequest = { showSharingDialog = false },
-            title = { Text(s.groupSharingTitle) },
+            title = { Text(s.getString(R.string.group_sharing_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = memberEmail,
                         onValueChange = { memberEmail = it },
-                        label = { Text(s.pick("Email участника", "Family Member Email")) },
+                        label = { Text(s.getString(R.string.family_member_email)) },
                         singleLine = true
                     )
                     Row(
@@ -808,7 +803,7 @@ fun ProfileAndHubScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { repository.removeGroupMember(m) }) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = s.deleteButton, tint = c.muted)
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = s.getString(R.string.delete_button), tint = c.muted)
                             }
                         }
                     }
@@ -823,11 +818,11 @@ fun ProfileAndHubScreen(
                         }
                     }
                 ) {
-                    Text(s.pick("Пригласить", "Invite Member"))
+                    Text(s.getString(R.string.invite_member))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSharingDialog = false }) { Text(s.pick("Закрыть", "Close")) }
+                TextButton(onClick = { showSharingDialog = false }) { Text(s.getString(R.string.close)) }
             }
         )
     }
@@ -844,7 +839,7 @@ fun ProfileAndHubScreen(
 
         AlertDialog(
             onDismissRequest = { showExchangeDialog = false },
-            title = { Text(s.importExportTitle) },
+            title = { Text(s.getString(R.string.import_export_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -855,7 +850,7 @@ fun ProfileAndHubScreen(
                     OutlinedTextField(
                         value = csvInput,
                         onValueChange = { csvInput = it },
-                        label = { Text(s.pick("Содержимое выписки (CSV / OFX 2.2)", "Statement Content (CSV / OFX 2.2)")) },
+                        label = { Text(s.getString(R.string.statement_content)) },
                         maxLines = 5
                     )
                     OutlinedButton(
@@ -865,11 +860,11 @@ fun ProfileAndHubScreen(
                                 type = "text/csv"
                                 putExtra(Intent.EXTRA_TEXT, exported)
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, s.pick("Экспорт CSV", "Export CSV Report")))
+                            context.startActivity(Intent.createChooser(sendIntent, s.getString(R.string.export_csv_report)))
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(s.pick("Экспорт операций в CSV", "Export Ledger to CSV"))
+                        Text(s.getString(R.string.export_ledger_to_csv))
                     }
                 }
             },
@@ -887,11 +882,11 @@ fun ProfileAndHubScreen(
                         }
                     }
                 ) {
-                    Text(s.pick("Импортировать без дублей", "Import & Deduplicate"))
+                    Text(s.getString(R.string.import_deduplicate))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showExchangeDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showExchangeDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -903,13 +898,13 @@ fun ProfileAndHubScreen(
 
         AlertDialog(
             onDismissRequest = { showBackupDialog = false },
-            title = { Text(s.pick("Зашифрованный бэкап (AES-256-GCM)", "Encrypted Backup (AES-256-GCM)")) },
+            title = { Text(s.getString(R.string.encrypted_backup_aes_256_gcm)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text(s.pick("Пароль бэкапа", "Backup Passphrase")) },
+                        label = { Text(s.getString(R.string.backup_passphrase)) },
                         singleLine = true
                     )
                     Button(
@@ -918,13 +913,13 @@ fun ProfileAndHubScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(s.pick("Создать зашифрованный снимок", "Generate Encrypted Snapshot"))
+                        Text(s.getString(R.string.generate_encrypted_snapshot))
                     }
                     if (cipherText.isNotBlank()) {
                         OutlinedTextField(
                             value = cipherText,
                             onValueChange = { cipherText = it },
-                            label = { Text(s.pick("Зашифрованные данные (Base64)", "Encrypted Base64 Payload")) },
+                            label = { Text(s.getString(R.string.encrypted_base64_payload)) },
                             maxLines = 4
                         )
                         FilledTonalButton(
@@ -934,13 +929,13 @@ fun ProfileAndHubScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(s.pick("Восстановить из данных", "Restore from Payload"))
+                            Text(s.getString(R.string.restore_from_payload))
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showBackupDialog = false }) { Text(s.pick("Закрыть", "Close")) }
+                TextButton(onClick = { showBackupDialog = false }) { Text(s.getString(R.string.close)) }
             }
         )
     }
@@ -971,7 +966,7 @@ private fun <T> ChoiceDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -993,7 +988,7 @@ private fun <T> ChoiceDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text(s.cancelButton) }
+            TextButton(onClick = onDismiss) { Text(s.getString(R.string.cancel_button)) }
         }
     )
 }

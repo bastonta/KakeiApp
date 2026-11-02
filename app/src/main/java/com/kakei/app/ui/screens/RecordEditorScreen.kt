@@ -22,13 +22,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
+import com.kakei.app.core.i18n.clearingStatus
 import com.kakei.app.core.security.HapticHelper
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.AccountDto
@@ -89,7 +91,7 @@ fun RecordEditorScreen(
         bookingDateIso: String?
     ) -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -177,12 +179,12 @@ fun RecordEditorScreen(
         else -> c.coral
     }
     val saveLabel = when {
-        editing -> s.pick("Сохранить изменения", "Save changes")
-        recordType == "INCOME" -> s.pick("Сохранить доход", "Save income")
-        recordType == "TRANSFER" -> s.pick("Сохранить перевод", "Save transfer")
-        else -> s.pick("Сохранить расход", "Save expense")
+        editing -> s.getString(R.string.save_changes)
+        recordType == "INCOME" -> s.getString(R.string.save_income)
+        recordType == "TRANSFER" -> s.getString(R.string.save_transfer)
+        else -> s.getString(R.string.save_expense)
     }
-    val types = listOf("EXPENSE" to s.expenseLabel, "INCOME" to s.incomeLabel, "TRANSFER" to s.transferLabel)
+    val types = listOf("EXPENSE" to s.getString(R.string.expense_label), "INCOME" to s.getString(R.string.income_label), "TRANSFER" to s.getString(R.string.transfer_label))
 
     var page by remember { mutableStateOf(EditorPage.MAIN) }
     val frequentIds = remember(transactions, categories, recordType) {
@@ -223,13 +225,13 @@ fun RecordEditorScreen(
             ) {
                 PageTopBar(
                     title = signedAmount,
-                    backContentDescription = s.pick("Назад", "Back"),
+                    backContentDescription = s.getString(R.string.back),
                     onBack = { page = EditorPage.MAIN },
                     scrolled = scrollState.canScrollBackward
                 ) {
                     CircleIconButton(
                         icon = Icons.Outlined.Check,
-                        contentDescription = s.pick("Готово", "Done"),
+                        contentDescription = s.getString(R.string.done),
                         onClick = { page = EditorPage.MAIN },
                         size = 44.dp,
                         containerColor = accentColor,
@@ -247,7 +249,7 @@ fun RecordEditorScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Payee / merchant with suggestions from past records; a known payee fills in its last category
-                    GroupCaption(s.pick("Получатель", "Payee"))
+                    GroupCaption(s.getString(R.string.payee))
                     PayeeAutocompleteField(
                         value = payee,
                         onValueChange = { text ->
@@ -269,11 +271,11 @@ fun RecordEditorScreen(
                         }
                     )
 
-                    GroupCaption(s.noteLabel)
+                    GroupCaption(s.getString(R.string.note_label))
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
-                        placeholder = { Text(s.pick("Описание", "Description")) },
+                        placeholder = { Text(s.getString(R.string.description)) },
                         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null, tint = c.muted) },
                         shape = RoundedCornerShape(16.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -284,7 +286,7 @@ fun RecordEditorScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    GroupCaption(s.pick("Дата и время", "Date and time"))
+                    GroupCaption(s.getString(R.string.date_and_time))
                     BookingDateTimeField(
                         value = bookingAt,
                         onChange = {
@@ -294,7 +296,7 @@ fun RecordEditorScreen(
                     )
 
                     // Orthogonal Labels / Tags: pick existing ones or create a new one inline
-                    GroupCaption(s.labelsTitle)
+                    GroupCaption(s.getString(R.string.labels_title))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -311,7 +313,7 @@ fun RecordEditorScreen(
                             )
                         }
                         KakeiChip(
-                            text = s.pick("Метка", "Label"),
+                            text = s.getString(R.string.label),
                             icon = Icons.Outlined.Add,
                             iconTint = c.mint,
                             selected = newLabelName != null,
@@ -332,13 +334,13 @@ fun RecordEditorScreen(
                         OutlinedTextField(
                             value = draft,
                             onValueChange = { newLabelName = it },
-                            label = { Text(s.pick("Новая метка", "New label")) },
+                            label = { Text(s.getString(R.string.new_label)) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { createLabel() }),
                             trailingIcon = {
                                 IconButton(onClick = { createLabel() }, enabled = draft.isNotBlank()) {
-                                    Icon(Icons.Outlined.Check, contentDescription = s.saveButton)
+                                    Icon(Icons.Outlined.Check, contentDescription = s.getString(R.string.save_button))
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -346,7 +348,7 @@ fun RecordEditorScreen(
                     }
 
                     // Clearing Lifecycle Status: UNCLEARED / CLEARED / RECONCILED
-                    GroupCaption(s.statusLabel)
+                    GroupCaption(s.getString(R.string.status_label))
                     val statuses = listOf("UNCLEARED", "CLEARED", "RECONCILED")
                     KakeiSegmented(
                         options = statuses.map { s.clearingStatus(it) },
@@ -356,7 +358,7 @@ fun RecordEditorScreen(
 
                     // Splits Builder
                     if (recordType != "TRANSFER") {
-                        GroupCaption(s.splitsTitle)
+                        GroupCaption(s.getString(R.string.splits_title))
                         GroupCard {
                             splits.forEachIndexed { index, split ->
                                 val category = categories.firstOrNull { it.id == split.categoryId }
@@ -376,7 +378,7 @@ fun RecordEditorScreen(
                                     )
                                     Spacer(modifier = Modifier.width(14.dp))
                                     Text(
-                                        text = category?.localizedName(langCode) ?: s.pick("Без категории", "Uncategorized"),
+                                        text = category?.localizedName(langCode) ?: s.getString(R.string.uncategorized),
                                         style = MaterialTheme.typography.titleMedium,
                                         color = c.text,
                                         maxLines = 1,
@@ -389,7 +391,7 @@ fun RecordEditorScreen(
                                         color = c.text
                                     )
                                     IconButton(onClick = { splits = splits.filterIndexed { i, _ -> i != index } }) {
-                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = s.deleteButton, tint = c.muted)
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = s.getString(R.string.delete_button), tint = c.muted)
                                     }
                                 }
                                 RowDivider(startIndent = if (index == splits.lastIndex) 0.dp else 66.dp)
@@ -415,14 +417,14 @@ fun RecordEditorScreen(
                                 Icon(Icons.Outlined.Add, contentDescription = null, tint = c.mint, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = s.addSplitButton.removePrefix("+").trim(),
+                                    text = s.getString(R.string.add_split_button).removePrefix("+").trim(),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = c.mint,
                                     modifier = Modifier.weight(1f)
                                 )
                                 if (splits.isNotEmpty()) {
                                     Text(
-                                        text = "${s.pick("Остаток", "Remaining")} ${formatMoney(remainder, currency)}",
+                                        text = "${s.getString(R.string.remaining_label)} ${formatMoney(remainder, currency)}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (remainder < BigDecimal.ZERO) c.coral else c.muted
                                     )
@@ -441,8 +443,8 @@ fun RecordEditorScreen(
                     .background(c.bg)
             ) {
                 PageTopBar(
-                    title = if (editing) s.pick("Изменить операцию", "Edit record") else s.quickAddTransaction,
-                    backContentDescription = s.pick("Назад", "Back"),
+                    title = if (editing) s.getString(R.string.edit_record) else s.getString(R.string.quick_add_transaction),
+                    backContentDescription = s.getString(R.string.back),
                     onBack = onDismiss,
                     scrolled = false
                 )
@@ -514,7 +516,7 @@ fun RecordEditorScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         AccountPickerField(
-                            caption = s.pick("Счёт", "Account"),
+                            caption = s.getString(R.string.account),
                             accounts = if (editing) accounts else accounts.filter { !it.isArchived },
                             selectedId = selectedAccountId,
                             onSelect = { selectedAccountId = it },
@@ -523,7 +525,7 @@ fun RecordEditorScreen(
                         )
                         if (recordType == "TRANSFER") {
                             AccountPickerField(
-                                caption = s.targetAccountLabel,
+                                caption = s.getString(R.string.target_account_label),
                                 accounts = accounts.filter { (editing || !it.isArchived) && it.id != selectedAccountId },
                                 selectedId = targetAccount?.id,
                                 onSelect = { targetAccountId = it },
@@ -535,8 +537,8 @@ fun RecordEditorScreen(
                             val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
                             val visual = selectedCategory?.let { categoryVisual(it) }
                             NavigationField(
-                                caption = s.pick("Категория", "Category"),
-                                valueText = selectedCategory?.localizedName(langCode) ?: s.pick("Не выбрана", "Not selected"),
+                                caption = s.getString(R.string.category_label),
+                                valueText = selectedCategory?.localizedName(langCode) ?: s.getString(R.string.account_not_selected),
                                 icon = visual?.icon ?: Icons.Outlined.Apps,
                                 iconTint = visual?.color ?: c.muted,
                                 onClick = {
@@ -559,7 +561,7 @@ fun RecordEditorScreen(
                                     receivedInput = it
                                     receivedIsAnchor = true
                                 },
-                                label = { Text("${s.transferReceivedLabel} ($targetCurrency)") },
+                                label = { Text("${s.getString(R.string.transfer_received_label)} ($targetCurrency)") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
@@ -570,7 +572,7 @@ fun RecordEditorScreen(
                                     rateInput = it
                                     receivedIsAnchor = false
                                 },
-                                label = { Text("${s.transferRateLabel}: 1 $currency = ? $targetCurrency") },
+                                label = { Text("${s.getString(R.string.transfer_rate_label)}: 1 $currency = ? $targetCurrency") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
@@ -578,7 +580,7 @@ fun RecordEditorScreen(
                         }
                         if (!crossCurrencyReady) {
                             Text(
-                                text = s.transferRateMissing,
+                                text = s.getString(R.string.transfer_rate_missing),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -587,14 +589,14 @@ fun RecordEditorScreen(
 
                     // Secondary details on their own page; the row summarises what is set there
                     NavigationField(
-                        caption = s.pick("Детали: получатель, дата, метки…", "Details: payee, date, labels…"),
+                        caption = s.getString(R.string.details_payee_date_labels),
                         valueText = detailsSummary(
                             payee = payee,
                             whenText = "${dayLabel(bookingAt.toLocalDate(), s)}, ${bookingAt.format(DateTimeFormatter.ofPattern("HH:mm"))}",
                             labelNames = selectedLabels.mapNotNull { labelsById[it]?.name },
                             note = note,
                             splitCount = if (recordType == "TRANSFER") 0 else splits.size,
-                            splitsCaption = s.pick("Частей", "Splits")
+                            splitsCaption = s.getString(R.string.splits)
                         ),
                         icon = Icons.Outlined.Tune,
                         iconTint = c.muted,

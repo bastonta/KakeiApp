@@ -27,11 +27,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
 import com.kakei.app.core.security.HapticHelper
 import com.kakei.app.core.util.SystemCategories
 import com.kakei.app.data.remote.dto.CategoryDto
@@ -84,7 +85,7 @@ fun CategoryPickerRow(
     recordType: String? = null,
     tiles: Boolean = false
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val context = LocalContext.current
     val tree = remember(categories, langCode) { CategoryTree.build(categories, langCode) }
     val roots = remember(tree, recordType) {
@@ -145,7 +146,7 @@ fun CategoryPickerRow(
             ) {
                 val groupColor = categoryVisual(expanded).color
                 KakeiChip(
-                    text = s.pick("Вся группа", "Whole group"),
+                    text = s.getString(R.string.whole_group),
                     icon = Icons.Outlined.Apps,
                     iconTint = groupColor,
                     color = groupColor,
@@ -267,7 +268,7 @@ fun CategoryPickerPage(
     onPick: (CategoryDto) -> Unit,
     onBack: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val context = LocalContext.current
     val tree = remember(categories, langCode) { CategoryTree.build(categories, langCode) }
@@ -297,8 +298,8 @@ fun CategoryPickerPage(
             .background(c.bg)
     ) {
         PageTopBar(
-            title = openGroup?.localizedName(langCode) ?: s.pick("Категория", "Category"),
-            backContentDescription = s.pick("Назад", "Back"),
+            title = openGroup?.localizedName(langCode) ?: s.getString(R.string.category_label),
+            backContentDescription = s.getString(R.string.back),
             onBack = back,
             scrolled = scrollState.canScrollBackward
         )
@@ -314,12 +315,12 @@ fun CategoryPickerPage(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text(s.pick("Поиск категории", "Search categories")) },
+                placeholder = { Text(s.getString(R.string.search_categories)) },
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = c.muted) },
                 trailingIcon = if (query.isNotEmpty()) {
                     {
                         IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Outlined.Close, contentDescription = s.pick("Очистить", "Clear"), tint = c.muted)
+                            Icon(Icons.Outlined.Close, contentDescription = s.getString(R.string.clear), tint = c.muted)
                         }
                     }
                 } else null,
@@ -335,12 +336,12 @@ fun CategoryPickerPage(
 
             when {
                 query.isNotBlank() -> {
-                    GroupCaption(s.pick("Найдено: ${results.size}", "Found: ${results.size}"))
+                    GroupCaption(s.getString(R.string.found, results.size))
                     if (results.isEmpty()) {
                         EmptyStateCard(
                             icon = Icons.Outlined.Search,
-                            title = s.pick("Ничего не найдено", "Nothing found"),
-                            hint = s.pick("Попробуйте другое название.", "Try another name.")
+                            title = s.getString(R.string.nothing_found),
+                            hint = s.getString(R.string.try_another_name)
                         )
                     } else {
                         CategoryListCard(results) { cat ->
@@ -362,7 +363,7 @@ fun CategoryPickerPage(
                             CategoryListRow(
                                 category = cat,
                                 langCode = langCode,
-                                title = s.pick("Вся группа", "Whole group"),
+                                title = s.getString(R.string.whole_group),
                                 icon = Icons.Outlined.Apps,
                                 color = groupColor,
                                 selected = cat.id == selectedId,
@@ -381,7 +382,7 @@ fun CategoryPickerPage(
                 else -> {
                     val frequent = frequentIds.mapNotNull { byId[it] }
                     if (frequent.isNotEmpty()) {
-                        GroupCaption(s.pick("Частые", "Frequent"))
+                        GroupCaption(s.getString(R.string.frequent))
                         Row(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -396,13 +397,13 @@ fun CategoryPickerPage(
                             }
                         }
                     }
-                    GroupCaption(s.pick("Все категории", "All categories"))
+                    GroupCaption(s.getString(R.string.all_categories))
                     CategoryListCard(roots) { root ->
                         val kids = tree.children[root.id].orEmpty()
                         CategoryListRow(
                             category = root,
                             langCode = langCode,
-                            subtitle = if (kids.isNotEmpty()) "${s.pick("Подкатегорий", "Subcategories")}: ${kids.size}" else null,
+                            subtitle = if (kids.isNotEmpty()) "${s.getString(R.string.subcategories)}: ${kids.size}" else null,
                             selected = root.id == selectedId || kids.any { it.id == selectedId },
                             hasChildren = kids.isNotEmpty(),
                             onClick = {

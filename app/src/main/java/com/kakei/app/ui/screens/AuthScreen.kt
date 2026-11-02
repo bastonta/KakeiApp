@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kakei.app.R
 import com.kakei.app.core.i18n.AppLanguage
-import com.kakei.app.core.i18n.LocalAppStrings
+import androidx.compose.ui.platform.LocalResources
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.repository.AppSettingsState
 import com.kakei.app.data.repository.KakeiRepository
@@ -48,7 +48,7 @@ fun AuthScreen(
     settings: AppSettingsState,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var showCloudForm by remember { mutableStateOf(false) }
 
@@ -87,7 +87,7 @@ fun AuthScreen(
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Outlined.Language, contentDescription = s.languageLabel, tint = c.muted, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Language, contentDescription = s.getString(R.string.language_label), tint = c.muted, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(settings.language.code.uppercase(), style = MaterialTheme.typography.labelLarge, color = c.text)
             }
@@ -97,7 +97,7 @@ fun AuthScreen(
                     ThemeMode.LIGHT -> Icons.Outlined.LightMode
                     ThemeMode.SYSTEM -> Icons.Outlined.BrightnessAuto
                 },
-                contentDescription = s.themeLabel,
+                contentDescription = s.getString(R.string.theme_label),
                 bordered = false,
                 contentColor = c.muted,
                 onClick = {
@@ -130,7 +130,7 @@ fun AuthScreen(
         }
         Spacer(modifier = Modifier.height(20.dp))
         Text(
-            text = s.authWelcomeTitle,
+            text = s.getString(R.string.auth_welcome_title),
             fontSize = 44.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = (-1).sp,
@@ -139,7 +139,7 @@ fun AuthScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = s.authWelcomeSubtitle,
+            text = s.getString(R.string.auth_welcome_subtitle),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Normal,
             color = c.muted,
@@ -152,8 +152,8 @@ fun AuthScreen(
         if (settings.pending2faUserId != null) {
             var twoFaCode by remember { mutableStateOf("") }
             CodeStepCard(
-                title = s.auth2faTitle,
-                label = s.auth2faCodeLabel,
+                title = s.getString(R.string.auth_2fa_title),
+                label = s.getString(R.string.auth_2fa_code_label),
                 value = twoFaCode,
                 onValueChange = { twoFaCode = it },
                 onConfirm = { repository.verify2fa(twoFaCode) }
@@ -164,8 +164,8 @@ fun AuthScreen(
         if (settings.pendingEmailConfirmUserId != null) {
             var emailConfirmCode by remember { mutableStateOf("") }
             CodeStepCard(
-                title = s.authEmailConfirmTitle,
-                label = s.authEmailConfirmCode,
+                title = s.getString(R.string.auth_email_confirm_title),
+                label = s.getString(R.string.auth_email_confirm_code),
                 value = emailConfirmCode,
                 onValueChange = { emailConfirmCode = it },
                 onConfirm = { repository.confirmRegistrationEmail(emailConfirmCode) }
@@ -177,7 +177,7 @@ fun AuthScreen(
             CloudSignInCard(settings = settings, repository = repository)
             Spacer(modifier = Modifier.height(12.dp))
             TextButton(onClick = { showCloudForm = false }) {
-                Text(s.pick("Назад", "Back"), color = c.muted)
+                Text(s.getString(R.string.back), color = c.muted)
             }
             return@Column
         }
@@ -190,27 +190,27 @@ fun AuthScreen(
             FeatureRow(
                 icon = Icons.AutoMirrored.Outlined.Chat,
                 color = c.cyan,
-                title = s.pick("Операции из SMS и push", "Records from SMS & push"),
-                subtitle = s.pick("Kaspi, Halyk, Freedom и другие банки", "Kaspi, Halyk, Freedom and other banks")
+                title = s.getString(R.string.records_from_sms_push),
+                subtitle = s.getString(R.string.kaspi_halyk_freedom_and_other)
             )
             FeatureRow(
                 icon = Icons.Outlined.BarChart,
                 color = c.mint,
-                title = s.pick("Прогноз и бюджеты", "Forecast & budgets"),
-                subtitle = s.pick("Сколько можно тратить в день — без таблиц", "How much you can spend per day — no spreadsheets")
+                title = s.getString(R.string.forecast_budgets),
+                subtitle = s.getString(R.string.how_much_you_can_spend)
             )
             FeatureRow(
                 icon = Icons.Outlined.GppGood,
                 color = c.violet,
-                title = s.pick("Шифрование на устройстве", "On-device encryption"),
-                subtitle = s.pick("SQLCipher и биометрия, облако по желанию", "SQLCipher and biometrics, cloud is optional")
+                title = s.getString(R.string.on_device_encryption),
+                subtitle = s.getString(R.string.sqlcipher_and_biometrics_cloud_is)
             )
         }
 
         Spacer(modifier = Modifier.height(36.dp))
 
         KakeiButton(
-            text = s.authContinueOffline,
+            text = s.getString(R.string.auth_continue_offline),
             icon = Icons.Outlined.Lock,
             onClick = { repository.enterOfflineAutonomousMode() },
             modifier = Modifier.fillMaxWidth(),
@@ -218,7 +218,7 @@ fun AuthScreen(
         )
         Spacer(modifier = Modifier.height(12.dp))
         KakeiButton(
-            text = s.pick("Войти в Kakei Cloud", "Sign in to Kakei Cloud"),
+            text = s.getString(R.string.sign_in_to_kakei_cloud),
             icon = Icons.Outlined.Cloud,
             kind = KakeiButtonKind.OUTLINE,
             onClick = { showCloudForm = true },
@@ -227,10 +227,7 @@ fun AuthScreen(
         )
         Spacer(modifier = Modifier.height(14.dp))
         Text(
-            text = s.pick(
-                "Данные остаются на телефоне, пока вы не включите синхронизацию",
-                "Your data stays on the phone until you turn on sync"
-            ),
+            text = s.getString(R.string.your_data_stays_on_the),
             style = MaterialTheme.typography.bodySmall,
             color = c.faint,
             textAlign = TextAlign.Center
@@ -259,7 +256,7 @@ private fun CodeStepCard(
     onValueChange: (String) -> Unit,
     onConfirm: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -275,7 +272,7 @@ private fun CodeStepCard(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
-        KakeiButton(text = s.confirmCategory, onClick = onConfirm, modifier = Modifier.fillMaxWidth())
+        KakeiButton(text = s.getString(R.string.confirm_category), onClick = onConfirm, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -285,7 +282,7 @@ private fun CloudSignInCard(
     settings: AppSettingsState,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var isLoginTab by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
@@ -303,7 +300,7 @@ private fun CloudSignInCard(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         KakeiSegmented(
-            options = listOf(s.authLoginTab, s.authRegisterTab),
+            options = listOf(s.getString(R.string.auth_login_tab), s.getString(R.string.auth_register_tab)),
             selectedIndex = if (isLoginTab) 0 else 1,
             onSelect = { isLoginTab = it == 0 }
         )
@@ -311,13 +308,13 @@ private fun CloudSignInCard(
         OutlinedTextField(
             value = serverUrl,
             onValueChange = { serverUrl = it },
-            label = { Text(s.authServerUrlLabel) },
+            label = { Text(s.getString(R.string.auth_server_url_label)) },
             placeholder = { Text("https://kakei.example.com") },
             trailingIcon = {
                 IconButton(onClick = { repository.setServerBaseUrl(serverUrl) }) {
                     Icon(
                         imageVector = Icons.Outlined.CloudSync,
-                        contentDescription = s.pick("Проверить сервер", "Test server"),
+                        contentDescription = s.getString(R.string.test_server),
                         tint = c.mint
                     )
                 }
@@ -330,14 +327,14 @@ private fun CloudSignInCard(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text(s.authNameLabel) },
+                label = { Text(s.getString(R.string.auth_name_label)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
 
             // Base Currency selector
             Text(
-                text = s.authDefaultCurrencyLabel,
+                text = s.getString(R.string.auth_default_currency_label),
                 style = MaterialTheme.typography.labelLarge,
                 color = c.muted
             )
@@ -360,7 +357,7 @@ private fun CloudSignInCard(
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text(s.authEmailLabel) },
+            label = { Text(s.getString(R.string.auth_email_label)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -368,7 +365,7 @@ private fun CloudSignInCard(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text(s.authPasswordLabel) },
+            label = { Text(s.getString(R.string.auth_password_label)) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
@@ -406,14 +403,14 @@ private fun CloudSignInCard(
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Text(
-                text = if (isLoginTab) s.authSignInButton else s.authSignUpButton,
+                text = if (isLoginTab) s.getString(R.string.auth_sign_in_button) else s.getString(R.string.auth_sign_up_button),
                 style = MaterialTheme.typography.titleMedium
             )
         }
 
         if (isLoginTab) {
             KakeiButton(
-                text = s.pick("Войти с passkey", "Sign in with a passkey"),
+                text = s.getString(R.string.sign_in_with_a_passkey),
                 icon = Icons.Outlined.Key,
                 kind = KakeiButtonKind.OUTLINE,
                 onClick = {

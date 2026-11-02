@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Budget bars show the end-of-period forecast at the current pace, with "At risk" and "Over" badges.
 
 ### Changed
+- Interface strings moved from the `AppStrings` Kotlin dictionary and inline RU/EN pairs to Android string resources (`res/values`, `res/values-ru`), with proper Russian plural forms. The interface language is applied as the per-app locale, so it can also be changed in the system's per-app language settings on Android 13+.
 - The record editor's main page keeps only the type, amount, account, category and keypad; payee, note, date and time, labels, clearing status and splits moved to a separate details page, summarised in a "Details" row. The keypad and save button sit at the bottom of the screen, and the amount takes the space left above them.
 - Home follows the wallet screens design: a "Home" header with search, notifications and the profile avatar; the net worth card shows the month delta and the month's income and expense; accounts are a two-column grid where a tap opens the account's records; the latest five records sit in one card.
 - The budgets summary shows a usage ring with the amount left in the month; budget cards are compact and the "Create budget" button is pinned at the bottom.

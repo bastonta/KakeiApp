@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,7 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.remote.dto.AccountDto
@@ -68,7 +69,7 @@ fun AutoCaptureCard(
     accounts: List<AccountDto>,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val context = LocalContext.current
     var permissions by remember { mutableStateOf(readCapturePermissions(context)) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permissions = readCapturePermissions(context) }
@@ -88,23 +89,23 @@ fun AutoCaptureCard(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = s.autoCaptureTitle,
+            text = s.getString(R.string.auto_capture_title),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface
         )
 
-        PermissionRow(s.autoCaptureSmsPermission, permissions.receiveSms, s.grantPermissionButton) {
+        PermissionRow(s.getString(R.string.auto_capture_sms_permission), permissions.receiveSms, s.getString(R.string.grant_permission_button)) {
             permissionLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS))
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            PermissionRow(s.autoCaptureNotificationPermission, permissions.postNotifications, s.grantPermissionButton) {
+            PermissionRow(s.getString(R.string.auto_capture_notification_permission), permissions.postNotifications, s.getString(R.string.grant_permission_button)) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
             }
         }
-        PermissionRow(s.autoCaptureListenerAccess, permissions.notificationListener, s.openSettingsButton) {
+        PermissionRow(s.getString(R.string.auto_capture_listener_access), permissions.notificationListener, s.getString(R.string.open_settings_button)) {
             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
-        PermissionRow(s.autoCaptureOverlayAccess, permissions.overlay, s.openSettingsButton) {
+        PermissionRow(s.getString(R.string.auto_capture_overlay_access), permissions.overlay, s.getString(R.string.open_settings_button)) {
             context.startActivity(
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri())
             )
@@ -112,7 +113,7 @@ fun AutoCaptureCard(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         Text(
-            text = s.captureDefaultAccountLabel,
+            text = s.getString(R.string.capture_default_account_label),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -123,7 +124,7 @@ fun AutoCaptureCard(
             FilterChip(
                 selected = settings.captureDefaultAccountId == null,
                 onClick = { repository.setDefaultCaptureAccount(null) },
-                label = { Text(s.captureNoDefaultAccount) }
+                label = { Text(s.getString(R.string.capture_no_default_account)) }
             )
             usableAccounts.forEach { acc ->
                 FilterChip(
@@ -137,7 +138,7 @@ fun AutoCaptureCard(
         if (pendingCaptures.isNotEmpty()) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
             Text(
-                text = "${s.pendingCapturesTitle} (${pendingCaptures.size})",
+                text = "${s.getString(R.string.pending_captures_title)} (${pendingCaptures.size})",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -150,7 +151,7 @@ fun AutoCaptureCard(
 
 @Composable
 private fun PermissionRow(title: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -159,7 +160,7 @@ private fun PermissionRow(title: String, granted: Boolean, actionLabel: String, 
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(title, color = MaterialTheme.colorScheme.onSurface)
             Text(
-                text = if (granted) s.permissionGranted else s.permissionMissing,
+                text = if (granted) s.getString(R.string.permission_granted) else s.getString(R.string.permission_missing),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (granted) KakeiTheme.colors.mint else MaterialTheme.colorScheme.error
             )
@@ -176,7 +177,7 @@ private fun PendingCaptureRow(
     accounts: List<AccountDto>,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     var rememberSender by remember(capture.id) { mutableStateOf(!capture.sender.isNullOrBlank()) }
     val matching = accounts.filter { it.currency.equals(capture.currency, ignoreCase = true) }
 
@@ -190,7 +191,7 @@ private fun PendingCaptureRow(
             text = listOfNotNull(
                 capture.sender,
                 CurrencyFormatter.formatShortDate(capture.bookingDate),
-                s.pendingCaptureCurrencyMismatch.takeIf { capture.reason == "CURRENCY_MISMATCH" }
+                s.getString(R.string.pending_capture_currency_mismatch).takeIf { capture.reason == "CURRENCY_MISMATCH" }
             ).joinToString(" · ") + "\n" + capture.rawText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -207,12 +208,12 @@ private fun PendingCaptureRow(
                     label = { Text(acc.name) }
                 )
             }
-            TextButton(onClick = { repository.dismissPendingCapture(capture.id) }) { Text(s.dismissButton) }
+            TextButton(onClick = { repository.dismissPendingCapture(capture.id) }) { Text(s.getString(R.string.dismiss_button)) }
         }
         if (!capture.sender.isNullOrBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = rememberSender, onCheckedChange = { rememberSender = it })
-                Text(s.pendingCaptureRemember, style = MaterialTheme.typography.bodySmall)
+                Text(s.getString(R.string.pending_capture_remember), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -227,7 +228,7 @@ fun ExchangeRatesCard(
     settings: AppSettingsState,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val response by repository.exchangeRates.collectAsState()
     val book by repository.rateBook.collectAsState()
     val base = settings.profile.defaultCurrency.uppercase(Locale.ROOT)
@@ -247,7 +248,7 @@ fun ExchangeRatesCard(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = s.exchangeRatesTitle,
+            text = s.getString(R.string.exchange_rates_title),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -255,14 +256,14 @@ fun ExchangeRatesCard(
         val listed = currencies.filter { it != base }
         val anyKnown = listed.any { book.rate(it, base) != null }
         if (!anyKnown) {
-            Text(s.exchangeRatesEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(s.getString(R.string.exchange_rates_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         listed.forEach { cur ->
             val rate = book.rate(cur, base) ?: return@forEach
             val manual = book.overrides.containsKey(cur to base) || book.overrides.containsKey(base to cur)
             Text(
                 text = "1 $cur = ${CurrencyFormatter.formatRate(rate)} $base" +
-                    if (manual) " · ${s.exchangeRateManualBadge}" else "",
+                    if (manual) " · ${s.getString(R.string.exchange_rate_manual_badge)}" else "",
                 color = if (manual) KakeiTheme.colors.mint else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -276,18 +277,18 @@ fun ExchangeRatesCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "1 ${ov.fromCurrency} = ${CurrencyFormatter.formatRate(ov.rate)} ${ov.toCurrency} · ${s.exchangeRateManualBadge}",
+                        text = "1 ${ov.fromCurrency} = ${CurrencyFormatter.formatRate(ov.rate)} ${ov.toCurrency} · ${s.getString(R.string.exchange_rate_manual_badge)}",
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = { repository.resetExchangeRateOverride(ov.fromCurrency, ov.toCurrency) }) {
-                        Text(s.exchangeRateResetButton)
+                        Text(s.getString(R.string.exchange_rate_reset_button))
                     }
                 }
             }
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-        Text(s.exchangeRateFromLabel, style = MaterialTheme.typography.labelLarge)
+        Text(s.getString(R.string.exchange_rate_from_label), style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -296,7 +297,7 @@ fun ExchangeRatesCard(
                 FilterChip(selected = fromCurrency == cur, onClick = { fromCurrency = cur }, label = { Text(cur) })
             }
         }
-        Text(s.exchangeRateToLabel, style = MaterialTheme.typography.labelLarge)
+        Text(s.getString(R.string.exchange_rate_to_label), style = MaterialTheme.typography.labelLarge)
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -309,7 +310,7 @@ fun ExchangeRatesCard(
         OutlinedTextField(
             value = rateInput,
             onValueChange = { rateInput = it },
-            label = { Text("${s.transferRateLabel}: 1 $fromCurrency = ? $toCurrency") },
+            label = { Text("${s.getString(R.string.transfer_rate_label)}: 1 $fromCurrency = ? $toCurrency") },
             placeholder = {
                 book.rate(fromCurrency, toCurrency)?.let {
                     Text(it.setScale(4, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString())
@@ -329,7 +330,7 @@ fun ExchangeRatesCard(
             enabled = parsedRate != null && fromCurrency != toCurrency && settings.isAuthenticated,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(s.exchangeRateSetButton)
+            Text(s.getString(R.string.exchange_rate_set_button))
         }
     }
 }

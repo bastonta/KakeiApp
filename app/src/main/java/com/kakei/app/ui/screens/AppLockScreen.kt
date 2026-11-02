@@ -12,9 +12,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
 import com.kakei.app.ui.components.KakeiButton
 import com.kakei.app.ui.theme.KakeiTheme
 
@@ -27,7 +28,7 @@ fun AppLockScreen(
     errorMessage: String?,
     onUnlock: () -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
 
     Column(
@@ -50,14 +51,14 @@ fun AppLockScreen(
         }
         Spacer(modifier = Modifier.height(24.dp))
         Text(
-            s.pick("Kakei заблокирован", "Kakei is locked"),
+            s.getString(R.string.kakei_is_locked),
             style = MaterialTheme.typography.headlineMedium,
             color = c.text,
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            s.pick("Подтвердите личность, чтобы продолжить", "Confirm it's you to continue"),
+            s.getString(R.string.confirm_it_s_you_to),
             style = MaterialTheme.typography.bodyMedium,
             color = c.muted,
             textAlign = TextAlign.Center
@@ -73,7 +74,7 @@ fun AppLockScreen(
         }
         Spacer(modifier = Modifier.height(32.dp))
         KakeiButton(
-            text = s.pick("Разблокировать", "Unlock"),
+            text = s.getString(R.string.unlock),
             onClick = onUnlock,
             modifier = Modifier.fillMaxWidth()
         )

@@ -1,5 +1,6 @@
 package com.kakei.app.ui.screens
 
+import android.content.res.Resources
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,15 +31,18 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kakei.app.core.i18n.AppLanguage
-import com.kakei.app.core.i18n.AppStrings
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
+import com.kakei.app.core.i18n.days
+import com.kakei.app.core.i18n.obligationPeriod
+import com.kakei.app.core.i18n.operationType
+import com.kakei.app.core.i18n.period
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.data.repository.KakeiRepository
@@ -50,12 +54,12 @@ import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneOffset
 import java.time.Month
 import java.time.YearMonth
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.time.format.TextStyle
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /** Category slices shown in the donut before the rest are grouped into "Other". */
@@ -82,7 +86,7 @@ fun InsightsAndBudgetsScreen(
     insights: InsightsSummaryDto,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var subTab by rememberSaveable { mutableIntStateOf(0) }
     var showCreateBudgetDialog by remember { mutableStateOf(false) }
@@ -96,10 +100,10 @@ fun InsightsAndBudgetsScreen(
             .background(c.bg)
     ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            ScreenHeader(title = s.navInsights)
+            ScreenHeader(title = s.getString(R.string.nav_insights))
             Spacer(modifier = Modifier.height(10.dp))
             KakeiSegmented(
-                options = listOf(s.tabAnalytics, s.tabBudgets, s.tabPlanning),
+                options = listOf(s.getString(R.string.tab_analytics), s.getString(R.string.tab_budgets), s.getString(R.string.tab_planning)),
                 selectedIndex = subTab,
                 onSelect = { subTab = it }
             )
@@ -151,19 +155,19 @@ fun InsightsAndBudgetsScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateBudgetDialog = false },
-            title = { Text(s.createBudgetButton) },
+            title = { Text(s.getString(R.string.create_budget_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = bName,
                         onValueChange = { bName = it },
-                        label = { Text(s.pick("Название конверта", "Envelope Name")) },
+                        label = { Text(s.getString(R.string.envelope_name)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = bLimit,
                         onValueChange = { bLimit = it },
-                        label = { Text(s.pick("Лимит ($baseCurrency)", "Budget Limit ($baseCurrency)")) },
+                        label = { Text(s.getString(R.string.budget_limit, baseCurrency)) },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -171,7 +175,7 @@ fun InsightsAndBudgetsScreen(
                             KakeiChip(text = s.period(p), selected = bPeriod == p, onClick = { bPeriod = p })
                         }
                     }
-                    Text(s.categoryLabel, style = MaterialTheme.typography.labelLarge, color = c.muted)
+                    Text(s.getString(R.string.category_label), style = MaterialTheme.typography.labelLarge, color = c.muted)
                     // A group covers its subcategories, like the server-side budget totals.
                     CategoryPickerRow(
                         categories = categories,
@@ -201,12 +205,12 @@ fun InsightsAndBudgetsScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateBudgetDialog = false }) {
-                    Text(s.cancelButton)
+                    Text(s.getString(R.string.cancel_button))
                 }
             }
         )
@@ -232,19 +236,19 @@ fun InsightsAndBudgetsScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateObligationDialog = false },
-            title = { Text(if (editing != null) s.pick("Изменить платёж", "Edit payment") else s.createObligationButton) },
+            title = { Text(if (editing != null) s.getString(R.string.edit_payment) else s.getString(R.string.create_obligation_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text(s.pick("Название / получатель", "Title / Payee")) },
+                        label = { Text(s.getString(R.string.title_payee)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("${s.amountLabel} ($dialogCurrency)") },
+                        label = { Text("${s.getString(R.string.amount_label)} ($dialogCurrency)") },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -269,7 +273,7 @@ fun InsightsAndBudgetsScreen(
                         Icon(Icons.Outlined.CalendarMonth, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            s.pick("Начать с ", "Start on ") +
+                            s.getString(R.string.start_on) +
                                 (shortDate(startDate.toString(), s, withYear = true) ?: startDate.toString())
                         )
                     }
@@ -277,12 +281,9 @@ fun InsightsAndBudgetsScreen(
                         "MONTHLY" -> OutlinedTextField(
                             value = dayOfMonth,
                             onValueChange = { v -> dayOfMonth = v.filter { it.isDigit() }.take(2) },
-                            label = { Text(s.pick("День месяца (1–31)", "Day of month (1–31)")) },
+                            label = { Text(s.getString(R.string.day_of_month_1_31)) },
                             supportingText = {
-                                Text(s.pick(
-                                    "Если в месяце меньше дней — последний день месяца",
-                                    "Shorter months use their last day"
-                                ))
+                                Text(s.getString(R.string.shorter_months_use_their_last))
                             },
                             isError = dayOfMonth.toIntOrNull()?.let { it in 1..31 } != true,
                             singleLine = true,
@@ -291,7 +292,7 @@ fun InsightsAndBudgetsScreen(
                         "EVERY_N_DAYS" -> OutlinedTextField(
                             value = intervalDays,
                             onValueChange = { v -> intervalDays = v.filter { it.isDigit() }.take(4) },
-                            label = { Text(s.pick("Каждые сколько дней", "Repeat every N days")) },
+                            label = { Text(s.getString(R.string.repeat_every_n_days)) },
                             isError = intervalDays.toIntOrNull()?.let { it in 1..3660 } != true,
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -340,12 +341,12 @@ fun InsightsAndBudgetsScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateObligationDialog = false }) {
-                    Text(s.cancelButton)
+                    Text(s.getString(R.string.cancel_button))
                 }
             }
         )
@@ -366,10 +367,10 @@ fun InsightsAndBudgetsScreen(
                             startDate = picked
                         }
                         showStartPicker = false
-                    }) { Text(s.pick("Готово", "Done")) }
+                    }) { Text(s.getString(R.string.done)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showStartPicker = false }) { Text(s.cancelButton) }
+                    TextButton(onClick = { showStartPicker = false }) { Text(s.getString(R.string.cancel_button)) }
                 }
             ) {
                 DatePicker(state = pickerState)
@@ -395,7 +396,7 @@ private fun AnalyticsInsightsSubScreen(
     insights: InsightsSummaryDto,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val rateBook by repository.rateBook.collectAsState()
     val spendCurrency = insights.currency.ifBlank { baseCurrency }
@@ -433,10 +434,10 @@ private fun AnalyticsInsightsSubScreen(
                 categories = categories,
                 langCode = langCode,
                 currency = spendCurrency,
-                title = s.pick("Расходы по категориям", "Spending by category"),
+                title = s.getString(R.string.spending_by_category),
                 subtitle = monthName(LocalDate.now().monthValue, s),
                 delta = insights.monthOverMonthDeltaPercentage.takeIf { insights.previousMonthSpent.signum() > 0 },
-                deltaSuffix = s.pick("к прошлому", "vs last")
+                deltaSuffix = s.getString(R.string.vs_last)
             )
         }
         item { SpendingHeatmapCard(heatmaps, streaks) }
@@ -450,16 +451,16 @@ private fun AnalyticsInsightsSubScreen(
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(s.monthComparisonTitle, style = MaterialTheme.typography.titleLarge, color = c.text)
+                Text(s.getString(R.string.month_comparison_title), style = MaterialTheme.typography.titleLarge, color = c.text)
                 Row(modifier = Modifier.fillMaxWidth()) {
                     StatColumn(
-                        caption = s.pick("Текущий месяц", "Current month"),
+                        caption = s.getString(R.string.current_month),
                         value = formatMoney(insights.currentMonthSpent, insights.currency),
                         valueColor = c.text,
                         modifier = Modifier.weight(1f)
                     )
                     StatColumn(
-                        caption = s.monthEndProjectionTitle,
+                        caption = s.getString(R.string.month_end_projection_title),
                         value = formatMoney(insights.monthEndProjectedSpend, insights.currency),
                         valueColor = c.amber,
                         modifier = Modifier.weight(1f)
@@ -468,13 +469,13 @@ private fun AnalyticsInsightsSubScreen(
                 RowDivider()
                 Row(modifier = Modifier.fillMaxWidth()) {
                     StatColumn(
-                        caption = "${s.smallSpendsTitle} · ${insights.smallSpendsCount}",
+                        caption = "${s.getString(R.string.small_spends_title)} · ${insights.smallSpendsCount}",
                         value = formatMoney(insights.smallSpendsTotal, insights.currency),
                         valueColor = c.text,
                         modifier = Modifier.weight(1f)
                     )
                     StatColumn(
-                        caption = s.pick("Будни / выходные", "Weekday / weekend"),
+                        caption = s.getString(R.string.weekday_weekend),
                         value = "${CurrencyFormatter.format(insights.weekdaySpendTotal, insights.currency)} / " +
                             CurrencyFormatter.format(insights.weekendSpendTotal, insights.currency),
                         valueColor = c.text,
@@ -484,7 +485,7 @@ private fun AnalyticsInsightsSubScreen(
                 val months = heatmaps.monthlySummaries.filter { it.totalSpent > BigDecimal.ZERO }
                 if (months.isNotEmpty()) {
                     RowDivider()
-                    Text(s.pick("Расходы по месяцам за год", "Spending by month"), style = MaterialTheme.typography.labelLarge, color = c.muted)
+                    Text(s.getString(R.string.spending_by_month), style = MaterialTheme.typography.labelLarge, color = c.muted)
                     Row(
                         modifier = Modifier.horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -496,7 +497,7 @@ private fun AnalyticsInsightsSubScreen(
                                     .background(c.surf2)
                                     .padding(horizontal = 12.dp, vertical = 8.dp)
                             ) {
-                                Text(monthLabel(m.month, s.language), style = MaterialTheme.typography.labelSmall, color = c.muted)
+                                Text(monthLabel(m.month, localeFor(s)), style = MaterialTheme.typography.labelSmall, color = c.muted)
                                 Text(
                                     text = CurrencyFormatter.format(m.totalSpent, heatmaps.currency),
                                     style = MaterialTheme.typography.titleSmall,
@@ -519,7 +520,7 @@ private fun AnalyticsInsightsSubScreen(
                         .padding(vertical = 8.dp)
                 ) {
                     Text(
-                        s.topPayeesTitle,
+                        s.getString(R.string.top_payees_title),
                         style = MaterialTheme.typography.titleLarge,
                         color = c.text,
                         modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
@@ -540,7 +541,7 @@ private fun AnalyticsInsightsSubScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(payeeLabel(entry.payee, s), style = MaterialTheme.typography.titleMedium, color = c.text)
                                 Text(
-                                    s.pick("${entry.transactionCount} опер.", "${entry.transactionCount} records"),
+                                    s.getString(R.string.records_short, entry.transactionCount),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = c.muted
                                 )
@@ -570,7 +571,7 @@ private fun StatColumn(caption: String, value: String, valueColor: Color, modifi
 /** Financial Health Score card: 0..100 ring, grade and the three sub-scores as bars. */
 @Composable
 private fun HealthScoreCard(healthScore: FinancialHealthScoreDto) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val scoreColor = when {
         healthScore.overallScore >= 70 -> c.mint
@@ -601,15 +602,15 @@ private fun HealthScoreCard(healthScore: FinancialHealthScoreDto) {
             }
             Spacer(modifier = Modifier.width(18.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(s.healthScoreTitle, style = MaterialTheme.typography.titleLarge, color = c.text)
+                Text(s.getString(R.string.health_score_title), style = MaterialTheme.typography.titleLarge, color = c.text)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(healthScore.grade, style = MaterialTheme.typography.titleSmall, color = scoreColor)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(gradeLabel(healthScore.overallScore, s), style = MaterialTheme.typography.bodyMedium, color = c.muted)
                 }
-                ScoreBar(s.pick("Сбережения", "Savings"), healthScore.savingsRatePercentage, c.mint)
-                ScoreBar(s.pick("Бюджеты", "Budgets"), healthScore.budgetCompliancePercentage, c.cyan)
-                ScoreBar(s.pick("Долг / доход", "Debt / income"), healthScore.debtToIncomePercentage, c.amber)
+                ScoreBar(s.getString(R.string.savings_rate), healthScore.savingsRatePercentage, c.mint)
+                ScoreBar(s.getString(R.string.tab_budgets), healthScore.budgetCompliancePercentage, c.cyan)
+                ScoreBar(s.getString(R.string.debt_income), healthScore.debtToIncomePercentage, c.amber)
             }
         }
         if (healthScore.recommendations.isNotEmpty()) {
@@ -648,17 +649,17 @@ private fun ScoreBar(label: String, percentage: BigDecimal, color: Color) {
     }
 }
 
-private fun gradeLabel(score: Int, s: AppStrings): String = when {
-    score >= 85 -> s.pick("Отлично", "Excellent")
-    score >= 70 -> s.pick("Хорошо", "Good")
-    score >= 50 -> s.pick("Средне", "Fair")
-    else -> s.pick("Нужно внимание", "Needs attention")
+private fun gradeLabel(score: Int, s: Resources): String = when {
+    score >= 85 -> s.getString(R.string.excellent)
+    score >= 70 -> s.getString(R.string.good)
+    score >= 50 -> s.getString(R.string.fair)
+    else -> s.getString(R.string.needs_attention)
 }
 
 /** 30-day projected balance chart with planned income / payments and the obligation load. */
 @Composable
 private fun ForecastCard(forecast: CashFlowForecastDto) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val currency = forecast.baseCurrency
     val change = if (forecast.currentLiquidBalance.signum() > 0) {
@@ -677,7 +678,7 @@ private fun ForecastCard(forecast: CashFlowForecastDto) {
         Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    s.pick("Прогноз на ${forecast.horizonDays} дней", "${forecast.horizonDays}-day forecast"),
+                    s.getString(R.string.day_forecast, forecast.horizonDays),
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.muted
                 )
@@ -713,7 +714,7 @@ private fun ForecastCard(forecast: CashFlowForecastDto) {
         }
 
         if (forecast.liquidityDeficitAlert) {
-            Text(s.liquidityAlertText, style = MaterialTheme.typography.bodyMedium, color = c.coral)
+            Text(s.getString(R.string.liquidity_alert_text), style = MaterialTheme.typography.bodyMedium, color = c.coral)
         }
 
         if (forecast.dailyTimeline.size >= 2) {
@@ -723,19 +724,19 @@ private fun ForecastCard(forecast: CashFlowForecastDto) {
         RowDivider()
         Row(modifier = Modifier.fillMaxWidth()) {
             StatColumn(
-                caption = s.pick("Доходы", "Income"),
+                caption = s.getString(R.string.income),
                 value = "+" + CurrencyFormatter.format(forecast.plannedIncomeTotal, currency),
                 valueColor = c.mint,
                 modifier = Modifier.weight(1f)
             )
             StatColumn(
-                caption = s.pick("Платежи", "Payments"),
+                caption = s.getString(R.string.payments),
                 value = "−" + CurrencyFormatter.format(forecast.plannedExpenseTotal, currency),
                 valueColor = c.coral,
                 modifier = Modifier.weight(1f)
             )
             StatColumn(
-                caption = s.pick("Нагрузка", "Load"),
+                caption = s.getString(R.string.load),
                 value = "${forecast.obligationToLiquidityRatio.setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
                 valueColor = c.text,
                 modifier = Modifier.weight(0.7f)
@@ -746,7 +747,7 @@ private fun ForecastCard(forecast: CashFlowForecastDto) {
 
 @Composable
 private fun ForecastChart(forecast: CashFlowForecastDto) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val points = forecast.dailyTimeline
     val values = points.map { it.projectedBalance }
@@ -765,7 +766,7 @@ private fun ForecastChart(forecast: CashFlowForecastDto) {
     }
     val chartHeight = 130.dp
     val density = LocalDensity.current
-    val dateFormat = DateTimeFormatter.ofPattern(if (s.language == AppLanguage.RU) "d MMM" else "MMM d", localeFor(s))
+    val dateFormat = DateTimeFormatter.ofPattern(s.getString(R.string.date_pattern_day_month_short), localeFor(s))
     fun labelFor(iso: String): String =
         runCatching { dateFormat.format(LocalDate.parse(iso.take(10))).replace(".", "") }.getOrDefault(iso.take(10))
 
@@ -861,7 +862,7 @@ internal fun CategoryDonutCard(
     delta: BigDecimal?,
     deltaSuffix: String
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val catMap = remember(categories) { categories.associateBy { it.id } }
     val total = spend.fold(BigDecimal.ZERO) { acc, p -> acc + p.second }
@@ -873,14 +874,14 @@ internal fun CategoryDonutCard(
             val cat = catId?.let { catMap[it] }
             add(
                 Slice(
-                    label = cat?.localizedName(langCode) ?: s.pick("Без категории", "Uncategorized"),
+                    label = cat?.localizedName(langCode) ?: s.getString(R.string.uncategorized),
                     amount = amt,
                     color = cat?.let { categoryVisual(it).color } ?: c.faint
                 )
             )
         }
         val rest = spend.drop(DONUT_TOP_CATEGORIES).fold(BigDecimal.ZERO) { acc, p -> acc + p.second }
-        if (rest.signum() > 0) add(Slice(s.pick("Остальное", "The rest"), rest, c.faint))
+        if (rest.signum() > 0) add(Slice(s.getString(R.string.the_rest), rest, c.faint))
     }
     fun share(amount: BigDecimal): BigDecimal =
         if (total.signum() == 0) BigDecimal.ZERO else amount.multiply(BigDecimal(100)).divide(total, 0, RoundingMode.HALF_UP)
@@ -907,7 +908,7 @@ internal fun CategoryDonutCard(
         }
         if (slices.isEmpty()) {
             Text(
-                s.pick("Расходов за этот период пока нет.", "No spending in this period yet."),
+                s.getString(R.string.no_spending_in_this_period),
                 style = MaterialTheme.typography.bodyMedium,
                 color = c.muted
             )
@@ -960,7 +961,7 @@ internal fun CategoryDonutCard(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(s.pick("Всего", "Total"), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
+            Text(s.getString(R.string.total), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
             Text(formatMoney(total, currency), style = MaterialTheme.typography.headlineMedium, color = c.text, maxLines = 1)
         }
     }
@@ -969,7 +970,7 @@ internal fun CategoryDonutCard(
 /** Month calendar of daily spending intensity (0..4) with the current no-spend streak. */
 @Composable
 private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendStreakDto) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val cells = heatmaps.calendarDays
     val firstDate = cells.firstOrNull()?.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
@@ -994,7 +995,7 @@ private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendS
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                s.pick("Траты по дням", "Daily spending"),
+                s.getString(R.string.daily_spending),
                 style = MaterialTheme.typography.titleLarge,
                 color = c.text,
                 modifier = Modifier.weight(1f)
@@ -1055,15 +1056,12 @@ private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendS
             Spacer(modifier = Modifier.width(6.dp))
             val n = streaks.currentStreakDays
             Text(
-                s.pick(
-                    "$n ${ruPlural(n, "день", "дня", "дней")} без трат",
-                    "$n ${if (n == 1L) "day" else "days"} without spending"
-                ),
+                s.getQuantityString(R.plurals.days_without_spending, n.toInt(), n),
                 style = MaterialTheme.typography.titleSmall,
                 color = c.text
             )
             Spacer(modifier = Modifier.weight(1f))
-            Text(s.pick("меньше", "less"), style = MaterialTheme.typography.labelSmall, color = c.faint)
+            Text(s.getString(R.string.less), style = MaterialTheme.typography.labelSmall, color = c.faint)
             Spacer(modifier = Modifier.width(4.dp))
             (0..4).forEach { level ->
                 Box(
@@ -1075,7 +1073,7 @@ private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendS
                 )
             }
             Spacer(modifier = Modifier.width(4.dp))
-            Text(s.pick("больше", "more"), style = MaterialTheme.typography.labelSmall, color = c.faint)
+            Text(s.getString(R.string.more), style = MaterialTheme.typography.labelSmall, color = c.faint)
         }
     }
 }
@@ -1092,7 +1090,7 @@ private fun BudgetsSubScreen(
     onOpenCreate: () -> Unit,
     onDelete: (String) -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val catMap = remember(categories) { categories.associateBy { it.id } }
     var menuBudgetId by remember { mutableStateOf<String?>(null) }
@@ -1115,11 +1113,8 @@ private fun BudgetsSubScreen(
                 item {
                     EmptyStateCard(
                         icon = Icons.Outlined.AccountBalanceWallet,
-                        title = s.pick("Бюджетов пока нет", "No budgets yet"),
-                        hint = s.pick(
-                            "Задайте лимит на категории — приложение покажет остаток и безопасную сумму на день.",
-                            "Set a limit for some categories to track what's left and a safe daily amount."
-                        )
+                        title = s.getString(R.string.no_budgets_yet),
+                        hint = s.getString(R.string.set_a_limit_for_some)
                     )
                 }
             }
@@ -1137,16 +1132,16 @@ private fun BudgetsSubScreen(
                     else -> visual.color
                 }
                 val caption = when {
-                    exceeded -> s.pick("Сверх лимита на ", "Over the limit by ") +
+                    exceeded -> s.getString(R.string.over_the_limit_by) +
                         formatMoney(b.spentAmount - b.limitAmount, b.currency)
                     atRisk -> {
                         val end = shortDate(b.periodEnd, s)
-                        s.pick("Прогноз", "Forecast") + (end?.let { s.pick(" к $it", " by $it") } ?: "") +
+                        s.getString(R.string.forecast) + (end?.let { s.getString(R.string.by, it) } ?: "") +
                             ": " + formatMoney(projected!!, b.currency)
                     }
-                    projected != null -> s.pick("В пределах · прогноз ", "On track · forecast ") +
+                    projected != null -> s.getString(R.string.on_track_forecast) +
                         formatMoney(projected, b.currency)
-                    else -> "${s.period(b.periodType)} · ${s.pick("осталось", "left")} ${s.days(b.remainingDaysInPeriod)}"
+                    else -> "${s.period(b.periodType)} · ${s.getString(R.string.left)} ${s.days(b.remainingDaysInPeriod)}"
                 }
                 val limit = b.limitAmount.takeIf { it.signum() > 0 }
 
@@ -1175,7 +1170,7 @@ private fun BudgetsSubScreen(
                                     if (exceeded || atRisk) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         KakeiBadge(
-                                            text = if (exceeded) s.pick("Превышен", "Over") else s.pick("Риск превышения", "At risk"),
+                                            text = if (exceeded) s.getString(R.string.over) else s.getString(R.string.at_risk),
                                             color = barColor
                                         )
                                     }
@@ -1197,7 +1192,7 @@ private fun BudgetsSubScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    "${s.pick("из", "of")} ${CurrencyFormatter.format(b.limitAmount, b.currency).substringBeforeLast(' ')}",
+                                    "${s.getString(R.string.of)} ${CurrencyFormatter.format(b.limitAmount, b.currency).substringBeforeLast(' ')}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = c.faint,
                                     maxLines = 1
@@ -1228,7 +1223,7 @@ private fun BudgetsSubScreen(
                             )
                         }
                         DropdownMenuItem(
-                            text = { Text(s.deleteButton, color = c.coral) },
+                            text = { Text(s.getString(R.string.delete_button), color = c.coral) },
                             leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
                             onClick = {
                                 menuBudgetId = null
@@ -1241,7 +1236,7 @@ private fun BudgetsSubScreen(
         }
 
         KakeiButton(
-            text = s.pick("Создать бюджет", "Create budget"),
+            text = s.getString(R.string.create_budget),
             onClick = onOpenCreate,
             icon = Icons.Outlined.Add,
             modifier = Modifier
@@ -1265,7 +1260,7 @@ private fun projectedSpend(b: BudgetEnvelopeDto): BigDecimal? {
 
 @Composable
 private fun BudgetSummaryCard(budgets: List<BudgetEnvelopeDto>, currency: String) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val spent = budgets.fold(BigDecimal.ZERO) { acc, b -> acc + b.spentAmount }
     val limit = budgets.fold(BigDecimal.ZERO) { acc, b -> acc + b.limitAmount }
@@ -1292,16 +1287,13 @@ private fun BudgetSummaryCard(budgets: List<BudgetEnvelopeDto>, currency: String
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "${monthName(today.monthValue, s)} · " + s.pick(
-                    "осталось $daysLeft ${ruPlural(daysLeft, "день", "дня", "дней")}",
-                    "$daysLeft ${if (daysLeft == 1L) "day" else "days"} left"
-                ),
+                "${monthName(today.monthValue, s)} · " + s.getQuantityString(R.plurals.days_left, daysLeft.toInt(), daysLeft),
                 style = MaterialTheme.typography.bodySmall,
                 color = c.muted
             )
             Text(formatMoney(remaining, currency), style = MaterialTheme.typography.headlineLarge, color = c.text, maxLines = 1)
             Text(
-                s.pick("свободно из ", "free of ") + formatMoney(limit, currency),
+                s.getString(R.string.free_of) + formatMoney(limit, currency),
                 style = MaterialTheme.typography.bodyMedium,
                 color = c.muted,
                 maxLines = 1
@@ -1324,7 +1316,7 @@ private fun PlanningSubScreen(
     onExecute: (PlannedObligationDto) -> Unit,
     onDelete: (String) -> Unit
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val catMap = remember(categories) { categories.associateBy { it.id } }
     var menuId by remember { mutableStateOf<String?>(null) }
@@ -1345,19 +1337,19 @@ private fun PlanningSubScreen(
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(s.cashFlowForecastTitle, style = MaterialTheme.typography.titleLarge, color = c.text)
+                Text(s.getString(R.string.cash_flow_forecast_title), style = MaterialTheme.typography.titleLarge, color = c.text)
                 if (forecast.liquidityDeficitAlert) {
-                    Text(s.liquidityAlertText, style = MaterialTheme.typography.bodyMedium, color = c.coral)
+                    Text(s.getString(R.string.liquidity_alert_text), style = MaterialTheme.typography.bodyMedium, color = c.coral)
                 }
                 Row(modifier = Modifier.fillMaxWidth()) {
                     StatColumn(
-                        caption = s.pick("Сейчас доступно", "Available now"),
+                        caption = s.getString(R.string.available_now),
                         value = formatMoney(forecast.currentLiquidBalance, forecast.baseCurrency),
                         valueColor = c.text,
                         modifier = Modifier.weight(1f)
                     )
                     StatColumn(
-                        caption = s.pick("Через ${forecast.horizonDays} дней", "In ${forecast.horizonDays} days"),
+                        caption = s.getString(R.string.in_days, forecast.horizonDays),
                         value = formatMoney(forecast.forecastedEndBalance, forecast.baseCurrency),
                         valueColor = if (forecast.liquidityDeficitAlert) c.coral else c.mint,
                         modifier = Modifier.weight(1f)
@@ -1367,18 +1359,15 @@ private fun PlanningSubScreen(
         }
 
         item {
-            SectionHeader(title = s.pick("Регулярные платежи", "Planned payments"))
+            SectionHeader(title = s.getString(R.string.planned_payments))
         }
 
         if (obligations.isEmpty()) {
             item {
                 EmptyStateCard(
                     icon = Icons.Outlined.EventRepeat,
-                    title = s.pick("Регулярных платежей нет", "No planned payments"),
-                    hint = s.pick(
-                        "Добавьте аренду, подписки или зарплату, чтобы прогноз учитывал их.",
-                        "Add rent, subscriptions or salary so the forecast accounts for them."
-                    )
+                    title = s.getString(R.string.no_planned_payments),
+                    hint = s.getString(R.string.add_rent_subscriptions_or_salary)
                 )
             }
         } else {
@@ -1405,7 +1394,7 @@ private fun PlanningSubScreen(
                             )
                             DropdownMenu(expanded = menuId == ob.id, onDismissRequest = { menuId = null }) {
                                 DropdownMenuItem(
-                                    text = { Text(s.pick("Изменить", "Edit")) },
+                                    text = { Text(s.getString(R.string.edit)) },
                                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                     onClick = {
                                         menuId = null
@@ -1413,7 +1402,7 @@ private fun PlanningSubScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(s.executeNowButton) },
+                                    text = { Text(s.getString(R.string.execute_now_button)) },
                                     leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null) },
                                     onClick = {
                                         menuId = null
@@ -1421,7 +1410,7 @@ private fun PlanningSubScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(s.deleteButton, color = c.coral) },
+                                    text = { Text(s.getString(R.string.delete_button), color = c.coral) },
                                     leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
                                     onClick = {
                                         menuId = null
@@ -1436,7 +1425,7 @@ private fun PlanningSubScreen(
         }
 
         item {
-            DashedAddButton(text = s.createObligationButton, onClick = onOpenCreate)
+            DashedAddButton(text = s.getString(R.string.create_obligation_button), onClick = onOpenCreate)
         }
     }
 }
@@ -1446,11 +1435,10 @@ private fun Modifier.combinedClickableCompat(onOpen: () -> Unit): Modifier =
     this.combinedClickable(onClick = onOpen, onLongClick = onOpen)
 
 /** Short month name for the yearly matrix, e.g. "окт." / "Oct". */
-private fun monthLabel(month: Int, language: AppLanguage): String {
-    val locale = if (language == AppLanguage.RU) Locale.forLanguageTag("ru") else Locale.ENGLISH
+private fun monthLabel(month: Int, locale: Locale): String {
     return Month.of(month.coerceIn(1, 12)).getDisplayName(TextStyle.SHORT_STANDALONE, locale)
 }
 
 /** The server reports records without a payee as "Unknown Merchant"; show that in the UI language. */
-private fun payeeLabel(payee: String, s: AppStrings): String =
-    if (payee.isBlank() || payee == "Unknown Merchant") s.pick("Без получателя", "Unknown Merchant") else payee
+private fun payeeLabel(payee: String, s: Resources): String =
+    if (payee.isBlank() || payee == "Unknown Merchant") s.getString(R.string.unknown_merchant) else payee

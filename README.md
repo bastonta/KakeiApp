@@ -56,7 +56,7 @@
   - Export of transaction records to CSV and full encrypted database snapshots (AES-256-GCM + PBKDF2).
 - **🌍 Multi-Currency & Bilingual UI**:
   - ISO 4217 currencies (`KZT`, `USD`, `EUR`, `RUB`, `GBP`, `JPY`) with real-time base currency conversion.
-  - Localization in **Russian** (default) and **English** (`AppStrings`).
+  - Localization in **Russian** (default) and **English** via `res/values/strings.xml` and `res/values-ru/strings.xml`, applied as the per-app language (also selectable in Android 13+ system settings).
 - **🛡️ Biometric Security**:
   - App launch protection powered by `androidx.biometric.BiometricPrompt`.
 
@@ -76,7 +76,7 @@ KakeiApp/
 │   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
 │   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
-│   │   │   │   │   ├── i18n/AppStrings.kt            # String localization (RU, EN)
+│   │   │   │   │   ├── i18n/                         # AppLanguage + Resources label helpers (strings live in res/values*)
 │   │   │   │   │   ├── security/SecurityHelpers.kt   # AndroidKeyStore, biometric auth, AES-256-GCM backup crypto
 │   │   │   │   │   └── util/                         # HashDedupCalculator, CurrencyFormatter
 │   │   │   │   ├── data/                             # Data persistence & network synchronization

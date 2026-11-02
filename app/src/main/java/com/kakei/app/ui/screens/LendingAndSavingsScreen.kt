@@ -20,11 +20,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kakei.app.core.i18n.LocalAppStrings
+import com.kakei.app.R
+import com.kakei.app.core.i18n.days
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.LendingListResponse
 import com.kakei.app.data.remote.dto.LendingRecordDto
@@ -51,7 +53,7 @@ fun LendingScreen(
     repository: KakeiRepository,
     openSplitBillInitially: Boolean = false
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     val context = LocalContext.current
 
@@ -82,10 +84,10 @@ fun LendingScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            ScreenHeader(title = s.navLending) {
+            ScreenHeader(title = s.getString(R.string.nav_lending)) {
                 CircleIconButton(
                     icon = Icons.Outlined.Search,
-                    contentDescription = s.pick("Поиск", "Search"),
+                    contentDescription = s.getString(R.string.search),
                     onClick = {
                         searchVisible = !searchVisible
                         if (!searchVisible) searchQuery = ""
@@ -99,7 +101,7 @@ fun LendingScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text(s.pick("Имя", "Name")) },
+                    placeholder = { Text(s.getString(R.string.person_name_short)) },
                     leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
@@ -121,7 +123,7 @@ fun LendingScreen(
             ) {
                 Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(s.owedToMeTitle, style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                        Text(s.getString(R.string.owed_to_me_title), style = MaterialTheme.typography.bodyMedium, color = c.muted)
                         Text(
                             formatMoney(lendingResponse.totalOwedToMe, baseCurrency),
                             style = MaterialTheme.typography.headlineLarge,
@@ -131,7 +133,7 @@ fun LendingScreen(
                     }
                     VerticalDivider(color = c.line, modifier = Modifier.padding(horizontal = 14.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(s.owedByMeTitle, style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                        Text(s.getString(R.string.owed_by_me_title), style = MaterialTheme.typography.bodyMedium, color = c.muted)
                         Text(
                             formatMoney(lendingResponse.totalOwedByMe, baseCurrency),
                             style = MaterialTheme.typography.headlineLarge,
@@ -142,7 +144,7 @@ fun LendingScreen(
                 }
                 RowDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(s.netPositionTitle, style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
+                    Text(s.getString(R.string.net_position_title), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
                     Text(
                         formatMoney(lendingResponse.netPosition, baseCurrency, showPlus = true),
                         style = MaterialTheme.typography.titleLarge,
@@ -155,16 +157,16 @@ fun LendingScreen(
         // 2. Quick actions
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickAction(Icons.Outlined.NorthEast, c.mint, s.pick("Дать в долг", "Lend"), Modifier.weight(1f)) {
+                QuickAction(Icons.Outlined.NorthEast, c.mint, s.getString(R.string.lend), Modifier.weight(1f)) {
                     createType = "LENT"
                 }
-                QuickAction(Icons.Outlined.SouthWest, c.coral, s.pick("Взять", "Borrow"), Modifier.weight(1f)) {
+                QuickAction(Icons.Outlined.SouthWest, c.coral, s.getString(R.string.borrow), Modifier.weight(1f)) {
                     createType = "BORROWED"
                 }
-                QuickAction(Icons.Outlined.People, c.cyan, s.pick("Разделить", "Split"), Modifier.weight(1f)) {
+                QuickAction(Icons.Outlined.People, c.cyan, s.getString(R.string.split), Modifier.weight(1f)) {
                     showSplitDialog = true
                 }
-                QuickAction(Icons.Outlined.Check, c.violet, s.pick("Закрыть всё", "Settle all"), Modifier.weight(1f)) {
+                QuickAction(Icons.Outlined.Check, c.violet, s.getString(R.string.settle_all), Modifier.weight(1f)) {
                     showSettleAllDialog = true
                 }
             }
@@ -173,9 +175,9 @@ fun LendingScreen(
         item {
             KakeiSegmented(
                 options = listOf(
-                    "${s.pick("Дал", "Lent")} · ${lent.size}",
-                    "${s.pick("Взял", "Borrowed")} · ${borrowed.size}",
-                    s.pick("Закрытые", "Closed")
+                    "${s.getString(R.string.lent)} · ${lent.size}",
+                    "${s.getString(R.string.borrowed)} · ${borrowed.size}",
+                    s.getString(R.string.closed)
                 ),
                 selectedIndex = filter,
                 onSelect = { filter = it }
@@ -186,11 +188,8 @@ fun LendingScreen(
             item {
                 EmptyStateCard(
                     icon = Icons.Outlined.Handshake,
-                    title = if (lendingResponse.items.isEmpty()) s.pick("Долгов нет", "No debts") else s.pick("Здесь пусто", "Nothing here"),
-                    hint = s.pick(
-                        "Запишите, кому вы дали или у кого взяли в долг, или разделите общий счёт.",
-                        "Record money you lent or borrowed, or split a shared bill."
-                    )
+                    title = if (lendingResponse.items.isEmpty()) s.getString(R.string.no_debts) else s.getString(R.string.nothing_here),
+                    hint = s.getString(R.string.record_money_you_lent_or)
                 )
             }
         }
@@ -226,17 +225,17 @@ fun LendingScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = shortDate(item.dueDate, s)?.let { s.pick("до $it", "due $it") } ?: s.pick("без срока", "no due date"),
+                                text = shortDate(item.dueDate, s)?.let { s.getString(R.string.lending_due, it) } ?: s.getString(R.string.no_due_date),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = c.muted
                             )
                             if (overdueDays != null) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                KakeiBadge(text = s.pick("Просрочено ${s.days(overdueDays)}", "Overdue ${s.days(overdueDays)}"), color = c.coral)
+                                KakeiBadge(text = s.getString(R.string.overdue, s.days(overdueDays)), color = c.coral)
                             }
                             if (!isOpen) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                KakeiBadge(text = if (item.isForgiven) s.forgivenBadge else s.settledBadge, color = c.muted)
+                                KakeiBadge(text = if (item.isForgiven) s.getString(R.string.forgiven_badge) else s.getString(R.string.settled_badge), color = c.muted)
                             }
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -247,7 +246,7 @@ fun LendingScreen(
                             )
                             if (isOpen) {
                                 Text(
-                                    "${s.pick("из", "of")} ${CurrencyFormatter.format(item.principalAmount, item.currency)}",
+                                    "${s.getString(R.string.of)} ${CurrencyFormatter.format(item.principalAmount, item.currency)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = c.faint
                                 )
@@ -263,7 +262,7 @@ fun LendingScreen(
                         KakeiProgressBar(progress = progress, color = accent, height = 6.dp)
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             KakeiButton(
-                                text = s.recordRepaymentButton,
+                                text = s.getString(R.string.record_repayment_button),
                                 icon = Icons.Outlined.Download,
                                 kind = KakeiButtonKind.TONAL,
                                 color = accent,
@@ -271,19 +270,16 @@ fun LendingScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             KakeiButton(
-                                text = s.pick("Напомнить", "Remind"),
+                                text = s.getString(R.string.remind),
                                 icon = Icons.Outlined.IosShare,
                                 kind = KakeiButtonKind.OUTLINE,
                                 onClick = {
-                                    val shareText = s.pick(
-                                        "${item.personName}, напоминание из Kakei: остаток долга ${CurrencyFormatter.format(item.outstandingAmount, item.currency)}.",
-                                        "Hi ${item.personName}, friendly reminder via Kakei: outstanding balance is ${CurrencyFormatter.format(item.outstandingAmount, item.currency)}."
-                                    )
+                                    val shareText = s.getString(R.string.hi_friendly_reminder_via_kakei, item.personName, CurrencyFormatter.format(item.outstandingAmount, item.currency))
                                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_TEXT, shareText)
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, s.pick("Отправить напоминание", "Send Reminder")))
+                                    context.startActivity(Intent.createChooser(sendIntent, s.getString(R.string.send_reminder)))
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -292,7 +288,7 @@ fun LendingScreen(
                 }
                 DropdownMenu(expanded = menuId == item.id, onDismissRequest = { menuId = null }) {
                     DropdownMenuItem(
-                        text = { Text(s.forgiveDebtButton) },
+                        text = { Text(s.getString(R.string.forgive_debt_button)) },
                         leadingIcon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
                         onClick = {
                             menuId = null
@@ -306,7 +302,7 @@ fun LendingScreen(
         if (open.isNotEmpty()) {
             item {
                 Text(
-                    s.pick("Удерживайте карточку, чтобы простить долг", "Long-press a card to forgive a debt"),
+                    s.getString(R.string.long_press_a_card_to),
                     style = MaterialTheme.typography.bodySmall,
                     color = c.faint,
                     textAlign = TextAlign.Center,
@@ -326,29 +322,29 @@ fun LendingScreen(
 
         AlertDialog(
             onDismissRequest = { createType = null },
-            title = { Text(s.addLendingButton) },
+            title = { Text(s.getString(R.string.add_lending_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = person,
                         onValueChange = { person = it },
-                        label = { Text(s.pick("Имя", "Person Name")) },
+                        label = { Text(s.getString(R.string.person_name)) },
                         singleLine = true
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        KakeiChip(text = s.lentType, selected = lType == "LENT", color = c.mint, onClick = { lType = "LENT" })
-                        KakeiChip(text = s.borrowedType, selected = lType == "BORROWED", color = c.coral, onClick = { lType = "BORROWED" })
+                        KakeiChip(text = s.getString(R.string.lent_type), selected = lType == "LENT", color = c.mint, onClick = { lType = "LENT" })
+                        KakeiChip(text = s.getString(R.string.borrowed_type), selected = lType == "BORROWED", color = c.coral, onClick = { lType = "BORROWED" })
                     }
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("${s.amountLabel} ($baseCurrency)") },
+                        label = { Text("${s.getString(R.string.amount_label)} ($baseCurrency)") },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
-                        label = { Text(s.noteLabel) },
+                        label = { Text(s.getString(R.string.note_label)) },
                         singleLine = true
                     )
                 }
@@ -370,11 +366,11 @@ fun LendingScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { createType = null }) { Text(s.cancelButton) }
+                TextButton(onClick = { createType = null }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -384,33 +380,33 @@ fun LendingScreen(
         var total by remember { mutableStateOf("30000") }
         var namesCsv by remember { mutableStateOf("Тимур, Алия, Данияр") }
         var includeSelf by remember { mutableStateOf(true) }
-        var note by remember { mutableStateOf(s.pick("Общий ужин", "Shared Dinner")) }
+        var note by remember { mutableStateOf(s.getString(R.string.shared_dinner)) }
 
         AlertDialog(
             onDismissRequest = { showSplitDialog = false },
-            title = { Text(s.splitExpenseButton) },
+            title = { Text(s.getString(R.string.split_expense_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = total,
                         onValueChange = { total = it },
-                        label = { Text(s.pick("Сумма счёта ($baseCurrency)", "Total Bill ($baseCurrency)")) },
+                        label = { Text(s.getString(R.string.total_bill, baseCurrency)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = namesCsv,
                         onValueChange = { namesCsv = it },
-                        label = { Text(s.pick("Участники (через запятую)", "Participants (comma separated)")) }
+                        label = { Text(s.getString(R.string.participants_comma_separated)) }
                     )
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
-                        label = { Text(s.noteLabel) },
+                        label = { Text(s.getString(R.string.note_label)) },
                         singleLine = true
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = includeSelf, onCheckedChange = { includeSelf = it })
-                        Text(s.pick("Учесть и мою долю", "Include my own share"))
+                        Text(s.getString(R.string.include_my_own_share))
                     }
                 }
             },
@@ -425,11 +421,11 @@ fun LendingScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSplitDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showSplitDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -441,13 +437,13 @@ fun LendingScreen(
 
         AlertDialog(
             onDismissRequest = { showSettleAllDialog = false },
-            title = { Text(s.settleAllButton) },
+            title = { Text(s.getString(R.string.settle_all_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = chosenPerson,
                         onValueChange = { chosenPerson = it },
-                        label = { Text(s.pick("Имя", "Person Name")) },
+                        label = { Text(s.getString(R.string.person_name)) },
                         singleLine = true
                     )
                     distinctPeople.forEach { p ->
@@ -464,11 +460,11 @@ fun LendingScreen(
                         }
                     }
                 ) {
-                    Text(s.confirmCategory)
+                    Text(s.getString(R.string.confirm_category))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSettleAllDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showSettleAllDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -481,19 +477,19 @@ fun LendingScreen(
 
         AlertDialog(
             onDismissRequest = { repayTarget = null },
-            title = { Text("${s.recordRepaymentButton}: ${target.personName}") },
+            title = { Text("${s.getString(R.string.record_repayment_button)}: ${target.personName}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = repayAmt,
                         onValueChange = { repayAmt = it },
-                        label = { Text(s.pick("Сумма погашения (${target.currency})", "Repayment Amount (${target.currency})")) },
+                        label = { Text(s.getString(R.string.repayment_amount, target.currency)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = repayNote,
                         onValueChange = { repayNote = it },
-                        label = { Text(s.noteLabel) },
+                        label = { Text(s.getString(R.string.note_label)) },
                         singleLine = true
                     )
                 }
@@ -508,11 +504,11 @@ fun LendingScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { repayTarget = null }) { Text(s.cancelButton) }
+                TextButton(onClick = { repayTarget = null }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -554,7 +550,7 @@ fun SavingsScreen(
     goals: List<SavingsGoalDto>,
     repository: KakeiRepository
 ) {
-    val s = LocalAppStrings.current
+    val s = LocalResources.current
     val c = KakeiTheme.colors
     var showCreateGoalDialog by remember { mutableStateOf(false) }
     var customTarget by remember { mutableStateOf<SavingsGoalDto?>(null) }
@@ -575,7 +571,7 @@ fun SavingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            ScreenHeader(title = s.navGoals)
+            ScreenHeader(title = s.getString(R.string.nav_goals))
         }
 
         // Total saved across goals in the base currency
@@ -594,11 +590,11 @@ fun SavingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(s.pick("Накоплено всего", "Total saved"), style = MaterialTheme.typography.bodySmall, color = c.muted)
+                        Text(s.getString(R.string.total_saved), style = MaterialTheme.typography.bodySmall, color = c.muted)
                         Text(formatMoney(totalSaved, baseCurrency), style = MaterialTheme.typography.headlineLarge, color = c.text, maxLines = 1)
                         Text(
-                            "${s.pick("из", "of")} ${formatMoney(totalTarget, baseCurrency)} " +
-                                s.pick("на $n ${ruPlural(n, "цель", "цели", "целей")}", "across $n ${if (n == 1L) "goal" else "goals"}"),
+                            "${s.getString(R.string.of)} ${formatMoney(totalTarget, baseCurrency)} " +
+                                s.getQuantityString(R.plurals.across_goals, n.toInt(), n),
                             style = MaterialTheme.typography.bodyMedium,
                             color = c.muted
                         )
@@ -613,11 +609,8 @@ fun SavingsScreen(
             item {
                 EmptyStateCard(
                     icon = Icons.Outlined.Savings,
-                    title = s.pick("Целей пока нет", "No goals yet"),
-                    hint = s.pick(
-                        "Создайте цель — приложение рассчитает, сколько откладывать в день и в месяц.",
-                        "Create a goal to see how much to put aside per day and per month."
-                    )
+                    title = s.getString(R.string.no_goals_yet),
+                    hint = s.getString(R.string.create_a_goal_to_see)
                 )
             }
         }
@@ -657,8 +650,8 @@ fun SavingsScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                shortDate(goal.deadlineDate, s, withYear = true)?.let { s.pick("Цель до $it", "Due $it") }
-                                    ?: s.pick("Без срока", "No deadline"),
+                                shortDate(goal.deadlineDate, s, withYear = true)?.let { s.getString(R.string.goal_due, it) }
+                                    ?: s.getString(R.string.no_deadline),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.muted,
                                 maxLines = 1
@@ -674,21 +667,21 @@ fun SavingsScreen(
                     KakeiProgressBar(progress = goal.progressPercentage.toFloat() / 100f, color = color, height = 8.dp)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            s.pick("Накоплено ", "Saved ") + formatMoney(goal.currentAmount, goal.currency),
+                            s.getString(R.string.saved) + formatMoney(goal.currentAmount, goal.currency),
                             style = MaterialTheme.typography.labelMedium,
                             color = color,
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            s.pick("Цель ", "Target ") + formatMoney(goal.targetAmount, goal.currency),
+                            s.getString(R.string.target) + formatMoney(goal.targetAmount, goal.currency),
                             style = MaterialTheme.typography.bodySmall,
                             color = c.muted
                         )
                     }
                     goal.requiredMonthlyContribution?.takeIf { it.signum() > 0 }?.let {
                         Text(
-                            s.pick("Откладывать ", "Put aside ") +
-                                "${CurrencyFormatter.format(it, goal.currency)}${s.pick("/мес", "/mo")}",
+                            s.getString(R.string.put_aside) +
+                                "${CurrencyFormatter.format(it, goal.currency)}${s.getString(R.string.mo)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.faint
                         )
@@ -696,7 +689,7 @@ fun SavingsScreen(
                 }
                 DropdownMenu(expanded = menuId == goal.id, onDismissRequest = { menuId = null }) {
                     DropdownMenuItem(
-                        text = { Text(s.deleteButton, color = c.coral) },
+                        text = { Text(s.getString(R.string.delete_button), color = c.coral) },
                         leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
                         onClick = {
                             menuId = null
@@ -708,7 +701,7 @@ fun SavingsScreen(
         }
     }
     KakeiButton(
-        text = s.createGoalButton,
+        text = s.getString(R.string.create_goal_button),
         onClick = { showCreateGoalDialog = true },
         icon = Icons.Outlined.Add,
         color = c.violet,
@@ -725,25 +718,25 @@ fun SavingsScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateGoalDialog = false },
-            title = { Text(s.createGoalButton) },
+            title = { Text(s.getString(R.string.create_goal_button)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text(s.pick("Название цели", "Goal Title")) },
+                        label = { Text(s.getString(R.string.goal_title)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = target,
                         onValueChange = { target = it },
-                        label = { Text(s.pick("Сумма цели ($baseCurrency)", "Target Amount ($baseCurrency)")) },
+                        label = { Text(s.getString(R.string.target_amount, baseCurrency)) },
                         singleLine = true
                     )
                     OutlinedTextField(
                         value = days,
                         onValueChange = { days = it },
-                        label = { Text(s.pick("Срок, дней", "Target Days")) },
+                        label = { Text(s.getString(R.string.target_days)) },
                         singleLine = true
                     )
                 }
@@ -764,11 +757,11 @@ fun SavingsScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateGoalDialog = false }) { Text(s.cancelButton) }
+                TextButton(onClick = { showCreateGoalDialog = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }
@@ -799,7 +792,7 @@ fun SavingsScreen(
                     OutlinedTextField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("${s.amountLabel} (${customGoal.currency})") },
+                        label = { Text("${s.getString(R.string.amount_label)} (${customGoal.currency})") },
                         singleLine = true
                     )
                 }
@@ -814,11 +807,11 @@ fun SavingsScreen(
                         }
                     }
                 ) {
-                    Text(s.saveButton)
+                    Text(s.getString(R.string.save_button))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { customTarget = null }) { Text(s.cancelButton) }
+                TextButton(onClick = { customTarget = null }) { Text(s.getString(R.string.cancel_button)) }
             }
         )
     }

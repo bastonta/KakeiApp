@@ -22,7 +22,7 @@ KakeiApp/
 │   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
 │   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
-│   │   │   │   │   ├── i18n/AppStrings.kt            # String localization (RU, EN)
+│   │   │   │   │   ├── i18n/                         # AppLanguage + Resources label helpers (strings live in res/values*)
 │   │   │   │   │   ├── security/SecurityHelpers.kt   # AndroidKeyStore, biometric auth, AES-256-GCM backup crypto
 │   │   │   │   │   └── util/                         # HashDedupCalculator, CurrencyFormatter
 │   │   │   │   ├── data/                             # Data persistence & network synchronization
