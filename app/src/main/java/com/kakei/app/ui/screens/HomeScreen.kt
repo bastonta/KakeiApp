@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -72,6 +73,7 @@ fun HomeScreen(
 
     var showCreateAccountDialog by remember { mutableStateOf(false) }
     var editAccount by remember { mutableStateOf<AccountDto?>(null) }
+    var showReorderAccountsDialog by remember { mutableStateOf(false) }
     var reviewTargetRecord by remember { mutableStateOf<TransactionDto?>(null) }
     var showNoNotifications by remember { mutableStateOf(false) }
 
@@ -245,7 +247,9 @@ fun HomeScreen(
                 SectionHeader(
                     title = s.accountsTitle,
                     action = s.pick("+ Добавить", "+ Add"),
-                    onAction = { showCreateAccountDialog = true }
+                    onAction = { showCreateAccountDialog = true },
+                    secondaryAction = s.pick("Порядок", "Order").takeIf { activeAccounts.size > 1 },
+                    onSecondaryAction = { showReorderAccountsDialog = true }
                 )
                 activeAccounts.chunked(2).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -509,6 +513,18 @@ fun HomeScreen(
         )
     }
 
+    // Reorder Accounts Dialog: the order applies to Home and every account picker.
+    if (showReorderAccountsDialog) {
+        ReorderAccountsDialog(
+            accounts = activeAccounts,
+            onSave = { ids ->
+                repository.reorderAccounts(ids)
+                showReorderAccountsDialog = false
+            },
+            onDismiss = { showReorderAccountsDialog = false }
+        )
+    }
+
     // Confirm Review Dialog (POST /records/{id}/review)
     reviewTargetRecord?.let { item ->
         ReviewRecordDialog(
@@ -645,6 +661,67 @@ private fun AccountCard(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+@Composable
+private fun ReorderAccountsDialog(
+    accounts: List<AccountDto>,
+    onSave: (List<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val s = LocalAppStrings.current
+    val c = KakeiTheme.colors
+    val order = remember { accounts.toMutableStateList() }
+
+    fun move(from: Int, to: Int) {
+        if (to in order.indices) order.add(to, order.removeAt(from))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.pick("Порядок счетов", "Account order")) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                order.forEachIndexed { index, acc ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                acc.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = c.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                formatMoney(acc.currentBalance, acc.currency),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.muted
+                            )
+                        }
+                        IconButton(onClick = { move(index, index - 1) }, enabled = index > 0) {
+                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = s.pick("Выше", "Move up"))
+                        }
+                        IconButton(onClick = { move(index, index + 1) }, enabled = index < order.lastIndex) {
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = s.pick("Ниже", "Move down"))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(order.map { it.id }) }) {
+                Text(s.saveButton)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(s.cancelButton)
+            }
+        }
+    )
 }
 
 @Composable

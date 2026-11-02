@@ -386,6 +386,9 @@ class KakeiApiClient(
     suspend fun batchUpdateAccounts(req: BatchUpdateAccountsRequest): Result<BatchUpdateAccountsResponse> =
         requestJson("PATCH", "/accounts", json.encodeToString(req))
 
+    suspend fun reorderAccounts(req: ReorderAccountsRequest): Result<Unit> =
+        requestJson("PUT", "/accounts/order", json.encodeToString(req))
+
     suspend fun deleteAccountById(id: String): Result<Unit> =
         requestJson("DELETE", "/accounts/$id")
 

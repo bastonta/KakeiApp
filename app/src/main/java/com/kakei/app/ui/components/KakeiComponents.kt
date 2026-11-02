@@ -610,7 +610,10 @@ fun SectionHeader(
     modifier: Modifier = Modifier,
     action: String? = null,
     actionColor: Color = KakeiTheme.colors.muted,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    /** Extra action shown before [action], e.g. "Порядок" next to "+ Добавить". */
+    secondaryAction: String? = null,
+    onSecondaryAction: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -618,16 +621,20 @@ fun SectionHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(title, style = MaterialTheme.typography.titleLarge, color = KakeiTheme.colors.text)
-        if (action != null && onAction != null) {
-            Text(
-                text = action,
-                style = MaterialTheme.typography.labelLarge,
-                color = actionColor,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onAction)
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(secondaryAction to onSecondaryAction, action to onAction).forEach { (label, onClick) ->
+                if (label != null && onClick != null) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = actionColor,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onClick)
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                    )
+                }
+            }
         }
     }
 }

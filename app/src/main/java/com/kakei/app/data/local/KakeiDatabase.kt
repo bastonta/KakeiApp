@@ -31,7 +31,7 @@ data class SyncMutationEntity(
     val entityType: String,
     /** Local (client-generated) id of the entity the mutation targets. */
     val entityId: String,
-    /** CREATE, UPDATE, DELETE, REVIEW, EXECUTE, REPAYMENT, FORGIVE, SETTLE_ALL, CONTRIBUTION */
+    /** CREATE, UPDATE, DELETE, REORDER, REVIEW, EXECUTE, REPAYMENT, FORGIVE, SETTLE_ALL, CONTRIBUTION */
     val operation: String,
     val payloadJson: String,
     val expectedSyncRevision: Long? = null,

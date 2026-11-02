@@ -327,6 +327,8 @@ data class AccountDto(
     val isArchived: Boolean = false,
     val syncRevision: Long = 1L,
     val permissionLevel: String = "ADMIN",
+    /** Position in the user's own account order; null until they arrange it. */
+    val sortOrder: Int? = null,
     val createdAt: String = "",
     val updatedAt: String = ""
 )
@@ -360,6 +362,12 @@ data class AccountMutationItem(
 @Serializable
 data class BatchUpdateAccountsRequest(
     val items: List<AccountMutationItem>
+)
+
+/** Accounts in the desired order; ones left out sort after these. */
+@Serializable
+data class ReorderAccountsRequest(
+    val accountIds: List<String>
 )
 
 @Serializable

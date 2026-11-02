@@ -910,6 +910,13 @@ class KakeiRepository(
                 )
             }
             "ACCOUNT" to "DELETE" -> simpleDelete { apiClient.deleteAccountById(mut.entityId) }
+            "ACCOUNT" to "REORDER" -> {
+                val req = j.decodeFromString<ReorderAccountsRequest>(mut.payloadJson)
+                apiClient.reorderAccounts(req).fold(
+                    onSuccess = { applied() },
+                    onFailure = { failure(it) }
+                )
+            }
 
             // ---- Categories, labels, rules ----
             "CATEGORY" to "CREATE" -> {
@@ -1124,7 +1131,15 @@ class KakeiRepository(
 
             // Entities that still have queued mutations are local-only and must survive the pull.
             val remaining = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
-            val protectedIds = remaining.map { it.entityId }.toSet()
+            // A queued reorder touches every account it lists, not its own entity id.
+            val protectedIds = remaining.flatMap { mut ->
+                if (mut.entityType == "ACCOUNT" && mut.operation == "REORDER") {
+                    runCatching { database.json.decodeFromString<ReorderAccountsRequest>(mut.payloadJson).accountIds }
+                        .getOrDefault(emptyList())
+                } else {
+                    listOf(mut.entityId)
+                }
+            }.toSet()
             var pullFailures = 0
 
             // 2. Pull fresh state and merge it over the local replica
@@ -1322,7 +1337,8 @@ class KakeiRepository(
         val muts = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
         val errs = database.listItems<SyncErrorEntity>(KakeiDatabase.COL_SYNC_ERRORS, descending = true)
 
-        _accounts.value = accs
+        // The user's own order first; accounts never arranged keep the stored (by name) order after them.
+        _accounts.value = accs.sortedWith(compareBy(nullsLast<Int>()) { it.sortOrder })
         _categories.value = cats
         _labels.value = lbls
         _rules.value = rls
@@ -1557,6 +1573,35 @@ class KakeiRepository(
             categoryId = null,
             payee = tr("Корректировка баланса", "Balance adjustment"),
             note = null
+        )
+    }
+
+    /**
+     * Saves the user's account order: [orderedIds] come first in that order, every other
+     * account (e.g. archived ones) keeps its relative place after them. Only the latest
+     * order matters, so an older queued reorder is dropped.
+     */
+    fun reorderAccounts(orderedIds: List<String>) {
+        val current = _accounts.value
+        val byId = current.associateBy { it.id }
+        val ordered = orderedIds.distinct().mapNotNull { byId[it] }
+        val full = ordered + current.filter { it.id !in orderedIds }
+        if (full.withIndex().all { (i, acc) -> acc.sortOrder == i }) return
+        full.forEachIndexed { index, acc ->
+            if (acc.sortOrder != index) {
+                val updated = acc.copy(sortOrder = index)
+                putDto(KakeiDatabase.COL_ACCOUNTS, updated.id, updated.name, updated)
+            }
+        }
+        database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
+            .filter { it.entityType == "ACCOUNT" && it.operation == "REORDER" }
+            .forEach { database.deleteItem(KakeiDatabase.COL_MUTATIONS, it.id) }
+        reloadFromLocalDatabase()
+        enqueueMutation(
+            entityType = "ACCOUNT",
+            entityId = ACCOUNT_ORDER_ENTITY_ID,
+            operation = "REORDER",
+            payloadJson = database.json.encodeToString(ReorderAccountsRequest(full.map { it.id }))
         )
     }
 
@@ -2828,6 +2873,8 @@ class KakeiRepository(
 
     companion object {
         private const val RECORDS_PAGE_SIZE = 500
+        /** Outbox entity id of the account-order mutation, which spans every account. */
+        private const val ACCOUNT_ORDER_ENTITY_ID = "account-order"
         private const val EXCHANGE_RATES_ID = "current"
         private const val FX_RATE_UNAVAILABLE = "fx_rate_unavailable"
         private const val PREF_DEMO_SEED_CLEANED = "demo_seed_cleanup_v1"
