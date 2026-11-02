@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Check
@@ -26,14 +25,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kakei.app.core.i18n.LocalAppStrings
-import com.kakei.app.core.security.HapticHelper
 import com.kakei.app.core.util.CurrencyFormatter
-import com.kakei.app.core.util.SystemCategories
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.TransactionDto
@@ -332,99 +329,43 @@ fun AccountPickerField(
 }
 
 /**
- * Category select box. The sheet lists the groups; tapping a group with subcategories opens
- * them (led by a "whole group" row), a group without subcategories is picked directly.
- * [recordType] moves the Income group to the front for income and to the back otherwise.
+ * Select box that opens a full page instead of a sheet (the record editor's category and
+ * details): the same caption-over-value look as [PickerField], with a forward chevron.
  */
 @Composable
-fun CategoryPickerField(
-    categories: List<CategoryDto>,
-    selectedId: String?,
-    langCode: String,
-    recordType: String,
-    onSelect: (CategoryDto) -> Unit,
-    modifier: Modifier = Modifier
+fun NavigationField(
+    caption: String,
+    valueText: String,
+    icon: ImageVector,
+    iconTint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    height: Dp = 56.dp
 ) {
-    val s = LocalAppStrings.current
     val c = KakeiTheme.colors
-    val context = LocalContext.current
-    val tree = remember(categories, langCode) { CategoryTree.build(categories, langCode) }
-    val roots = remember(tree, recordType) {
-        when (recordType) {
-            "INCOME" -> tree.roots.sortedByDescending { it.id == SystemCategories.INCOME }
-            else -> tree.roots.sortedBy { it.id == SystemCategories.INCOME }
-        }
-    }
-    val selected = categories.firstOrNull { it.id == selectedId }
-    val selectedVisual = selected?.let { categoryVisual(it) }
-    val caption = s.pick("Категория", "Category")
-    PickerField(
-        caption = caption,
-        valueText = selected?.localizedName(langCode) ?: s.pick("Не выбрана", "Not selected"),
-        icon = selectedVisual?.icon ?: Icons.Outlined.Apps,
-        iconTint = selectedVisual?.color ?: c.muted,
+    Row(
         modifier = modifier
-    ) { close ->
-        // Reopening the sheet starts inside the group of the current category.
-        var openGroupId by remember {
-            mutableStateOf(selectedId?.let { tree.rootOf(it) }?.takeIf { !tree.children[it].isNullOrEmpty() })
+            .height(height)
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surf2)
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(caption, style = MaterialTheme.typography.labelSmall, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = valueText,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = c.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-        val openGroup = roots.firstOrNull { it.id == openGroupId }
-        val pick: (CategoryDto) -> Unit = { category ->
-            HapticHelper.tick(context)
-            onSelect(category)
-            close()
-        }
-
-        if (openGroup == null) {
-            PickerSheetHeader(caption)
-            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(roots, key = { it.id }) { root ->
-                    val visual = categoryVisual(root)
-                    val kids = tree.children[root.id].orEmpty()
-                    PickerSheetRow(
-                        text = root.localizedName(langCode),
-                        subtitle = if (kids.isNotEmpty()) "${s.pick("Подкатегорий", "Subcategories")}: ${kids.size}" else null,
-                        icon = visual.icon,
-                        iconTint = visual.color,
-                        selected = root.id == selectedId || kids.any { it.id == selectedId },
-                        hasChildren = kids.isNotEmpty(),
-                        onClick = {
-                            if (kids.isEmpty()) {
-                                pick(root)
-                            } else {
-                                HapticHelper.tick(context)
-                                openGroupId = root.id
-                            }
-                        }
-                    )
-                }
-            }
-        } else {
-            val groupVisual = categoryVisual(openGroup)
-            PickerSheetHeader(openGroup.localizedName(langCode), onBack = { openGroupId = null })
-            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                item(key = "whole-group") {
-                    PickerSheetRow(
-                        text = s.pick("Вся группа", "Whole group"),
-                        icon = Icons.Outlined.Apps,
-                        iconTint = groupVisual.color,
-                        selected = openGroup.id == selectedId,
-                        onClick = { pick(openGroup) }
-                    )
-                }
-                items(tree.children[openGroup.id].orEmpty(), key = { it.id }) { cat ->
-                    val visual = categoryVisual(cat)
-                    PickerSheetRow(
-                        text = cat.localizedName(langCode),
-                        icon = visual.icon,
-                        iconTint = visual.color,
-                        selected = cat.id == selectedId,
-                        onClick = { pick(cat) }
-                    )
-                }
-            }
-        }
+        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = c.muted)
     }
 }
 

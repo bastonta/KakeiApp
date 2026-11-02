@@ -22,6 +22,9 @@ import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.domain.calculators.FinancialCalculators
 import com.kakei.app.domain.calculators.ObligationSchedule
 import com.kakei.app.ui.screens.CategoryTree
+import com.kakei.app.ui.screens.detailsSummary
+import com.kakei.app.ui.screens.frequentCategoryIds
+import com.kakei.app.ui.screens.searchCategories
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -412,5 +415,48 @@ class UnitTest {
         assertEquals(LocalDate.of(2027, 1, 31), sched.firstOnOrAfter(sched.startDate))
         assertEquals(LocalDate.of(2027, 3, 2), sched.nextAfter(LocalDate.of(2027, 1, 31)))
         assertNull(ObligationSchedule("ONE_OFF", LocalDate.of(2027, 1, 31)).nextAfter(LocalDate.of(2027, 1, 31)))
+    }
+
+    @Test
+    fun testFrequentCategoriesCountsOnlyMatchingTypeAndKnownCategories() {
+        val categories = listOf(
+            CategoryDto(id = "food", name = "Food"),
+            CategoryDto(id = "taxi", name = "Taxi"),
+            CategoryDto(id = "salary", name = "Salary")
+        )
+        fun tx(id: String, type: String, categoryId: String?) = TransactionDto(
+            id = id, accountId = "a", categoryId = categoryId, type = type,
+            amount = BigDecimal.TEN, currency = "KZT", bookingDate = "2026-11-01T10:00:00Z"
+        )
+        val transactions = listOf(
+            tx("1", "EXPENSE", "taxi"), tx("2", "EXPENSE", "food"), tx("3", "EXPENSE", "food"),
+            tx("4", "INCOME", "salary"), tx("5", "EXPENSE", "deleted"), tx("6", "EXPENSE", null)
+        )
+        assertEquals(listOf("food", "taxi"), frequentCategoryIds(transactions, categories, "EXPENSE"))
+        assertEquals(listOf("salary"), frequentCategoryIds(transactions, categories, "INCOME"))
+        assertEquals(listOf("food"), frequentCategoryIds(transactions, categories, "EXPENSE", limit = 1))
+    }
+
+    @Test
+    fun testSearchCategoriesMatchesLocalizedAndBaseNamesPrefixFirst() {
+        val categories = listOf(
+            CategoryDto(id = "cafe", name = "Coffee shops", translations = mapOf("ru" to "Кофейни")),
+            CategoryDto(id = "grocery-coffee", name = "Tea & coffee", translations = mapOf("ru" to "Кофе и чай")),
+            CategoryDto(id = "machine", name = "Coffee machine", translations = mapOf("ru" to "Кофемашина")),
+            CategoryDto(id = "taxi", name = "Taxi", translations = mapOf("ru" to "Такси"))
+        )
+        assertEquals(listOf("grocery-coffee", "cafe", "machine"), searchCategories(categories, " КОФЕ", "ru").map { it.id })
+        assertEquals(listOf("machine", "cafe", "grocery-coffee"), searchCategories(categories, "coffee", "en").map { it.id })
+        assertEquals(listOf("taxi"), searchCategories(categories, "taxi", "ru").map { it.id })
+        assertTrue(searchCategories(categories, "  ", "ru").isEmpty())
+    }
+
+    @Test
+    fun testDetailsSummaryJoinsOnlyFilledParts() {
+        assertEquals(
+            "Magnum · Сегодня, 19:42 · #семья · Частей: 2 · на неделю",
+            detailsSummary("  Magnum ", "Сегодня, 19:42", listOf("семья"), "на неделю", 2, "Частей")
+        )
+        assertEquals("Вчера, 08:00", detailsSummary("", "Вчера, 08:00", emptyList(), " ", 0, "Частей"))
     }
 }

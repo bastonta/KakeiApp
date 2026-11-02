@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Full-screen category picker in the record editor: search by category or subcategory name, the categories used most often for the record type as tiles, and groups that open in place with a "Whole group" row.
+
+### Changed
+- The record editor's main page keeps only the type, amount, account, category and keypad; payee, note, date and time, labels, clearing status and splits moved to a separate details page, summarised in a "Details" row. The keypad and save button sit at the bottom of the screen, and the amount takes the space left above them.
+
 ## [1.5.0] - 2026-11-01
 
 ### Added
