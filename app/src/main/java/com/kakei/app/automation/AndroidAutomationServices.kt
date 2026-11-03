@@ -1,6 +1,7 @@
 package com.kakei.app.automation
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
@@ -34,8 +35,12 @@ class SmsReceiver : BroadcastReceiver() {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         val combinedBody = messages.joinToString("") { it.displayMessageBody.orEmpty() }
         val sender = messages.firstOrNull()?.originatingAddress
-        if (combinedBody.isNotBlank()) {
-            app.repository.ingestRawBankAlert(combinedBody, sourceChannel = "SMS", sender = sender)
+        if (combinedBody.isBlank()) return
+
+        // Parsing and DB writes run off the main thread; goAsync keeps the receiver alive meanwhile.
+        val pending = goAsync()
+        app.repository.ingestRawBankAlertAsync(combinedBody, sourceChannel = "SMS", sender = sender) {
+            pending.finish()
         }
     }
 }
@@ -49,16 +54,26 @@ class BankNotificationListenerService : NotificationListenerService() {
         val notification = sbn ?: return
         val pkg = notification.packageName ?: return
         if (pkg == packageName || BankSmsPatterns.ignoredPackages.contains(pkg)) return
+        // A group summary repeats its children's text; the children are captured individually.
+        if (notification.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val app = applicationContext as? KakeiApplication ?: return
         if (!app.repository.settingsState.value.pushCaptureEnabled) return
 
         val extras = notification.notification.extras
-        val title = extras.getCharSequence("android.title")?.toString().orEmpty()
-        val text = extras.getCharSequence("android.text")?.toString().orEmpty()
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        // Banks put the full alert in the expanded (big) text; the collapsed text is often truncated.
+        val text = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+            ?.takeIf { it.isNotBlank() }
+            ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val combined = "$title $text".trim()
         if (combined.isNotBlank()) {
-            app.repository.ingestRawBankAlert(combined, sourceChannel = "PUSH", sender = pkg)
+            app.repository.ingestRawBankAlertAsync(
+                combined,
+                sourceChannel = "PUSH",
+                sender = pkg,
+                eventKey = notification.key
+            )
         }
     }
 }

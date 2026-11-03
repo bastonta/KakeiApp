@@ -498,7 +498,7 @@ fun ProfileAndHubScreen(
                             onClick = {
                                 val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
                                 sampleSmsIdx++
-                                repository.ingestRawBankAlert(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
+                                repository.ingestRawBankAlertAsync(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
                             }
                         )
                         if (repository.canLoadDemoData && accounts.isEmpty()) {

@@ -145,6 +145,7 @@ class KakeiRepository(
     private val prefs = appContext.getSharedPreferences("kakei_app_prefs", Context.MODE_PRIVATE)
     private val securePrefs = SecurePrefs(appContext)
     private val dedupHelper = NotificationDeduplicationHelper()
+    private val captureDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val syncMutex = Mutex()
 
     private val _settingsState = MutableStateFlow(loadInitialSettings())
@@ -2724,6 +2725,28 @@ class KakeiRepository(
     // ========================================================================
 
     /**
+     * Runs [ingestRawBankAlert] on a single background lane, so SMS / push callbacks never
+     * touch the database on the main thread and alerts are booked one at a time (dedup and
+     * the record hash check see each other's results). [onDone] runs after the alert is handled.
+     */
+    fun ingestRawBankAlertAsync(
+        rawText: String,
+        sourceChannel: String,
+        sender: String?,
+        eventKey: String? = null,
+        onDone: () -> Unit = {}
+    ) {
+        scope.launch(captureDispatcher) {
+            try {
+                // A malformed alert must not crash the app from a background callback.
+                runCatching { ingestRawBankAlert(rawText, sourceChannel, sender, eventKey) }
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    /**
      * Parses a bank SMS / push and books it. The target account comes only from the
      * user's own configuration: the account mapped to this [sender], else the default
      * capture account. Without one (or when the alert's currency differs from that
@@ -2733,11 +2756,12 @@ class KakeiRepository(
     fun ingestRawBankAlert(
         rawText: String,
         sourceChannel: String = "SMS",
-        sender: String? = null
+        sender: String? = null,
+        eventKey: String? = null
     ): TransactionDto? {
         val defaultCurrency = _settingsState.value.profile.defaultCurrency
         val parsed = BankSmsPatterns.parse(rawText, sourceChannel, defaultCurrency) ?: return null
-        if (!dedupHelper.shouldProcess(parsed)) return null
+        if (!dedupHelper.shouldProcess(parsed, eventKey = eventKey)) return null
 
         val settings = _settingsState.value
         val usable = _accounts.value.filter { !it.isArchived && it.permissionLevel != "READ_ONLY" }.associateBy { it.id }
@@ -2784,7 +2808,7 @@ class KakeiRepository(
             amount = parsed.amount,
             categoryId = classification.categoryId,
             payee = parsed.merchant,
-            note = "[Auto-$sourceChannel] ${parsed.rawMessage}",
+            note = "[Auto-$sourceChannel] ${BankSmsPatterns.redactForNote(parsed.rawMessage)}",
             status = "CLEARED",
             needsReview = classification.needsReview,
             bookingDateIso = bookingDate
@@ -2819,7 +2843,7 @@ class KakeiRepository(
             amount = capture.amount,
             categoryId = classification.categoryId,
             payee = capture.merchant,
-            note = "[Auto-${capture.sourceChannel}] ${capture.rawText}",
+            note = "[Auto-${capture.sourceChannel}] ${BankSmsPatterns.redactForNote(capture.rawText)}",
             needsReview = classification.needsReview,
             bookingDateIso = capture.bookingDate
         )

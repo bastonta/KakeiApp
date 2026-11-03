@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 data class ParsedBankNotification(
     val amount: BigDecimal,
     val currency: String,
-    val operationType: String, // "EXPENSE" | "INCOME" | "TRANSFER"
+    val operationType: String, // "EXPENSE" | "INCOME" (outgoing transfers to people are expenses)
     val merchant: String,
     val rawMessage: String,
     val sourceChannel: String  // "SMS" | "PUSH"
@@ -21,6 +21,8 @@ data class ParsedBankNotification(
  * Dual-engine regex parser (`BankSmsPatterns`) for bank SMS and Push notifications
  * supporting major banks (Kaspi, Halyk, Freedom, Forte, Jusan, BCC, Sber, T-Bank, Revolut, Wise, GPay)
  * and multi-currency ISO 4217 symbols (`KZT`, `USD`, `EUR`, `RUB`, `GBP`, `JPY`).
+ * Keywords match at word starts only, so stems ("покупк") cover word forms
+ * without firing inside unrelated words ("atm" in "format").
  */
 object BankSmsPatterns {
 
@@ -53,99 +55,149 @@ object BankSmsPatterns {
         "JPY" to "JPY"
     )
 
-    private val expenseKeywords = listOf(
-        "покупка", "оплата", "списание", "снятие", "purchase", "payment",
-        "spent", "debited", "paid", "charge", "withdrawal", "atm"
+    private val otpKeywords = listOf("код подтверждения", "одноразовый код", "otp", "verification code", "пароль")
+
+    // Card purchases: these force EXPENSE even when an income word ("кэшбэк") is also present.
+    private val purchaseKeywords = listOf("покупк", "оплат", "purchase", "payment", "paid")
+
+    private val expenseKeywords = purchaseKeywords + listOf(
+        "списан", "снят", "spent", "debited", "charge", "withdrawal", "atm"
     )
 
     private val incomeKeywords = listOf(
-        "пополнение", "зачисление", "перевод от", "возврат", "кэшбэк",
+        "пополнен", "зачислен", "поступ", "перевод от", "вам перевел", "возврат", "кэшбэк",
         "credited", "received", "deposit", "salary", "refund", "cashback"
     )
 
+    // Outgoing transfers to people/other banks have no own target account, so they book as expenses.
+    private val outgoingTransferKeywords = listOf("перевод", "transfer", "sent")
+
     private val amountCurrencyRegex = Regex(
-        """(?:покупка|оплата|списание|пополнение|зачисление|сумма|spent|paid|debited|credited|purchase|amount)?[\s:=-]*([0-9]{1,3}(?:[ \u00A0.,][0-9]{3})*(?:[.,][0-9]{1,2})?|[0-9]+(?:[.,][0-9]{1,2})?)\s*(KZT|USD|EUR|RUB|GBP|JPY|₸|\$|€|₽|£|¥|тг|тенге|руб)""",
+        """(?<![0-9])([0-9]{1,3}(?:[  .,][0-9]{3})+(?:[.,][0-9]{1,2})?|[0-9]+(?:[.,][0-9]{1,2})?)\s*(KZT|USD|EUR|RUB|GBP|JPY|₸|\$|€|₽|£|¥|тенге|тг|руб)(?![\p{L}\p{N}])""",
         setOf(RegexOption.IGNORE_CASE)
     )
 
     private val prefixSymbolRegex = Regex(
-        """([\$€£¥₸₽])\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)""",
+        """([\$€£¥₸₽])\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)(?![0-9])""",
         setOf(RegexOption.IGNORE_CASE)
     )
 
-    private val merchantPatterns = listOf(
-        Regex("""(?:в|at|to|у|merchant|магазине)\s+([A-Za-zА-Яа-яЁё0-9_.*&\-\s]{2,32}?)(?:\.|,|\s+Доступно|\s+Баланс|\s+Avail|\s+Bal|$)""", RegexOption.IGNORE_CASE),
-        Regex("""Kaspi\s*Gold:\s*(?:Покупка|Оплата|Перевод)\s+[0-9\s.,]+(?:₸|KZT)\s+([A-Za-zА-Яа-яЁё0-9_.*&\-\s]{2,32})""", RegexOption.IGNORE_CASE),
-        Regex("""([A-Z0-9][A-Z0-9\s._*-]{2,24})\s+(?:покупка|оплата|purchase|payment)""", RegexOption.IGNORE_CASE)
+    private const val MERCHANT_CHARS = """A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі0-9_.*&'"«»\-\s"""
+
+    // Where the merchant name ends: sentence break or the balance / card tail of the alert.
+    private const val MERCHANT_END =
+        """(?:\.\s|,|\s+(?:Доступно|Баланс|Остаток|Avail|Bal|Карта|Card)|\s+\*?[0-9]{4}(?![0-9])|\.?$)"""
+
+    private val prepositionMerchantRegex = Regex(
+        """(?<![\p{L}\p{N}])(?:в|at|to|у|merchant|магазине)\s+([$MERCHANT_CHARS]{2,40}?)$MERCHANT_END""",
+        RegexOption.IGNORE_CASE
     )
+
+    /** "MAGNUM покупка ..." — tried last, since it also catches the bank name in "Kaspi.kz Покупка". */
+    private val leadingMerchantRegex = Regex(
+        """([A-Z0-9][A-Z0-9\s._*-]{2,24})\s+(?:покупка|оплата|purchase|payment)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** Text right after the amount ("Покупка: 2 500 ₸ MAGNUM ALMATY. Доступно ..."). */
+    private val afterAmountMerchantRegex = Regex(
+        """^[\s:.\-–—]*(?:(?:в|на|у|at|to)\s+)?([$MERCHANT_CHARS]{2,40}?)$MERCHANT_END""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val balanceTailRegex = Regex(
+        """(?<![\p{L}\p{N}])(?:Доступно|Баланс|Остаток|Avail\w*|Bal(?:ance)?)(?![\p{L}])[^.]*?(?:[0-9][0-9\s .,]*\s*(?:KZT|USD|EUR|RUB|GBP|JPY|₸|\$|€|₽|£|¥|тенге|тг|руб)\.?|$)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val cardNumberRegex = Regex("""(?:\*+\s?[0-9]{4}(?![0-9])|(?<![0-9])[0-9]{4}[\s*]+[0-9*]{2,4}[\s*]+[0-9*]{4}[\s*]+[0-9]{4}(?![0-9]))""")
 
     fun parse(
         rawText: String,
         sourceChannel: String = "SMS",
         defaultCurrency: String = "KZT"
     ): ParsedBankNotification? {
-        val text = rawText.trim().replace("\n", " ")
+        val text = rawText.trim().replace(Regex("""\s*\n\s*"""), " ")
         if (text.length < 6) return null
 
         val lower = text.lowercase(Locale.ROOT)
-        // Ignore OTP / verification messages
-        if (lower.contains("код подтверждения") || lower.contains("otp") || lower.contains("verification code") || lower.contains("пароль")) {
-            return null
-        }
+        if (otpKeywords.any { lower.hasWord(it) }) return null
 
         var amount: BigDecimal? = null
         var currency: String = defaultCurrency
+        var amountEnd = -1
 
         val match1 = amountCurrencyRegex.find(text)
         if (match1 != null) {
             amount = parseNormalizedDecimal(match1.groupValues[1])
             val rawCurr = match1.groupValues[2].uppercase(Locale.ROOT).removeSuffix(".")
             currency = currencyMap[rawCurr] ?: defaultCurrency
+            amountEnd = match1.range.last + 1
         } else {
             val match2 = prefixSymbolRegex.find(text)
             if (match2 != null) {
                 val sym = match2.groupValues[1].uppercase(Locale.ROOT)
                 amount = parseNormalizedDecimal(match2.groupValues[2])
                 currency = currencyMap[sym] ?: defaultCurrency
+                amountEnd = match2.range.last + 1
             }
         }
 
         if (amount == null || amount <= BigDecimal.ZERO) return null
 
-        val isIncome = incomeKeywords.any { lower.contains(it) }
-        val isExpense = expenseKeywords.any { lower.contains(it) }
+        val isPurchase = purchaseKeywords.any { lower.hasWord(it) }
+        val isIncome = incomeKeywords.any { lower.hasWord(it) }
+        val isExpense = isPurchase || expenseKeywords.any { lower.hasWord(it) } ||
+            outgoingTransferKeywords.any { lower.hasWord(it) }
         if (!isIncome && !isExpense) return null
 
-        val opType = if (isIncome && !lower.contains("покупка") && !lower.contains("оплата")) {
-            "INCOME"
-        } else {
-            "EXPENSE"
-        }
-
-        var merchant = "Bank Operation"
-        for (pattern in merchantPatterns) {
-            val m = pattern.find(text)
-            if (m != null) {
-                val candidate = m.groupValues[1].trim().trim('.', ',', ':', '-')
-                if (candidate.length >= 2) {
-                    merchant = candidate
-                    break
-                }
-            }
-        }
+        val opType = if (isIncome && !isPurchase) "INCOME" else "EXPENSE"
 
         return ParsedBankNotification(
             amount = amount.setScale(2, RoundingMode.HALF_UP),
             currency = currency,
             operationType = opType,
-            merchant = merchant,
+            merchant = extractMerchant(text, amountEnd),
             rawMessage = text,
             sourceChannel = sourceChannel
         )
     }
 
+    /**
+     * Strips the account balance and card numbers from an alert before it is stored
+     * in a record note that syncs to the server.
+     */
+    fun redactForNote(rawText: String): String =
+        rawText
+            .replace(balanceTailRegex, "")
+            .replace(cardNumberRegex, "*")
+            .replace(Regex("""\s{2,}"""), " ")
+            .replace(Regex("""\s+([.,])"""), "$1")
+            .trim()
+            .trim(',', ':', '-')
+            .trim()
+
+    private fun extractMerchant(text: String, amountEnd: Int): String {
+        val candidates = sequence {
+            prepositionMerchantRegex.find(text)?.let { yield(it.groupValues[1]) }
+            if (amountEnd in 0 until text.length) {
+                afterAmountMerchantRegex.find(text.substring(amountEnd))?.let { yield(it.groupValues[1]) }
+            }
+            leadingMerchantRegex.find(text)?.let { yield(it.groupValues[1]) }
+        }
+        return candidates
+            .map { it.trim().trim('.', ',', ':', '-', ' ') }
+            .firstOrNull { it.length >= 2 && it.any(Char::isLetter) && !isKeywordOnly(it) }
+            ?: "Bank Operation"
+    }
+
+    private fun isKeywordOnly(candidate: String): Boolean {
+        val lower = candidate.lowercase(Locale.ROOT)
+        return (expenseKeywords + incomeKeywords + outgoingTransferKeywords).any { lower == it || lower.startsWith(it) && lower.length <= it.length + 2 }
+    }
+
     private fun parseNormalizedDecimal(raw: String): BigDecimal? {
-        val compact = raw.replace(" ", "").replace("\u00A0", "")
+        val compact = raw.replace(" ", "").replace(" ", "")
         val normalized = when {
             compact.contains(",") && compact.contains(".") -> {
                 if (compact.lastIndexOf(',') > compact.lastIndexOf('.')) {
@@ -158,32 +210,72 @@ object BankSmsPatterns {
                 val parts = compact.split(",")
                 if (parts.last().length <= 2) compact.replace(",", ".") else compact.replace(",", "")
             }
+            compact.count { it == '.' } > 1 -> compact.replace(".", "")
+            compact.contains(".") && compact.substringAfterLast('.').length == 3 -> compact.replace(".", "")
             else -> compact
         }
         return runCatching { BigDecimal(normalized) }.getOrNull()
+    }
+
+    /** Keyword match anchored at a word start ("покупк" matches "Покупка", not "запокупкой"). */
+    private fun String.hasWord(keyword: String): Boolean {
+        var from = 0
+        while (true) {
+            val idx = indexOf(keyword, from)
+            if (idx < 0) return false
+            if (idx == 0 || !this[idx - 1].isLetterOrDigit()) return true
+            from = idx + 1
+        }
     }
 }
 
 /**
  * Cross-channel 5-minute sliding window deduplicator.
- * Drops duplicate alerts when both SMS and Push notification fire for the same payment.
+ * Drops the second alert for one payment when both SMS and Push fire for it, and drops
+ * a re-posted (updated) push with the same notification key and text. Two separate
+ * same-amount payments on one channel are both kept, and each SMS/Push pair is
+ * consumed once, so repeated equal purchases still book once each.
+ * The merchant is not part of the fingerprint: SMS and Push of one payment name it differently.
  */
 class NotificationDeduplicationHelper(
     private val windowMillis: Long = 5 * 60 * 1000L
 ) {
-    private val recentFingerprints = ConcurrentHashMap<String, Long>()
+    private data class Seen(val channel: String, val eventKey: String?, val rawMessage: String, val atMillis: Long)
 
-    fun shouldProcess(parsed: ParsedBankNotification, nowMillis: Long = System.currentTimeMillis()): Boolean {
-        val iterator = recentFingerprints.entries.iterator()
+    private val recent = HashMap<String, MutableList<Seen>>()
+
+    /**
+     * @param eventKey stable id of the source event (the push notification key), or null for SMS.
+     */
+    @Synchronized
+    fun shouldProcess(
+        parsed: ParsedBankNotification,
+        nowMillis: Long = System.currentTimeMillis(),
+        eventKey: String? = null
+    ): Boolean {
+        val iterator = recent.values.iterator()
         while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (nowMillis - entry.value > windowMillis) {
-                iterator.remove()
-            }
+            val list = iterator.next()
+            list.removeAll { nowMillis - it.atMillis > windowMillis }
+            if (list.isEmpty()) iterator.remove()
         }
         val key = "${parsed.operationType}|${parsed.amount.setScale(2, RoundingMode.HALF_UP)}|${parsed.currency}"
-        val previous = recentFingerprints.putIfAbsent(key, nowMillis)
-        return previous == null || (nowMillis - previous > windowMillis)
+        val seen = recent.getOrPut(key) { mutableListOf() }
+
+        val repost = seen.any {
+            it.channel == parsed.sourceChannel && eventKey != null &&
+                it.eventKey == eventKey && it.rawMessage == parsed.rawMessage
+        }
+        if (repost) return false
+
+        val pair = seen.firstOrNull { it.channel != parsed.sourceChannel }
+        if (pair != null) {
+            seen.remove(pair)
+            return false
+        }
+
+        seen.add(Seen(parsed.sourceChannel, eventKey, parsed.rawMessage, nowMillis))
+        return true
     }
 }
 
