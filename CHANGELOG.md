@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-03
+
 ### Added
 - Full-screen category picker in the record editor: search by category or subcategory name, the categories used most often for the record type as tiles, and groups that open in place with a "Whole group" row.
 - Home shows a "Spending structure" donut for the last 30 days, with the change against the previous 30 days.
 - Budget bars show the end-of-period forecast at the current pace, with "At risk" and "Over" badges.
 - Daily expense reminder: an optional notification (off by default, 21:00) to record the day's expenses, switched on and timed under Profile → Reminders. Tapping it opens the quick add sheet.
+- Accounts can be reordered from Home: "Order" next to "+ Add" moves accounts up and down. The order is saved locally, synced with `PUT /accounts/order` (only the latest pending order is sent) and used by Home and every account picker. Requires server 0.3.0.
 
 ### Changed
 - Interface strings moved from the `AppStrings` Kotlin dictionary and inline RU/EN pairs to Android string resources (`res/values`, `res/values-ru`), with proper Russian plural forms. The interface language is applied as the per-app locale, so it can also be changed in the system's per-app language settings on Android 13+.
@@ -19,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Home follows the wallet screens design: a "Home" header with search, notifications and the profile avatar; the net worth card shows the month delta and the month's income and expense; accounts are a two-column grid where a tap opens the account's records; the latest five records sit in one card.
 - The budgets summary shows a usage ring with the amount left in the month; budget cards are compact and the "Create budget" button is pinned at the bottom.
 - Goals show the total saved on a violet card and compact goal cards; tapping a goal opens the top-up dialog with the quick amounts, and "New goal" is pinned at the bottom.
+
+### Fixed
+- Bank SMS/push capture: keywords match at word starts ("atm" no longer fires inside "format"), outgoing and incoming transfers are booked as expense and income instead of being dropped, Kaspi-style merchants after the amount are parsed, and repeated same-amount purchases on one channel are all booked (only SMS/push pairs and re-posted pushes are deduplicated). The expanded notification text is read, group summaries are skipped, and alerts are ingested off the main thread.
+
+### Security
+- Balances and card numbers are stripped from the note of captured records before sync.
 
 ## [1.5.0] - 2026-11-01
 
