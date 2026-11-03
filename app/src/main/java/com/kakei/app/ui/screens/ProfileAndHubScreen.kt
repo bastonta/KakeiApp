@@ -1,6 +1,10 @@
 package com.kakei.app.ui.screens
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -24,6 +28,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
@@ -80,6 +85,7 @@ fun ProfileAndHubScreen(
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showServerDialog by remember { mutableStateOf(false) }
     var showLockTimeoutDialog by remember { mutableStateOf(false) }
+    var showReminderTimeDialog by remember { mutableStateOf(false) }
     var showAddPasskeyDialog by remember { mutableStateOf(false) }
     var passkeyToDelete by remember { mutableStateOf<UserPasskeyItem?>(null) }
     var sampleSmsIdx by remember { mutableIntStateOf(0) }
@@ -115,6 +121,27 @@ fun ProfileAndHubScreen(
             seconds == 0 -> s.getString(R.string.immediately)
             seconds < 60 -> s.getString(R.string.lock_after_seconds, seconds)
             else -> s.getString(R.string.lock_after_minutes, seconds / 60)
+        }
+    }
+    val reminderTimeLabel = "%02d:%02d".format(
+        settings.expenseReminderMinuteOfDay / 60,
+        settings.expenseReminderMinuteOfDay % 60
+    )
+    // The reminder is only switched on once notifications may be posted.
+    val reminderPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) repository.setExpenseReminder(enabled = true)
+    }
+    val enableExpenseReminder: () -> Unit = {
+        // POST_NOTIFICATIONS is a runtime permission only from Android 13.
+        val granted = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            repository.setExpenseReminder(enabled = true)
+        } else {
+            reminderPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
     val usdRate = if (baseCurrency.equals("USD", ignoreCase = true)) null else rateBook.rate("USD", baseCurrency)
@@ -347,6 +374,33 @@ fun ProfileAndHubScreen(
                 }
             }
 
+            // 2d. Daily reminder to record expenses
+            item { GroupCaption(s.getString(R.string.reminders)) }
+            item {
+                GroupCard {
+                    SettingsRow(
+                        icon = Icons.Outlined.NotificationsActive,
+                        iconColor = c.amber,
+                        title = s.getString(R.string.expense_reminder),
+                        subtitle = s.getString(R.string.expense_reminder_subtitle),
+                        checked = settings.expenseReminderEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) enableExpenseReminder() else repository.setExpenseReminder(enabled = false)
+                        }
+                    )
+                    if (settings.expenseReminderEnabled) {
+                        RowDivider(startIndent = 66.dp)
+                        SettingsRow(
+                            icon = Icons.Outlined.Schedule,
+                            iconColor = c.amber,
+                            title = s.getString(R.string.expense_reminder_time),
+                            value = reminderTimeLabel,
+                            onClick = { showReminderTimeDialog = true }
+                        )
+                    }
+                }
+            }
+
             // 3. Appearance
             item { GroupCaption(s.getString(R.string.appearance)) }
             item {
@@ -546,6 +600,30 @@ fun ProfileAndHubScreen(
                 showLockTimeoutDialog = false
             },
             onDismiss = { showLockTimeoutDialog = false }
+        )
+    }
+
+    // Expense reminder time
+    if (showReminderTimeDialog) {
+        val timeState = rememberTimePickerState(
+            initialHour = settings.expenseReminderMinuteOfDay / 60,
+            initialMinute = settings.expenseReminderMinuteOfDay % 60,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showReminderTimeDialog = false },
+            containerColor = c.surf,
+            title = { Text(s.getString(R.string.expense_reminder_time)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    repository.setExpenseReminder(minuteOfDay = timeState.hour * 60 + timeState.minute)
+                    showReminderTimeDialog = false
+                }) { Text(s.getString(R.string.done)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderTimeDialog = false }) { Text(s.getString(R.string.cancel_button)) }
+            },
+            text = { TimePicker(state = timeState) }
         )
     }
 

@@ -1,6 +1,7 @@
 package com.kakei.app
 
 import com.kakei.app.automation.BankSmsPatterns
+import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
@@ -34,7 +35,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
 import java.time.Instant
+import java.time.Duration
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 
 class UnitTest {
 
@@ -458,5 +462,21 @@ class UnitTest {
             detailsSummary("  Magnum ", "Сегодня, 19:42", listOf("семья"), "на неделю", 2, "Частей")
         )
         assertEquals("Вчера, 08:00", detailsSummary("", "Вчера, 08:00", emptyList(), " ", 0, "Частей"))
+    }
+
+    @Test
+    fun expenseReminderDelayTargetsNextLocalOccurrence() {
+        val zone = ZoneId.of("Asia/Almaty")
+        val evening = ZonedDateTime.of(2026, 11, 3, 18, 30, 0, 0, zone)
+        assertEquals(Duration.ofMinutes(150), ExpenseReminderScheduler.delayUntilNext(evening, 21 * 60))
+
+        // At or after the reminder time the next run is tomorrow.
+        val atTime = ZonedDateTime.of(2026, 11, 3, 21, 0, 0, 0, zone)
+        assertEquals(Duration.ofHours(24), ExpenseReminderScheduler.delayUntilNext(atTime, 21 * 60))
+        val late = ZonedDateTime.of(2026, 11, 3, 23, 15, 30, 0, zone)
+        assertEquals(
+            Duration.ofHours(21).plusMinutes(44).plusSeconds(30),
+            ExpenseReminderScheduler.delayUntilNext(late, 21 * 60)
+        )
     }
 }

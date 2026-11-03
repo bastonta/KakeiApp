@@ -214,6 +214,13 @@
     <string name="remove_passkey">Удалить passkey</string>
     <string name="add_passkey">Добавить passkey</string>
     <string name="sign_in_with_fingerprint_or">Вход по отпечатку или PIN-коду без пароля</string>
+    <string name="reminders">Напоминания</string>
+    <string name="expense_reminder">Напоминание о расходах</string>
+    <string name="expense_reminder_subtitle">Ежедневное уведомление записать расходы</string>
+    <string name="expense_reminder_time">Время напоминания</string>
+    <string name="expense_reminder_channel">Напоминания о расходах</string>
+    <string name="expense_reminder_notification_title">Пора записать расходы</string>
+    <string name="expense_reminder_notification_text">Добавьте сегодняшние траты, пока помните о них</string>
     <string name="appearance">Оформление</string>
     <string name="data">Данные</string>
     <string name="encrypted_backup">Зашифрованная копия</string>

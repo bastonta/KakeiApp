@@ -215,6 +215,13 @@
     <string name="remove_passkey">Remove passkey</string>
     <string name="add_passkey">Add passkey</string>
     <string name="sign_in_with_fingerprint_or">Sign in with fingerprint or screen lock, no password</string>
+    <string name="reminders">Reminders</string>
+    <string name="expense_reminder">Expense reminder</string>
+    <string name="expense_reminder_subtitle">Daily notification to record your expenses</string>
+    <string name="expense_reminder_time">Reminder time</string>
+    <string name="expense_reminder_channel">Expense reminders</string>
+    <string name="expense_reminder_notification_title">Time to record your expenses</string>
+    <string name="expense_reminder_notification_text">Add today\'s spending while you still remember it</string>
     <string name="appearance">Appearance</string>
     <string name="data">Data</string>
     <string name="encrypted_backup">Encrypted backup</string>

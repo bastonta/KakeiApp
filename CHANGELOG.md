@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Full-screen category picker in the record editor: search by category or subcategory name, the categories used most often for the record type as tiles, and groups that open in place with a "Whole group" row.
 - Home shows a "Spending structure" donut for the last 30 days, with the change against the previous 30 days.
 - Budget bars show the end-of-period forecast at the current pace, with "At risk" and "Over" badges.
+- Daily expense reminder: an optional notification (off by default, 21:00) to record the day's expenses, switched on and timed under Profile → Reminders. Tapping it opens the quick add sheet.
 
 ### Changed
 - Interface strings moved from the `AppStrings` Kotlin dictionary and inline RU/EN pairs to Android string resources (`res/values`, `res/values-ru`), with proper Russian plural forms. The interface language is applied as the per-app locale, so it can also be changed in the system's per-app language settings on Android 13+.

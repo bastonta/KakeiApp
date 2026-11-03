@@ -2,8 +2,10 @@ package com.kakei.app
 
 import android.app.Application
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.MidnightWidgetResetWorker
 import com.kakei.app.automation.NotificationListenerWatchdogWorker
 import com.kakei.app.automation.SyncWorker
@@ -57,5 +59,14 @@ class KakeiApplication : Application() {
                 widgetResetRequest
             )
         }
+
+        // Restores the daily reminder if its queued run was lost (e.g. app data restored).
+        val settings = repository.settingsState.value
+        ExpenseReminderScheduler.apply(
+            this,
+            settings.expenseReminderEnabled,
+            settings.expenseReminderMinuteOfDay,
+            ExistingWorkPolicy.KEEP
+        )
     }
 }

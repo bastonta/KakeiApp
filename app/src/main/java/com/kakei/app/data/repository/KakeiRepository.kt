@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import com.kakei.app.BuildConfig
 import com.kakei.app.R
 import com.kakei.app.automation.BankSmsPatterns
+import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.KakeiWidgetUpdater
 import com.kakei.app.automation.NotificationDeduplicationHelper
 import com.kakei.app.automation.SmartMerchantMatcher
@@ -77,12 +78,19 @@ data class AppSettingsState(
     val captureDefaultAccountId: String? = null,
     /** Alert sender (SMS address / app package) → account id, set when the user files a pending capture. */
     val captureSenderAccounts: Map<String, String> = emptyMap(),
+    /** Daily local notification reminding to record the day's expenses. */
+    val expenseReminderEnabled: Boolean = false,
+    /** Reminder time as minutes after local midnight. */
+    val expenseReminderMinuteOfDay: Int = DEFAULT_EXPENSE_REMINDER_MINUTE,
     val syncInProgress: Boolean = false,
     val lastSyncTimestamp: String? = null,
     val statusMessage: String? = null
 ) {
     companion object {
         const val DEFAULT_LOCK_TIMEOUT_SECONDS = 60
+
+        /** 21:00 local time. */
+        const val DEFAULT_EXPENSE_REMINDER_MINUTE = 21 * 60
 
         /** Relock delays offered in settings, in seconds. */
         val LOCK_TIMEOUT_OPTIONS = listOf(0, 30, 60, 300, 900, 1800)
@@ -323,6 +331,11 @@ class KakeiRepository(
             pushCaptureEnabled = prefs.getBoolean("push_capture", true),
             instantPopupEnabled = prefs.getBoolean("instant_popup", true),
             captureDefaultAccountId = prefs.getString("capture_default_account", null),
+            expenseReminderEnabled = prefs.getBoolean("expense_reminder", false),
+            expenseReminderMinuteOfDay = prefs.getInt(
+                "expense_reminder_minute",
+                AppSettingsState.DEFAULT_EXPENSE_REMINDER_MINUTE
+            ),
             captureSenderAccounts = runCatching {
                 database.json.decodeFromString<Map<String, String>>(prefs.getString("capture_sender_accounts", null) ?: "{}")
             }.getOrDefault(emptyMap()),
@@ -386,6 +399,21 @@ class KakeiRepository(
         val clean = seconds.coerceAtLeast(0)
         prefs.edit { putInt("lock_timeout_sec", clean) }
         _settingsState.value = _settingsState.value.copy(lockTimeoutSeconds = clean)
+    }
+
+    fun setExpenseReminder(enabled: Boolean? = null, minuteOfDay: Int? = null) {
+        val current = _settingsState.value
+        val nextEnabled = enabled ?: current.expenseReminderEnabled
+        val nextMinute = (minuteOfDay ?: current.expenseReminderMinuteOfDay).coerceIn(0, 24 * 60 - 1)
+        prefs.edit {
+            putBoolean("expense_reminder", nextEnabled)
+            putInt("expense_reminder_minute", nextMinute)
+        }
+        _settingsState.value = current.copy(
+            expenseReminderEnabled = nextEnabled,
+            expenseReminderMinuteOfDay = nextMinute
+        )
+        ExpenseReminderScheduler.apply(appContext, nextEnabled, nextMinute)
     }
 
     fun setServerBaseUrl(url: String) {
