@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-03
+
+### Changed
+- Accounts are reordered by drag and drop: drag a row by its handle in the "Order" dialog instead of moving it with up/down arrows. Rows are numbered.
+
 ## [1.6.0] - 2026-11-03
 
 ### Added
