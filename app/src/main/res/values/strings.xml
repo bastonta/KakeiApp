@@ -307,8 +307,7 @@
     <string name="income">Income</string>
     <string name="expenses">Expenses</string>
     <string name="account_order">Account order</string>
-    <string name="move_up">Move up</string>
-    <string name="move_down">Move down</string>
+    <string name="drag_to_reorder">Drag to reorder</string>
     <string name="new_transaction">New transaction</string>
     <string name="bank_alert">Bank alert</string>
     <string name="just_now">just now</string>

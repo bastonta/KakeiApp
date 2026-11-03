@@ -2,6 +2,7 @@ package com.kakei.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -19,9 +20,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -662,9 +667,29 @@ private fun ReorderAccountsDialog(
     val s = LocalResources.current
     val c = KakeiTheme.colors
     val order = remember { accounts.toMutableStateList() }
+    // Drag state: the row being dragged and how far it is from its current slot.
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val rowHeights = remember { mutableStateMapOf<String, Int>() }
 
-    fun move(from: Int, to: Int) {
-        if (to in order.indices) order.add(to, order.removeAt(from))
+    // Swaps the dragged row with a neighbour once it passes half of the neighbour's height.
+    fun onDrag(delta: Float) {
+        dragOffset += delta
+        var i = order.indexOfFirst { it.id == draggingId }
+        if (i < 0) return
+        while (true) {
+            val next = order.getOrNull(i + 1)
+            val prev = order.getOrNull(i - 1)
+            if (dragOffset > 0 && next != null && dragOffset > (rowHeights[next.id] ?: 0) / 2f) {
+                dragOffset -= rowHeights[next.id] ?: 0
+                order.add(i + 1, order.removeAt(i))
+                i++
+            } else if (dragOffset < 0 && prev != null && -dragOffset > (rowHeights[prev.id] ?: 0) / 2f) {
+                dragOffset += rowHeights[prev.id] ?: 0
+                order.add(i - 1, order.removeAt(i))
+                i--
+            } else break
+        }
     }
 
     AlertDialog(
@@ -673,29 +698,55 @@ private fun ReorderAccountsDialog(
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 order.forEachIndexed { index, acc ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    key(acc.id) {
+                        val dragging = draggingId == acc.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onSizeChanged { rowHeights[acc.id] = it.height }
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer { translationY = if (dragging) dragOffset else 0f }
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (dragging) c.text.copy(alpha = 0.08f) else Color.Transparent)
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                acc.name,
+                                "${index + 1}",
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = c.text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                color = c.muted,
+                                modifier = Modifier.width(28.dp).padding(start = 4.dp)
                             )
-                            Text(
-                                formatMoney(acc.currentBalance, acc.currency),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.muted
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    acc.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = c.text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    formatMoney(acc.currentBalance, acc.currency),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.muted
+                                )
+                            }
+                            Icon(
+                                Icons.Outlined.DragHandle,
+                                contentDescription = s.getString(R.string.drag_to_reorder),
+                                tint = if (dragging) c.text else c.muted,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .padding(12.dp)
+                                    .pointerInput(acc.id) {
+                                        detectDragGestures(
+                                            onDragStart = { draggingId = acc.id; dragOffset = 0f },
+                                            onDragEnd = { draggingId = null; dragOffset = 0f },
+                                            onDragCancel = { draggingId = null; dragOffset = 0f },
+                                            onDrag = { change, amount -> change.consume(); onDrag(amount.y) }
+                                        )
+                                    }
                             )
-                        }
-                        IconButton(onClick = { move(index, index - 1) }, enabled = index > 0) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = s.getString(R.string.move_up))
-                        }
-                        IconButton(onClick = { move(index, index + 1) }, enabled = index < order.lastIndex) {
-                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = s.getString(R.string.move_down))
                         }
                     }
                 }

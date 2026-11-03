@@ -306,8 +306,7 @@
     <string name="income">Доходы</string>
     <string name="expenses">Расходы</string>
     <string name="account_order">Порядок счетов</string>
-    <string name="move_up">Выше</string>
-    <string name="move_down">Ниже</string>
+    <string name="drag_to_reorder">Перетащите, чтобы изменить порядок</string>
     <string name="new_transaction">Новая операция</string>
     <string name="bank_alert">Банковское уведомление</string>
     <string name="just_now">только что</string>
