@@ -183,8 +183,6 @@ fun KakeiAppRoot(
     val pendingMutations by repository.pendingMutations.collectAsState()
     val healthScore by repository.healthScore.collectAsState()
     val streaks by repository.streaks.collectAsState()
-    val heatmaps by repository.heatmaps.collectAsState()
-    val insights by repository.insights.collectAsState()
     val instantCapturedRecord by repository.instantCapturedRecord.collectAsState()
 
     val res = LocalResources.current
@@ -403,8 +401,6 @@ fun KakeiAppRoot(
                             forecast = forecast,
                             healthScore = healthScore,
                             streaks = streaks,
-                            heatmaps = heatmaps,
-                            insights = insights,
                             repository = repository
                         )
                         2 -> LendingScreen(

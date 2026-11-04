@@ -447,4 +447,57 @@
         <item quantity="many">на %d целей</item>
         <item quantity="other">на %d цели</item>
     </plurals>
+    <!-- Аналитика: статистика за период -->
+    <string name="stats_period_month">Месяц</string>
+    <string name="stats_period_year">Год</string>
+    <string name="stats_period_custom">Период</string>
+    <string name="stats_previous_period">Предыдущий период</string>
+    <string name="stats_next_period">Следующий период</string>
+    <string name="stats_in_progress">идёт сейчас</string>
+    <string name="stats_compared_with">Изменения — в сравнении с периодом %1$s</string>
+    <string name="stats_net">Итог периода</string>
+    <string name="stats_savings_rate">Норма сбережений</string>
+    <string name="stats_avg_per_day">В среднем в день</string>
+    <string name="stats_records">Операций</string>
+    <string name="stats_no_spend_days">Дней без трат</string>
+    <string name="stats_cash_flow_title">Доходы и расходы</string>
+    <string name="stats_tap_bar_hint">Нажмите на столбец</string>
+    <string name="stats_by_category">По категориям</string>
+    <string name="stats_top_category">Больше всего</string>
+    <string name="stats_no_income">Доходов за этот период нет.</string>
+    <string name="stats_without_subcategory">Без подкатегории</string>
+    <string name="stats_show_all">Показать все (%1$d)</string>
+    <string name="stats_show_less">Свернуть</string>
+    <string name="stats_weekday_title">По дням недели</string>
+    <string name="stats_weekday_peak">Средние траты за день. Пик: %1$s, %2$s</string>
+    <string name="stats_avg_workday">В средний будний день</string>
+    <string name="stats_avg_weekend">В средний выходной</string>
+    <string name="stats_no_spending_day">Без трат</string>
+    <string name="stats_highlights">Главное за период</string>
+    <string name="stats_largest_expense">Самая крупная трата</string>
+    <string name="stats_busiest_day">Самый затратный день</string>
+    <string name="stats_unconverted">Не учтено операций без курса валюты: %1$d</string>
+    <!-- Индекс финансового здоровья -->
+    <string name="health_period_hint">По данным за последние 30 дней</string>
+    <string name="health_points">%1$d/%2$d</string>
+    <string name="health_budgets_within_limit">Бюджеты в лимите</string>
+    <string name="health_how_it_works">Как считается индекс</string>
+    <string name="health_info_intro">Индекс от 0 до 100 складывается из трёх частей, которые считаются за последние 30 дней.</string>
+    <string name="health_info_savings">• Сбережения, до 40 баллов: какая доля дохода осталась после расходов. 2 балла за каждый процент; при 20% и выше — все 40. Если расходы больше доходов — 0.</string>
+    <string name="health_info_budgets">• Бюджеты, до 30 баллов: доля ваших бюджетов, которые не превысили лимит. Если бюджетов нет — все 30.</string>
+    <string name="health_info_debt">• Долг / доход, до 30 баллов: сколько вы заняли и ещё не вернули, по сравнению с доходом за 30 дней. До 10% — все 30 баллов, от 60% — 0.</string>
+    <string name="health_info_grades">Оценки: A — от 85, B — от 70, C — от 55, D — от 40, F — ниже 40.</string>
+    <string name="health_tip_no_income">За 30 дней нет доходов, поэтому сбережения дают 0 баллов. Добавьте доходы, чтобы индекс был точным.</string>
+    <string name="health_tip_overspent">За 30 дней расходы превысили доходы на %1$s%%. Сократите необязательные траты, чтобы получить баллы за сбережения.</string>
+    <string name="health_tip_savings_low">Вы откладываете %1$s%% дохода. При 20%% вы получите все 40 баллов.</string>
+    <string name="health_tip_budgets">Часть бюджетов превысила лимит — проверьте категории с перерасходом.</string>
+    <string name="health_tip_debt">Непогашенные долги составляют %1$s%% месячного дохода. Их погашение поднимет индекс.</string>
+    <string name="health_tip_great">Все показатели в отличной форме. Излишек можно направить на цели накоплений.</string>
+
+    <plurals name="stats_days">
+        <item quantity="one">%d день</item>
+        <item quantity="few">%d дня</item>
+        <item quantity="many">%d дней</item>
+        <item quantity="other">%d дня</item>
+    </plurals>
 </resources>

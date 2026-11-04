@@ -163,18 +163,20 @@ object FinancialCalculators {
                 acc + (CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
+        // Same formula as the backend (analytics.rs): savings 0..40 + budgets 0..30 + debt 0..30 points.
         val savingsRatePct = if (income > BigDecimal.ZERO) {
-            ((income - expense).coerceAtLeast(BigDecimal.ZERO))
+            (income - expense)
                 .multiply(BigDecimal("100"))
                 .divide(income, 1, RoundingMode.HALF_UP)
+                .max(BigDecimal("-100"))
         } else if (expense == BigDecimal.ZERO) {
             BigDecimal("20.0")
         } else {
             BigDecimal.ZERO
         }
 
-        // Savings score out of 100 (25%+ savings rate = 100 pts)
-        val savingsScore = (savingsRatePct.toDouble() * 4.0).toInt().coerceIn(0, 100)
+        // 2 points per % saved; 20%+ earns the full 40.
+        val savingsScore = savingsRatePct.multiply(BigDecimal(2)).setScale(0, RoundingMode.HALF_UP).toInt().coerceIn(0, 40)
 
         val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates, categories)
         val compliantCount = evaluatedBudgets.count { it.usagePercentage <= BigDecimal("100") }
@@ -182,7 +184,9 @@ object FinancialCalculators {
             BigDecimal.valueOf(compliantCount * 100L)
                 .divide(BigDecimal.valueOf(evaluatedBudgets.size.toLong()), 1, RoundingMode.HALF_UP)
         } else BigDecimal("100.0")
-        val budgetScore = budgetCompliancePct.toInt().coerceIn(0, 100)
+        // Share of budgets within their limit, scaled to 30 points.
+        val budgetScore = budgetCompliancePct.multiply(BigDecimal(30))
+            .divide(BigDecimal(100), 0, RoundingMode.HALF_UP).toInt().coerceIn(0, 30)
 
         val totalDebt = lendingRecords.filter { it.type == "BORROWED" && !it.isSettled && !it.isForgiven }
             .fold(BigDecimal.ZERO) { acc, r ->
@@ -195,30 +199,36 @@ object FinancialCalculators {
             BigDecimal("100.0")
         } else BigDecimal.ZERO
 
-        val dtiScore = (100 - dtiPct.toInt()).coerceIn(0, 100)
+        // Debt up to 10% of income keeps all 30 points, 60%+ leaves none, linear in between.
+        val dtiScore = when {
+            dtiPct <= BigDecimal(10) -> 30
+            dtiPct >= BigDecimal(60) -> 0
+            else -> 30 - (dtiPct - BigDecimal(10)).multiply(BigDecimal(30))
+                .divide(BigDecimal(50), 0, RoundingMode.HALF_UP).toInt()
+        }.coerceIn(0, 30)
 
-        val overall = ((savingsScore * 0.40) + (budgetScore * 0.35) + (dtiScore * 0.25)).toInt().coerceIn(0, 100)
+        val overall = (savingsScore + budgetScore + dtiScore).coerceIn(0, 100)
         val grade = when {
-            overall >= 90 -> "A+"
-            overall >= 80 -> "A"
+            overall >= 85 -> "A"
             overall >= 70 -> "B"
-            overall >= 60 -> "C"
-            overall >= 45 -> "D"
+            overall >= 55 -> "C"
+            overall >= 40 -> "D"
             else -> "F"
         }
 
+        // Kept for API parity; the app shows localized tips derived from the scores instead.
         val recommendations = buildList {
-            if (savingsRatePct < BigDecimal("15")) {
-                add("Aim to save at least 15-20% of monthly income by automating transfers to Savings Goals.")
+            if (savingsRatePct < BigDecimal("20")) {
+                add("Target saving at least 20% of your monthly income to maximize long-term resilience.")
             }
-            if (evaluatedBudgets.any { it.usagePercentage > BigDecimal("90") }) {
-                add("One or more budget envelopes are above 90% utilization; check your Daily Burn Rate limit.")
+            if (budgetCompliancePct < BigDecimal("100")) {
+                add("One or more budget envelopes exceeded their limits. Review discretionary categories.")
             }
-            if (totalDebt > BigDecimal.ZERO) {
-                add("Prioritize settling outstanding borrowed balances (${CurrencyFormatter.format(totalDebt, baseCurrency)}).")
+            if (dtiPct > BigDecimal("30")) {
+                add("Prioritize settling high-ratio borrowed obligations to improve your debt-to-income index.")
             }
             if (isEmpty()) {
-                add("Excellent financial discipline! Your savings rate, budgets, and debt ratio are in optimal shape.")
+                add("Your financial health metrics are in great shape. Consider allocating surplus to savings goals.")
             }
         }
 

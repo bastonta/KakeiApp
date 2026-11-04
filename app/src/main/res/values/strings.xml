@@ -439,4 +439,55 @@
         <item quantity="one">across %d goal</item>
         <item quantity="other">across %d goals</item>
     </plurals>
+    <!-- Analytics overview: period statistics -->
+    <string name="stats_period_month">Month</string>
+    <string name="stats_period_year">Year</string>
+    <string name="stats_period_custom">Range</string>
+    <string name="stats_previous_period">Previous period</string>
+    <string name="stats_next_period">Next period</string>
+    <string name="stats_in_progress">in progress</string>
+    <string name="stats_compared_with">Changes are compared with %1$s</string>
+    <string name="stats_net">Net</string>
+    <string name="stats_savings_rate">Savings rate</string>
+    <string name="stats_avg_per_day">Average per day</string>
+    <string name="stats_records">Records</string>
+    <string name="stats_no_spend_days">No-spend days</string>
+    <string name="stats_cash_flow_title">Income and expenses</string>
+    <string name="stats_tap_bar_hint">Tap a bar</string>
+    <string name="stats_by_category">By category</string>
+    <string name="stats_top_category">Largest category</string>
+    <string name="stats_no_income">No income in this period.</string>
+    <string name="stats_without_subcategory">Without subcategory</string>
+    <string name="stats_show_all">Show all (%1$d)</string>
+    <string name="stats_show_less">Show less</string>
+    <string name="stats_weekday_title">By day of week</string>
+    <string name="stats_weekday_peak">Average spending per day. Peak: %1$s, %2$s</string>
+    <string name="stats_avg_workday">Average workday</string>
+    <string name="stats_avg_weekend">Average weekend day</string>
+    <string name="stats_no_spending_day">No spending</string>
+    <string name="stats_highlights">Highlights</string>
+    <string name="stats_largest_expense">Largest expense</string>
+    <string name="stats_busiest_day">Most expensive day</string>
+    <string name="stats_unconverted">Records without a known exchange rate are left out: %1$d</string>
+    <!-- Financial Health Score -->
+    <string name="health_period_hint">Based on the last 30 days</string>
+    <string name="health_points">%1$d/%2$d</string>
+    <string name="health_budgets_within_limit">Budgets within limit</string>
+    <string name="health_how_it_works">How the score works</string>
+    <string name="health_info_intro">The score from 0 to 100 adds up three parts, calculated over the last 30 days.</string>
+    <string name="health_info_savings">• Savings rate, up to 40 points: the share of income left after expenses. 2 points for every percent; saving 20% or more gives all 40. If expenses exceed income, it gives 0.</string>
+    <string name="health_info_budgets">• Budgets, up to 30 points: the share of your budgets that stay within their limit. Without budgets you get all 30.</string>
+    <string name="health_info_debt">• Debt to income, up to 30 points: money you borrowed and have not returned yet, compared with income for 30 days. Up to 10% keeps all 30 points, 60% or more gives 0.</string>
+    <string name="health_info_grades">Grades: A from 85, B from 70, C from 55, D from 40, F below 40.</string>
+    <string name="health_tip_no_income">No income in the last 30 days, so savings get 0 points. Add your income records to make the score accurate.</string>
+    <string name="health_tip_overspent">Expenses exceeded income by %1$s%% over 30 days. Cut back on optional spending to start earning savings points.</string>
+    <string name="health_tip_savings_low">You save %1$s%% of income. Reaching 20%% gives the full 40 points.</string>
+    <string name="health_tip_budgets">Some budgets are over their limit. Check the categories that went over.</string>
+    <string name="health_tip_debt">Unpaid debts are %1$s%% of monthly income. Paying them down raises the score.</string>
+    <string name="health_tip_great">Everything is in great shape. Consider putting the surplus into savings goals.</string>
+
+    <plurals name="stats_days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
 </resources>

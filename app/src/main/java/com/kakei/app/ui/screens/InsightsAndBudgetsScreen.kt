@@ -66,8 +66,8 @@ import java.util.Locale
 private const val DONUT_TOP_CATEGORIES = 5
 
 /**
- * Tab 2: Analytics — Overview (health score, 30-day cash flow forecast, category split,
- * spending heatmap, insights), Envelope Budgets and the Planned Obligations list.
+ * Tab 2: Analytics — Overview (period statistics and the health score, see [AnalyticsOverview]),
+ * Envelope Budgets and the Planned Obligations list with the 30-day cash flow forecast.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,8 +82,6 @@ fun InsightsAndBudgetsScreen(
     forecast: CashFlowForecastDto,
     healthScore: FinancialHealthScoreDto,
     streaks: NoSpendStreakDto,
-    heatmaps: SpendingHeatmapsDto,
-    insights: InsightsSummaryDto,
     repository: KakeiRepository
 ) {
     val s = LocalResources.current
@@ -110,16 +108,14 @@ fun InsightsAndBudgetsScreen(
         }
 
         when (subTab) {
-            0 -> AnalyticsInsightsSubScreen(
+            0 -> AnalyticsOverview(
                 baseCurrency = baseCurrency,
                 langCode = langCode,
+                accounts = accounts,
                 categories = categories,
                 transactions = transactions,
-                forecast = forecast,
                 healthScore = healthScore,
                 streaks = streaks,
-                heatmaps = heatmaps,
-                insights = insights,
                 repository = repository
             )
             1 -> BudgetsSubScreen(
@@ -384,364 +380,11 @@ fun InsightsAndBudgetsScreen(
 // ============================================================================
 
 @Composable
-private fun AnalyticsInsightsSubScreen(
-    baseCurrency: String,
-    langCode: String,
-    categories: List<CategoryDto>,
-    transactions: List<TransactionDto>,
-    forecast: CashFlowForecastDto,
-    healthScore: FinancialHealthScoreDto,
-    streaks: NoSpendStreakDto,
-    heatmaps: SpendingHeatmapsDto,
-    insights: InsightsSummaryDto,
-    repository: KakeiRepository
-) {
-    val s = LocalResources.current
-    val c = KakeiTheme.colors
-    val rateBook by repository.rateBook.collectAsState()
-    val spendCurrency = insights.currency.ifBlank { baseCurrency }
-
-    // Current-month expenses per category in the insights currency; split records are
-    // attributed to their split categories. Subcategories roll up into their top-level
-    // group so the donut stays readable. Records without a known rate are left out.
-    val categorySpend = remember(transactions, categories, rateBook, spendCurrency) {
-        val parentOf = categories.associate { it.id to it.parentId }
-        fun topLevel(catId: String?): String? = catId?.let { parentOf[it] ?: it }
-        val month = YearMonth.now()
-        val totals = linkedMapOf<String?, BigDecimal>()
-        transactions.forEach { tx ->
-            if (tx.type != "EXPENSE") return@forEach
-            val date = bookingDateTime(tx.bookingDate)?.toLocalDate() ?: return@forEach
-            if (YearMonth.from(date) != month) return@forEach
-            val parts = if (tx.splits.isNotEmpty()) tx.splits.map { topLevel(it.categoryId) to it.amount } else listOf(topLevel(tx.categoryId) to tx.amount)
-            parts.forEach { (catId, amt) ->
-                val converted = CurrencyFormatter.convert(amt.abs(), tx.currency, spendCurrency, rateBook) ?: return@forEach
-                totals[catId] = (totals[catId] ?: BigDecimal.ZERO) + converted
-            }
-        }
-        totals.entries.sortedByDescending { it.value }.map { it.key to it.value }
-    }
-
-    LazyColumn(
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item { HealthScoreCard(healthScore) }
-        item { ForecastCard(forecast) }
-        item {
-            CategoryDonutCard(
-                spend = categorySpend,
-                categories = categories,
-                langCode = langCode,
-                currency = spendCurrency,
-                title = s.getString(R.string.spending_by_category),
-                subtitle = monthName(LocalDate.now().monthValue, s),
-                delta = insights.monthOverMonthDeltaPercentage.takeIf { insights.previousMonthSpent.signum() > 0 },
-                deltaSuffix = s.getString(R.string.vs_last)
-            )
-        }
-        item { SpendingHeatmapCard(heatmaps, streaks) }
-
-        // Month projection, small spends, weekday vs weekend, 12-month matrix
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .kakeiCard(cornerRadius = 24.dp)
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(s.getString(R.string.month_comparison_title), style = MaterialTheme.typography.titleLarge, color = c.text)
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    StatColumn(
-                        caption = s.getString(R.string.current_month),
-                        value = formatMoney(insights.currentMonthSpent, insights.currency),
-                        valueColor = c.text,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatColumn(
-                        caption = s.getString(R.string.month_end_projection_title),
-                        value = formatMoney(insights.monthEndProjectedSpend, insights.currency),
-                        valueColor = c.amber,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                RowDivider()
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    StatColumn(
-                        caption = "${s.getString(R.string.small_spends_title)} · ${insights.smallSpendsCount}",
-                        value = formatMoney(insights.smallSpendsTotal, insights.currency),
-                        valueColor = c.text,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatColumn(
-                        caption = s.getString(R.string.weekday_weekend),
-                        value = "${CurrencyFormatter.format(insights.weekdaySpendTotal, insights.currency)} / " +
-                            CurrencyFormatter.format(insights.weekendSpendTotal, insights.currency),
-                        valueColor = c.text,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                val months = heatmaps.monthlySummaries.filter { it.totalSpent > BigDecimal.ZERO }
-                if (months.isNotEmpty()) {
-                    RowDivider()
-                    Text(s.getString(R.string.spending_by_month), style = MaterialTheme.typography.labelLarge, color = c.muted)
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        months.forEach { m ->
-                            Column(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(c.surf2)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                Text(monthLabel(m.month, localeFor(s)), style = MaterialTheme.typography.labelSmall, color = c.muted)
-                                Text(
-                                    text = CurrencyFormatter.format(m.totalSpent, heatmaps.currency),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = c.text
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Top Merchants Leaderboard
-        if (insights.topPayees.isNotEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .kakeiCard(cornerRadius = 24.dp)
-                        .padding(vertical = 8.dp)
-                ) {
-                    Text(
-                        s.getString(R.string.top_payees_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = c.text,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
-                    )
-                    insights.topPayees.forEachIndexed { idx, entry ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 18.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "${idx + 1}",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = c.faint,
-                                modifier = Modifier.width(22.dp)
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(payeeLabel(entry.payee, s), style = MaterialTheme.typography.titleMedium, color = c.text)
-                                Text(
-                                    s.getString(R.string.records_short, entry.transactionCount),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = c.muted
-                                )
-                            }
-                            Text(
-                                formatMoney(entry.totalSpent, insights.currency),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = c.text
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatColumn(caption: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
+internal fun StatColumn(caption: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
     val c = KakeiTheme.colors
     Column(modifier = modifier) {
         Text(caption, style = MaterialTheme.typography.bodySmall, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(value, style = MaterialTheme.typography.titleMedium, color = valueColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-/** Financial Health Score card: 0..100 ring, grade and the three sub-scores as bars. */
-@Composable
-private fun HealthScoreCard(healthScore: FinancialHealthScoreDto) {
-    val s = LocalResources.current
-    val c = KakeiTheme.colors
-    val scoreColor = when {
-        healthScore.overallScore >= 70 -> c.mint
-        healthScore.overallScore >= 40 -> c.amber
-        else -> c.coral
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kakeiCard(cornerRadius = 24.dp)
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            KakeiRing(
-                progress = healthScore.overallScore / 100f,
-                color = scoreColor,
-                size = 100.dp,
-                strokeWidth = 9.dp
-            ) {
-                Text(
-                    "${healthScore.overallScore}",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = c.text
-                )
-            }
-            Spacer(modifier = Modifier.width(18.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(s.getString(R.string.health_score_title), style = MaterialTheme.typography.titleLarge, color = c.text)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(healthScore.grade, style = MaterialTheme.typography.titleSmall, color = scoreColor)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(gradeLabel(healthScore.overallScore, s), style = MaterialTheme.typography.bodyMedium, color = c.muted)
-                }
-                ScoreBar(s.getString(R.string.savings_rate), healthScore.savingsRatePercentage, c.mint)
-                ScoreBar(s.getString(R.string.tab_budgets), healthScore.budgetCompliancePercentage, c.cyan)
-                ScoreBar(s.getString(R.string.debt_income), healthScore.debtToIncomePercentage, c.amber)
-            }
-        }
-        if (healthScore.recommendations.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.mint.copy(alpha = 0.10f))
-                    .padding(12.dp)
-            ) {
-                Icon(Icons.Outlined.Bolt, contentDescription = null, tint = c.mint, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    healthScore.recommendations.forEach { rec ->
-                        Text(rec, style = MaterialTheme.typography.bodyMedium, color = c.text)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScoreBar(label: String, percentage: BigDecimal, color: Color) {
-    val c = KakeiTheme.colors
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Text(label, style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.weight(1f))
-            Text(
-                "${percentage.setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
-                style = MaterialTheme.typography.labelMedium,
-                color = c.text
-            )
-        }
-        KakeiProgressBar(progress = percentage.toFloat() / 100f, color = color, height = 4.dp)
-    }
-}
-
-private fun gradeLabel(score: Int, s: Resources): String = when {
-    score >= 85 -> s.getString(R.string.excellent)
-    score >= 70 -> s.getString(R.string.good)
-    score >= 50 -> s.getString(R.string.fair)
-    else -> s.getString(R.string.needs_attention)
-}
-
-/** 30-day projected balance chart with planned income / payments and the obligation load. */
-@Composable
-private fun ForecastCard(forecast: CashFlowForecastDto) {
-    val s = LocalResources.current
-    val c = KakeiTheme.colors
-    val currency = forecast.baseCurrency
-    val change = if (forecast.currentLiquidBalance.signum() > 0) {
-        (forecast.forecastedEndBalance - forecast.currentLiquidBalance)
-            .multiply(BigDecimal(100))
-            .divide(forecast.currentLiquidBalance, 1, RoundingMode.HALF_UP)
-    } else null
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kakeiCard(cornerRadius = 24.dp)
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    s.getString(R.string.day_forecast, forecast.horizonDays),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = c.muted
-                )
-                Text(
-                    formatMoney(forecast.forecastedEndBalance, currency),
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = if (forecast.liquidityDeficitAlert) c.coral else c.text
-                )
-            }
-            if (change != null && change.signum() != 0) {
-                val positive = change.signum() > 0
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background((if (positive) c.mint else c.coral).copy(alpha = 0.14f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        if (positive) Icons.Outlined.NorthEast else Icons.Outlined.SouthEast,
-                        contentDescription = null,
-                        tint = if (positive) c.mint else c.coral,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        (if (positive) "+" else "−") + change.abs().stripTrailingZeros().toPlainString().replace('.', ',') + "%",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (positive) c.mint else c.coral
-                    )
-                }
-            }
-        }
-
-        if (forecast.liquidityDeficitAlert) {
-            Text(s.getString(R.string.liquidity_alert_text), style = MaterialTheme.typography.bodyMedium, color = c.coral)
-        }
-
-        if (forecast.dailyTimeline.size >= 2) {
-            ForecastChart(forecast)
-        }
-
-        RowDivider()
-        Row(modifier = Modifier.fillMaxWidth()) {
-            StatColumn(
-                caption = s.getString(R.string.income),
-                value = "+" + CurrencyFormatter.format(forecast.plannedIncomeTotal, currency),
-                valueColor = c.mint,
-                modifier = Modifier.weight(1f)
-            )
-            StatColumn(
-                caption = s.getString(R.string.payments),
-                value = "−" + CurrencyFormatter.format(forecast.plannedExpenseTotal, currency),
-                valueColor = c.coral,
-                modifier = Modifier.weight(1f)
-            )
-            StatColumn(
-                caption = s.getString(R.string.load),
-                value = "${forecast.obligationToLiquidityRatio.setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
-                valueColor = c.text,
-                modifier = Modifier.weight(0.7f)
-            )
-        }
     }
 }
 
@@ -963,117 +606,6 @@ internal fun CategoryDonutCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(s.getString(R.string.total), style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.weight(1f))
             Text(formatMoney(total, currency), style = MaterialTheme.typography.headlineMedium, color = c.text, maxLines = 1)
-        }
-    }
-}
-
-/** Month calendar of daily spending intensity (0..4) with the current no-spend streak. */
-@Composable
-private fun SpendingHeatmapCard(heatmaps: SpendingHeatmapsDto, streaks: NoSpendStreakDto) {
-    val s = LocalResources.current
-    val c = KakeiTheme.colors
-    val cells = heatmaps.calendarDays
-    val firstDate = cells.firstOrNull()?.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
-    val monthValue = heatmaps.month ?: firstDate?.monthValue ?: LocalDate.now().monthValue
-    // Monday-first grid: pad the first week up to the weekday of the 1st.
-    val leading = firstDate?.dayOfWeek?.let { it.value - DayOfWeek.MONDAY.value } ?: 0
-    val today = LocalDate.now().toString()
-    fun levelColor(level: Int): Color = when (level) {
-        1 -> c.mint.copy(alpha = 0.22f)
-        2 -> c.mint.copy(alpha = 0.42f)
-        3 -> c.mint.copy(alpha = 0.68f)
-        4 -> c.mint
-        else -> c.surf2
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kakeiCard(cornerRadius = 24.dp)
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                s.getString(R.string.daily_spending),
-                style = MaterialTheme.typography.titleLarge,
-                color = c.text,
-                modifier = Modifier.weight(1f)
-            )
-            Text(monthName(monthValue, s), style = MaterialTheme.typography.bodyMedium, color = c.muted)
-        }
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            DayOfWeek.entries.forEach { day ->
-                Text(
-                    day.getDisplayName(TextStyle.SHORT_STANDALONE, localeFor(s)).replaceFirstChar { it.titlecase(localeFor(s)) },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = c.faint,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-        val slots: List<HeatmapDayCellDto?> = List(leading) { null } + cells
-        slots.chunked(7).forEach { week ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                week.forEach { cell ->
-                    if (cell == null) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    } else {
-                        val isToday = cell.date.take(10) == today
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1.15f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(levelColor(cell.intensityLevel))
-                                .then(
-                                    if (isToday) {
-                                        Modifier.border(1.5.dp, c.text.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                                    } else Modifier
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                cell.date.takeLast(2).trimStart('0'),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = when {
-                                    cell.intensityLevel >= 3 -> c.mintInk
-                                    cell.intensityLevel > 0 -> c.text
-                                    else -> c.faint
-                                }
-                            )
-                        }
-                    }
-                }
-                repeat(7 - week.size) { Spacer(modifier = Modifier.weight(1f)) }
-            }
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.LocalFireDepartment, contentDescription = null, tint = c.amber, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            val n = streaks.currentStreakDays
-            Text(
-                s.getQuantityString(R.plurals.days_without_spending, n.toInt(), n),
-                style = MaterialTheme.typography.titleSmall,
-                color = c.text
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(s.getString(R.string.less), style = MaterialTheme.typography.labelSmall, color = c.faint)
-            Spacer(modifier = Modifier.width(4.dp))
-            (0..4).forEach { level ->
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 1.5.dp)
-                        .size(9.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(levelColor(level))
-                )
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(s.getString(R.string.more), style = MaterialTheme.typography.labelSmall, color = c.faint)
         }
     }
 }
@@ -1355,6 +887,30 @@ private fun PlanningSubScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                if (forecast.dailyTimeline.size >= 2) {
+                    ForecastChart(forecast)
+                }
+                RowDivider()
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    StatColumn(
+                        caption = s.getString(R.string.income),
+                        value = "+" + CurrencyFormatter.format(forecast.plannedIncomeTotal, forecast.baseCurrency),
+                        valueColor = c.mint,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatColumn(
+                        caption = s.getString(R.string.payments),
+                        value = "−" + CurrencyFormatter.format(forecast.plannedExpenseTotal, forecast.baseCurrency),
+                        valueColor = c.coral,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatColumn(
+                        caption = s.getString(R.string.load),
+                        value = "${forecast.obligationToLiquidityRatio.setScale(0, RoundingMode.HALF_UP).toPlainString()}%",
+                        valueColor = c.text,
+                        modifier = Modifier.weight(0.7f)
+                    )
+                }
             }
         }
 
@@ -1433,12 +989,3 @@ private fun PlanningSubScreen(
 /** Tap and long-press both open the row's action menu. */
 private fun Modifier.combinedClickableCompat(onOpen: () -> Unit): Modifier =
     this.combinedClickable(onClick = onOpen, onLongClick = onOpen)
-
-/** Short month name for the yearly matrix, e.g. "окт." / "Oct". */
-private fun monthLabel(month: Int, locale: Locale): String {
-    return Month.of(month.coerceIn(1, 12)).getDisplayName(TextStyle.SHORT_STANDALONE, locale)
-}
-
-/** The server reports records without a payee as "Unknown Merchant"; show that in the UI language. */
-private fun payeeLabel(payee: String, s: Resources): String =
-    if (payee.isBlank() || payee == "Unknown Merchant") s.getString(R.string.unknown_merchant) else payee

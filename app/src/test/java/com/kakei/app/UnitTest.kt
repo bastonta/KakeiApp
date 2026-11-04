@@ -22,6 +22,9 @@ import com.kakei.app.data.remote.dto.SplitDto
 import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.domain.calculators.FinancialCalculators
 import com.kakei.app.domain.calculators.ObligationSchedule
+import com.kakei.app.domain.calculators.PeriodStatistics
+import com.kakei.app.domain.calculators.StatsBucketSize
+import com.kakei.app.domain.calculators.StatsPeriod
 import com.kakei.app.ui.screens.CategoryTree
 import com.kakei.app.ui.screens.detailsSummary
 import com.kakei.app.ui.screens.frequentCategoryIds
@@ -546,5 +549,60 @@ class UnitTest {
             Duration.ofHours(21).plusMinutes(44).plusSeconds(30),
             ExpenseReminderScheduler.delayUntilNext(late, 21 * 60)
         )
+    }
+
+    @Test
+    fun periodStatistics_comparesSameSliceAndRollsUpCategories() {
+        val today = LocalDate.of(2026, 11, 4)
+        val period = StatsPeriod.month(java.time.YearMonth.of(2026, 11), today)
+        assertEquals(LocalDate.of(2026, 11, 4), period.elapsedEnd)
+        assertEquals(LocalDate.of(2026, 10, 1), period.previousStart)
+        assertEquals(LocalDate.of(2026, 10, 4), period.previousEnd)
+        assertEquals(StatsBucketSize.DAY, period.bucketSize)
+        assertEquals(4L, period.elapsedDays)
+
+        val categories = listOf(
+            CategoryDto(id = "food", name = "Food"),
+            CategoryDto(id = "cafe", parentId = "food", name = "Cafe"),
+            CategoryDto(id = "car", name = "Car")
+        )
+        val accounts = listOf(
+            AccountDto(id = "a", name = "Main", accountType = "CHECKING", currency = "KZT"),
+            AccountDto(id = "x", name = "Hidden", accountType = "CASH", currency = "KZT", isExcludedFromStats = true)
+        )
+        fun tx(id: String, type: String, amount: String, date: String, cat: String? = null, account: String = "a",
+               splits: List<SplitDto> = emptyList(), pair: String? = null) = TransactionDto(
+            id = id, accountId = account, categoryId = cat, type = type, amount = BigDecimal(amount),
+            currency = "KZT", bookingDate = date, splits = splits, transferPairId = pair, payee = "Shop"
+        )
+        val txs = listOf(
+            tx("1", "EXPENSE", "1000", "2026-11-02", "cafe"),
+            tx("2", "EXPENSE", "3000", "2026-11-03", null, splits = listOf(
+                SplitDto(categoryId = "food", amount = BigDecimal("1000")),
+                SplitDto(categoryId = "car", amount = BigDecimal("2000"))
+            )),
+            tx("3", "INCOME", "10000", "2026-11-01"),
+            tx("4", "EXPENSE", "500", "2026-11-02", "car", account = "x"),
+            tx("5", "EXPENSE", "700", "2026-11-02", pair = "p1"),
+            tx("6", "EXPENSE", "2000", "2026-10-03", "food"),
+            tx("7", "EXPENSE", "9000", "2026-10-20", "food")
+        )
+        val stats = PeriodStatistics.calculate(txs, categories, accounts, period, "KZT", zone = ZoneId.of("UTC"))
+
+        assertEquals(BigDecimal("4000.00"), stats.expense)
+        assertEquals(BigDecimal("10000.00"), stats.income)
+        // Only Oct 1–4 counts as the previous slice, not the whole October.
+        assertEquals(BigDecimal("2000.00"), stats.previousExpense)
+        assertEquals(BigDecimal("100"), PeriodStatistics.deltaPercent(stats.expense, stats.previousExpense))
+        assertEquals(BigDecimal("60.0"), stats.savingsRate)
+        assertEquals(30, stats.buckets.size)
+
+        val food = stats.expenseByCategory.first { it.categoryId == "food" }
+        assertEquals(BigDecimal("2000.00"), food.amount)
+        assertEquals(BigDecimal("2000.00"), food.previousAmount)
+        assertEquals(2, food.children.size)
+        assertEquals(BigDecimal("2000.00"), stats.expenseByCategory.first { it.categoryId == "car" }.amount)
+        assertEquals(BigDecimal("3000.00"), stats.largestExpense?.amount)
+        assertEquals(2, stats.noSpendDays)
     }
 }
