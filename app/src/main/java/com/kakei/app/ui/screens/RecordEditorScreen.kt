@@ -56,7 +56,8 @@ import java.util.UUID
  * - Details: payee autocomplete (filling in the payee's last category), note, booking date and
  *   time (now for a new record), labels, clearing status and splits
  *
- * With [initialRecord] the form is prefilled for editing; type and accounts stay fixed.
+ * With [initialRecord] the form is prefilled for editing; accounts stay fixed, and only an
+ * expense / income may switch between the two (a transfer stays a transfer).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -73,6 +74,11 @@ fun RecordEditorScreen(
     rateFor: (fromCurrency: String, toCurrency: String) -> BigDecimal?,
     /** Record being edited (the debit leg for a transfer), or null for a new record. */
     initialRecord: TransactionDto? = null,
+    /**
+     * Offered while editing a record that waits for review: when ticked, saving also learns a
+     * smart rule mapping the payee to the chosen category.
+     */
+    onCreateRule: ((payee: String, categoryId: String) -> Unit)? = null,
     onDismiss: () -> Unit,
     onSave: (
         accountId: String,
@@ -138,6 +144,8 @@ fun RecordEditorScreen(
     }
     // Untouched: a new record is booked at the moment of saving, an edit keeps its timestamp.
     var bookingTouched by remember { mutableStateOf(false) }
+    val offerRule = onCreateRule != null && initialRecord?.needsReview == true
+    var createRule by remember { mutableStateOf(true) }
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
     val currency = selectedAccount?.currency ?: "KZT"
@@ -185,6 +193,8 @@ fun RecordEditorScreen(
         else -> s.getString(R.string.save_expense)
     }
     val types = listOf("EXPENSE" to s.getString(R.string.expense_label), "INCOME" to s.getString(R.string.income_label), "TRANSFER" to s.getString(R.string.transfer_label))
+        // An existing expense / income may only flip between the two; a transfer keeps its type.
+        .filter { !editing || (initialRecord?.type != "TRANSFER" && it.first != "TRANSFER") }
 
     var page by remember { mutableStateOf(EditorPage.MAIN) }
     val frequentIds = remember(transactions, categories, recordType) {
@@ -456,8 +466,8 @@ fun RecordEditorScreen(
                         .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // Type Tabs: EXPENSE / INCOME / TRANSFER (fixed once the record exists)
-                    if (!editing) {
+                    // Type Tabs: EXPENSE / INCOME / TRANSFER (an edit offers expense / income only)
+                    if (types.size > 1) {
                         KakeiSegmented(
                             options = types.map { it.second },
                             selectedIndex = types.indexOfFirst { it.first == recordType },
@@ -607,6 +617,17 @@ fun RecordEditorScreen(
                         height = 60.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (offerRule && payee.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = createRule, onCheckedChange = { createRule = it })
+                            Text(
+                                text = s.getString(R.string.create_smart_rule),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = c.text
+                            )
+                        }
+                    }
                 }
 
                 // Built-in calculator keypad, anchored above the save button
@@ -677,6 +698,10 @@ fun RecordEditorScreen(
                     onClick = {
                         val evaluated = evaluateExpression(expression)
                         if (evaluated > BigDecimal.ZERO && selectedAccountId.isNotBlank() && crossCurrencyReady) {
+                            val ruleCategory = selectedCategoryId
+                            if (offerRule && createRule && payee.isNotBlank() && ruleCategory != null && recordType != "TRANSFER") {
+                                onCreateRule?.invoke(payee.trim(), ruleCategory)
+                            }
                             onSave(
                                 selectedAccountId,
                                 recordType,

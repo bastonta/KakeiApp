@@ -303,8 +303,11 @@ fun KakeiAppRoot(
                                 onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
                                 rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
                                 initialRecord = recordToEdit,
+                                onCreateRule = { payee, catId ->
+                                    repository.createSmartRule(pattern = payee, matchType = "CONTAINS", categoryId = catId)
+                                },
                                 onDismiss = { editingRecord = null },
-                                onSave = { _, _, amt, catId, payee, note, status, _, splits, labelIds, targetAmount, bookingDateIso ->
+                                onSave = { _, type, amt, catId, payee, note, status, _, splits, labelIds, targetAmount, bookingDateIso ->
                                     repository.updateRecord(
                                         record = recordToEdit,
                                         amount = amt,
@@ -315,7 +318,8 @@ fun KakeiAppRoot(
                                         splits = splits,
                                         labelIds = labelIds,
                                         targetAmount = targetAmount,
-                                        bookingDateIso = bookingDateIso
+                                        bookingDateIso = bookingDateIso,
+                                        type = type
                                     )
                                     editingRecord = null
                                 }

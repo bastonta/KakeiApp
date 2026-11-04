@@ -557,6 +557,8 @@ data class UpdateRecordItem(
     val note: String? = null,
     val status: String? = null,
     val needsReview: Boolean? = null,
+    /** `EXPENSE` or `INCOME`: switches a non-transfer record between the two. */
+    val type: String? = null,
     val splits: List<SplitItemInput>? = null,
     val labelIds: List<String>? = null,
     /**

@@ -199,7 +199,7 @@ fun HomeScreen(
                         size = 44.dp,
                         onClick = {
                             val first = needsReviewItems.firstOrNull()
-                            if (first != null) reviewTargetRecord = first else showNoNotifications = true
+                            if (first != null) onEditRecord(first) else showNoNotifications = true
                         }
                     )
                     DropdownMenu(expanded = showNoNotifications, onDismissRequest = { showNoNotifications = false }) {
@@ -287,7 +287,7 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .kakeiCard(cornerRadius = 16.dp, color = c.amber.copy(alpha = 0.10f), borderColor = c.amber.copy(alpha = 0.25f))
-                        .clickable { reviewTargetRecord = needsReviewItems.first() }
+                        .clickable { onEditRecord(needsReviewItems.first()) }
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {

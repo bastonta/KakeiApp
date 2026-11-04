@@ -582,7 +582,7 @@ private fun rangeLabel(range: ClosedRange<LocalDate>, s: Resources): String {
 
 /**
  * A ledger record row with its tap / long-press menu (edit, confirm category, delete), shared by the
- * Home ledger and the transactions page. Tapping a record that needs review opens the review.
+ * Home ledger and the transactions page. Tapping a record that needs review opens the editor.
  */
 @Composable
 internal fun LedgerRecordItem(
@@ -633,7 +633,7 @@ internal fun LedgerRecordItem(
                 labels.joinToString(" ") { "#${it.name}" }.takeIf { labels.isNotEmpty() }
             ).joinToString(" · ").ifBlank { null },
             modifier = Modifier.combinedClickable(
-                onClick = { if (tx.needsReview) onReview(tx) else menuOpen = true },
+                onClick = { if (tx.needsReview) onEdit(tx) else menuOpen = true },
                 onLongClick = { menuOpen = true }
             )
         )
@@ -690,6 +690,14 @@ internal fun ReviewRecordDialog(
                     text = "${record.payee ?: s.getString(R.string.record)} · ${signedRecordAmount(record)}",
                     style = MaterialTheme.typography.titleMedium
                 )
+                // When and what the bank said, so it is clear which operation is being confirmed.
+                val booked = bookingDateTime(record.bookingDate)
+                listOfNotNull(
+                    booked?.let { "${dayLabel(it.toLocalDate(), s)}, ${it.format(DateTimeFormatter.ofPattern("HH:mm"))}" },
+                    record.note?.takeIf { it.isNotBlank() }
+                ).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
+                    Text(text = it, style = MaterialTheme.typography.bodySmall, color = KakeiTheme.colors.muted)
+                }
                 CategoryPickerRow(
                     categories = categories,
                     selectedId = chosenCategory,
@@ -704,11 +712,10 @@ internal fun ReviewRecordDialog(
         },
         confirmButton = {
             Button(
+                enabled = chosenCategory.isNotBlank(),
                 onClick = {
-                    if (chosenCategory.isNotBlank()) {
-                        onConfirm(chosenCategory, createSmartRule)
-                        onDismiss()
-                    }
+                    onConfirm(chosenCategory, createSmartRule)
+                    onDismiss()
                 }
             ) {
                 Text(s.getString(R.string.confirm_category))

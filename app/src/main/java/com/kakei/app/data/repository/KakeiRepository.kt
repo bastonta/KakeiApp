@@ -1918,7 +1918,8 @@ class KakeiRepository(
         if (_instantCapturedRecord.value?.id == record.id) {
             _instantCapturedRecord.value = null
         }
-        if (createRule && !record.payee.isNullOrBlank()) {
+        val ruleCreatedLocally = createRule && !record.payee.isNullOrBlank()
+        if (ruleCreatedLocally) {
             createSmartRule(
                 pattern = record.payee,
                 matchType = "CONTAINS",
@@ -1929,13 +1930,14 @@ class KakeiRepository(
         }
         enqueueMutation(
             "RECORD", record.id, "REVIEW",
-            database.json.encodeToString(ConfirmReviewRequest(categoryId = categoryId, createSmartRule = createRule))
+            // The rule above already syncs as its own RULE mutation; asking the server too would duplicate it.
+            database.json.encodeToString(ConfirmReviewRequest(categoryId = categoryId, createSmartRule = createRule && !ruleCreatedLocally))
         )
     }
 
     /**
-     * Edits an existing record. Account and type are fixed after creation (the server does not
-     * accept them on `PATCH /records`). For a transfer the edit goes through the debit leg: the
+     * Edits an existing record. The account is fixed after creation; the type may only flip
+     * between EXPENSE and INCOME on a non-transfer record ([type], null keeps it). For a transfer the edit goes through the debit leg: the
      * credit leg follows it (same amount, or exactly [targetAmount] across currencies), and each
      * leg's balance moves by the difference of its own effect, mirroring the server.
      */
@@ -1950,7 +1952,8 @@ class KakeiRepository(
         labelIds: List<String>,
         targetAmount: BigDecimal? = null,
         /** New booking timestamp (ISO instant); null keeps the current one. Moves both transfer legs. */
-        bookingDateIso: String? = null
+        bookingDateIso: String? = null,
+        type: String? = null
     ) {
         val legs = if (record.transferPairId != null) {
             database.listItems<TransactionDto>(KakeiDatabase.COL_TRANSACTIONS)
@@ -1967,11 +1970,14 @@ class KakeiRepository(
         val cleanPayee = payee?.trim()?.takeIf { it.isNotEmpty() }
         val cleanNote = note?.trim()?.takeIf { it.isNotEmpty() }
         val isTransfer = debit.type == "TRANSFER"
+        val newType = type?.takeIf { !isTransfer && debit.transferPairId == null && it in setOf("EXPENSE", "INCOME") }
+            ?: debit.type
         val newBookingDate = bookingDateIso?.takeIf {
             runCatching { Instant.parse(it) != Instant.parse(debit.bookingDate) }.getOrDefault(true)
         }
 
         val updatedDebit = debit.copy(
+            type = newType,
             amount = newAmount,
             convertedAmount = if (amountChanged) {
                 CurrencyFormatter.convert(newAmount, debit.currency, baseCurrency, rates) ?: debit.convertedAmount
@@ -2040,6 +2046,7 @@ class KakeiRepository(
             note = (cleanNote ?: "").takeIf { cleanNote != debit.note },
             status = status.takeIf { it != debit.status },
             needsReview = false.takeIf { debit.needsReview && !updatedDebit.needsReview },
+            type = newType.takeIf { it != debit.type },
             splits = if (!isTransfer && splits != debit.splits) {
                 splits.map { SplitItemInput(it.categoryId, it.amount, it.note) }
             } else null,
