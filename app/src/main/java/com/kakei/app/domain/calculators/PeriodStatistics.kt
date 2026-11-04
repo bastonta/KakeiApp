@@ -16,7 +16,7 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 /** How the Analytics overview picks its period. */
-enum class StatsPeriodKind { MONTH, YEAR, CUSTOM }
+enum class StatsPeriodKind(val months: Int = 0) { MONTH(1), MONTHS_3(3), MONTHS_6(6), YEAR(12), CUSTOM }
 
 /** Width of one bar in the income / expense chart. */
 enum class StatsBucketSize { DAY, WEEK, MONTH }
@@ -40,7 +40,8 @@ data class StatsPeriod(
     val bucketSize: StatsBucketSize
         get() = when (kind) {
             StatsPeriodKind.MONTH -> StatsBucketSize.DAY
-            StatsPeriodKind.YEAR -> StatsBucketSize.MONTH
+            StatsPeriodKind.MONTHS_3 -> StatsBucketSize.WEEK
+            StatsPeriodKind.MONTHS_6, StatsPeriodKind.YEAR -> StatsBucketSize.MONTH
             StatsPeriodKind.CUSTOM -> {
                 val days = ChronoUnit.DAYS.between(start, end) + 1
                 when {
@@ -54,6 +55,8 @@ data class StatsPeriod(
     /** The same kind of period shifted one step back ([steps] < 0) or forward; custom ranges keep their length. */
     fun shift(steps: Long, today: LocalDate = LocalDate.now()): StatsPeriod = when (kind) {
         StatsPeriodKind.MONTH -> month(YearMonth.from(start).plusMonths(steps), today)
+        StatsPeriodKind.MONTHS_3, StatsPeriodKind.MONTHS_6 ->
+            months(kind, YearMonth.from(end).plusMonths(steps * kind.months), today)
         StatsPeriodKind.YEAR -> year(start.year + steps.toInt(), today)
         StatsPeriodKind.CUSTOM -> {
             val len = ChronoUnit.DAYS.between(start, end) + 1
@@ -73,6 +76,17 @@ data class StatsPeriod(
             // Same day-of-month in the previous month (Mar 31 → Feb 28).
             val prevEnd = prev.atDay(minOf(elapsedEnd.dayOfMonth, prev.lengthOfMonth()))
             return StatsPeriod(StatsPeriodKind.MONTH, start, end, elapsedEnd, prev.atDay(1), prevEnd)
+        }
+
+        /** [kind].months whole months ending with [last] (e.g. Sep–Nov), compared with the months before them. */
+        fun months(kind: StatsPeriodKind, last: YearMonth, today: LocalDate = LocalDate.now()): StatsPeriod {
+            val n = kind.months.toLong()
+            val start = last.minusMonths(n - 1).atDay(1)
+            val end = last.atEndOfMonth()
+            val elapsedEnd = clampElapsed(start, end, today)
+            val prevStart = start.minusMonths(n)
+            val prevEnd = minOf(prevStart.plusDays(ChronoUnit.DAYS.between(start, elapsedEnd)), start.minusDays(1))
+            return StatsPeriod(kind, start, end, elapsedEnd, prevStart, prevEnd)
         }
 
         fun year(year: Int, today: LocalDate = LocalDate.now()): StatsPeriod {

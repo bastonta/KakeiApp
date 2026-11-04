@@ -443,6 +443,10 @@
     <string name="stats_period_month">Month</string>
     <string name="stats_period_year">Year</string>
     <string name="stats_period_custom">Range</string>
+    <string name="stats_period_3_months">3 mo</string>
+    <string name="stats_period_6_months">6 mo</string>
+    <string name="stats_pick_range">Select dates</string>
+    <string name="stats_pick_range_hint">Start – end</string>
     <string name="stats_previous_period">Previous period</string>
     <string name="stats_next_period">Next period</string>
     <string name="stats_in_progress">in progress</string>

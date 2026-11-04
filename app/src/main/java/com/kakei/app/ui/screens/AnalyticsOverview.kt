@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -88,6 +89,8 @@ internal fun AnalyticsOverview(
         val start = LocalDate.ofEpochDay(startDay)
         when (StatsPeriodKind.valueOf(kindName)) {
             StatsPeriodKind.MONTH -> StatsPeriod.month(YearMonth.from(start), today)
+            StatsPeriodKind.MONTHS_3, StatsPeriodKind.MONTHS_6 ->
+                StatsPeriod.months(StatsPeriodKind.valueOf(kindName), YearMonth.from(LocalDate.ofEpochDay(endDay)), today)
             StatsPeriodKind.YEAR -> StatsPeriod.year(start.year, today)
             StatsPeriodKind.CUSTOM -> StatsPeriod.custom(start, LocalDate.ofEpochDay(endDay), today)
         }
@@ -112,6 +115,8 @@ internal fun AnalyticsOverview(
                 onKind = { kind ->
                     when (kind) {
                         StatsPeriodKind.MONTH -> select(StatsPeriod.month(YearMonth.from(period.elapsedEnd), today))
+                        StatsPeriodKind.MONTHS_3, StatsPeriodKind.MONTHS_6 ->
+                            select(StatsPeriod.months(kind, YearMonth.from(period.elapsedEnd), today))
                         StatsPeriodKind.YEAR -> select(StatsPeriod.year(period.elapsedEnd.year, today))
                         StatsPeriodKind.CUSTOM -> showRangePicker = true
                     }
@@ -169,7 +174,33 @@ internal fun AnalyticsOverview(
                 TextButton(onClick = { showRangePicker = false }) { Text(s.getString(R.string.cancel_button)) }
             }
         ) {
-            DateRangePicker(state = state, showModeToggle = true, modifier = Modifier.weight(1f))
+            DateRangePicker(
+                state = state,
+                showModeToggle = true,
+                modifier = Modifier.weight(1f),
+                title = {
+                    Text(
+                        s.getString(R.string.stats_pick_range),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
+                    )
+                },
+                headline = {
+                    val from = state.selectedStartDateMillis?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                    val to = state.selectedEndDateMillis?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                    Text(
+                        when {
+                            from == null -> s.getString(R.string.stats_pick_range_hint)
+                            to == null -> rangeLabel(from, from, s) + " – …"
+                            else -> rangeLabel(from, to, s)
+                        },
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp)
+                    )
+                }
+            )
         }
     }
 }
@@ -196,9 +227,15 @@ private fun PeriodSelectorCard(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Five chips don't fit on narrow screens, so the row scrolls sideways.
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             listOf(
                 StatsPeriodKind.MONTH to R.string.stats_period_month,
+                StatsPeriodKind.MONTHS_3 to R.string.stats_period_3_months,
+                StatsPeriodKind.MONTHS_6 to R.string.stats_period_6_months,
                 StatsPeriodKind.YEAR to R.string.stats_period_year,
                 StatsPeriodKind.CUSTOM to R.string.stats_period_custom
             ).forEach { (kind, label) ->
@@ -1161,9 +1198,15 @@ internal fun healthTips(h: FinancialHealthScoreDto, s: Resources): List<String> 
 /** "Ноябрь 2026", "2026" or "1 окт – 4 нояб". */
 private fun periodTitle(p: StatsPeriod, s: Resources): String = when (p.kind) {
     StatsPeriodKind.MONTH -> "${monthName(p.start.monthValue, s)} ${p.start.year}"
+    StatsPeriodKind.MONTHS_3, StatsPeriodKind.MONTHS_6 -> monthsLabel(p.start, p.end, s)
     StatsPeriodKind.YEAR -> "${p.start.year}"
     StatsPeriodKind.CUSTOM -> rangeLabel(p.start, p.end, s)
 }
+
+/** "Сентябрь – Ноябрь 2026" or "Октябрь 2025 – Март 2026". */
+private fun monthsLabel(start: LocalDate, end: LocalDate, s: Resources): String =
+    if (start.year == end.year) "${monthName(start.monthValue, s)} – ${monthName(end.monthValue, s)} ${end.year}"
+    else "${monthName(start.monthValue, s)} ${start.year} – ${monthName(end.monthValue, s)} ${end.year}"
 
 /** Compact date range: "1–4 окт", "28 сент – 4 окт", with the year when it is not the current one. */
 internal fun rangeLabel(start: LocalDate, end: LocalDate, s: Resources): String {

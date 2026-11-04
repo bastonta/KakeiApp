@@ -451,6 +451,10 @@
     <string name="stats_period_month">Месяц</string>
     <string name="stats_period_year">Год</string>
     <string name="stats_period_custom">Период</string>
+    <string name="stats_period_3_months">3 мес</string>
+    <string name="stats_period_6_months">6 мес</string>
+    <string name="stats_pick_range">Выберите даты</string>
+    <string name="stats_pick_range_hint">Начало – конец</string>
     <string name="stats_previous_period">Предыдущий период</string>
     <string name="stats_next_period">Следующий период</string>
     <string name="stats_in_progress">идёт сейчас</string>
