@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-04
+
+### Added
+- Analytics overview with statistics for a month, a year or any date range: totals with change vs the previous period, income/expense chart, breakdown by category and subcategory, spending by weekday, a month calendar and highlights (largest expense, most expensive day, top payees).
+- Financial Health Score explains itself: points per part, a "How the score works" dialog and localized tips. The local formula now matches the backend (40/30/30 points, A–F thresholds 85/70/55/40).
+- Records awaiting review open in the full editor, with an option to learn a smart rule for the payee.
+- An existing record can switch between expense and income (requires backend v0.4.0).
+
+### Changed
+- The 30-day forecast chart moved from Analytics to the Plan tab.
+- Quick confirm dialog shows date and note, and its button stays disabled until a category is picked.
+
+### Fixed
+- Confirming a review no longer creates the smart rule twice.
+
 ## [1.7.0] - 2026-11-03
 
 ### Changed
