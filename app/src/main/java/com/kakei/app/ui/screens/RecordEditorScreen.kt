@@ -1,6 +1,7 @@
 package com.kakei.app.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -206,523 +207,529 @@ fun RecordEditorScreen(
     BackHandler(enabled = page == EditorPage.MAIN, onBack = onDismiss)
     BackHandler(enabled = page == EditorPage.DETAILS) { page = EditorPage.MAIN }
 
-    when (page) {
-        EditorPage.CATEGORY -> CategoryPickerPage(
-            categories = categories,
-            selectedId = selectedCategoryId,
-            langCode = langCode,
-            recordType = recordType,
-            frequentIds = frequentIds,
-            onPick = {
-                selectedCategoryId = it.id
-                categoryPickedManually = true
-                page = EditorPage.MAIN
-            },
-            onBack = { page = EditorPage.MAIN }
-        )
+    AnimatedContent(
+        targetState = page,
+        transitionSpec = { pageSlideTransition(forward = targetState != EditorPage.MAIN) },
+        label = "recordEditorPage"
+    ) { currentPage ->
+        when (currentPage) {
+            EditorPage.CATEGORY -> CategoryPickerPage(
+                categories = categories,
+                selectedId = selectedCategoryId,
+                langCode = langCode,
+                recordType = recordType,
+                frequentIds = frequentIds,
+                onPick = {
+                    selectedCategoryId = it.id
+                    categoryPickedManually = true
+                    page = EditorPage.MAIN
+                },
+                onBack = { page = EditorPage.MAIN }
+            )
 
-        EditorPage.DETAILS -> {
-            val scrollState = rememberScrollState()
-            val signedAmount = when (recordType) {
-                "INCOME" -> "+"
-                "TRANSFER" -> "⇄ "
-                else -> "−"
-            } + CurrencyFormatter.format(sentAmount, currency)
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(c.bg)
-            ) {
-                PageTopBar(
-                    title = signedAmount,
-                    backContentDescription = s.getString(R.string.back),
-                    onBack = { page = EditorPage.MAIN },
-                    scrolled = scrollState.canScrollBackward
-                ) {
-                    CircleIconButton(
-                        icon = Icons.Outlined.Check,
-                        contentDescription = s.getString(R.string.done),
-                        onClick = { page = EditorPage.MAIN },
-                        size = 44.dp,
-                        containerColor = accentColor,
-                        contentColor = if (recordType == "INCOME") c.mintInk else Color.White,
-                        bordered = false
-                    )
-                }
+            EditorPage.DETAILS -> {
+                val scrollState = rememberScrollState()
+                val signedAmount = when (recordType) {
+                    "INCOME" -> "+"
+                    "TRANSFER" -> "⇄ "
+                    else -> "−"
+                } + CurrencyFormatter.format(sentAmount, currency)
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(scrollState)
-                        .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .fillMaxSize()
+                        .background(c.bg)
                 ) {
-                    // Payee / merchant with suggestions from past records; a known payee fills in its last category
-                    GroupCaption(s.getString(R.string.payee))
-                    PayeeAutocompleteField(
-                        value = payee,
-                        onValueChange = { text ->
-                            payee = text
-                            if (!categoryPickedManually) {
-                                payeeHistory.firstOrNull { it.name.equals(text.trim(), ignoreCase = true) }
-                                    ?.lastCategoryByType?.get(recordType)
-                                    ?.let { selectedCategoryId = it }
-                            }
-                        },
-                        history = payeeHistory,
-                        recordType = recordType,
-                        categories = categories,
-                        langCode = langCode,
-                        onPick = { entry ->
-                            payee = entry.name
-                            entry.lastCategoryByType[recordType]?.let { selectedCategoryId = it }
-                            focusManager.clearFocus()
-                        }
-                    )
-
-                    GroupCaption(s.getString(R.string.note_label))
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        placeholder = { Text(s.getString(R.string.description)) },
-                        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null, tint = c.muted) },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            unfocusedContainerColor = c.surf2,
-                            focusedContainerColor = c.surf2,
-                            unfocusedBorderColor = Color.Transparent
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    GroupCaption(s.getString(R.string.date_and_time))
-                    BookingDateTimeField(
-                        value = bookingAt,
-                        onChange = {
-                            bookingAt = it
-                            bookingTouched = true
-                        }
-                    )
-
-                    // Orthogonal Labels / Tags: pick existing ones or create a new one inline
-                    GroupCaption(s.getString(R.string.labels_title))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    PageTopBar(
+                        title = signedAmount,
+                        backContentDescription = s.getString(R.string.back),
+                        onBack = { page = EditorPage.MAIN },
+                        scrolled = scrollState.canScrollBackward
+                    ) {
+                        CircleIconButton(
+                            icon = Icons.Outlined.Check,
+                            contentDescription = s.getString(R.string.done),
+                            onClick = { page = EditorPage.MAIN },
+                            size = 44.dp,
+                            containerColor = accentColor,
+                            contentColor = if (recordType == "INCOME") c.mintInk else Color.White,
+                            bordered = false
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(scrollState)
+                            .navigationBarsPadding()
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        labels.forEach { lbl ->
-                            val isSelected = selectedLabels.contains(lbl.id)
-                            KakeiChip(
-                                text = "#${lbl.name}",
-                                selected = isSelected,
-                                color = parseHexColor(lbl.colorHex, c.violet),
-                                onClick = {
-                                    selectedLabels = if (isSelected) selectedLabels - lbl.id else selectedLabels + lbl.id
-                                }
-                            )
-                        }
-                        KakeiChip(
-                            text = s.getString(R.string.label),
-                            icon = Icons.Outlined.Add,
-                            iconTint = c.mint,
-                            selected = newLabelName != null,
-                            onClick = { newLabelName = if (newLabelName == null) "" else null }
-                        )
-                    }
-
-                    newLabelName?.let { draft ->
-                        val createLabel = {
-                            val name = draft.trim().removePrefix("#").trim()
-                            if (name.isNotEmpty()) {
-                                val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }
-                                val label = existing ?: onCreateLabel(name, LABEL_COLORS[labels.size % LABEL_COLORS.size])
-                                selectedLabels = selectedLabels + label.id
-                                newLabelName = null
-                            }
-                        }
-                        OutlinedTextField(
-                            value = draft,
-                            onValueChange = { newLabelName = it },
-                            label = { Text(s.getString(R.string.new_label)) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { createLabel() }),
-                            trailingIcon = {
-                                IconButton(onClick = { createLabel() }, enabled = draft.isNotBlank()) {
-                                    Icon(Icons.Outlined.Check, contentDescription = s.getString(R.string.save_button))
+                        // Payee / merchant with suggestions from past records; a known payee fills in its last category
+                        GroupCaption(s.getString(R.string.payee))
+                        PayeeAutocompleteField(
+                            value = payee,
+                            onValueChange = { text ->
+                                payee = text
+                                if (!categoryPickedManually) {
+                                    payeeHistory.firstOrNull { it.name.equals(text.trim(), ignoreCase = true) }
+                                        ?.lastCategoryByType?.get(recordType)
+                                        ?.let { selectedCategoryId = it }
                                 }
                             },
+                            history = payeeHistory,
+                            recordType = recordType,
+                            categories = categories,
+                            langCode = langCode,
+                            onPick = { entry ->
+                                payee = entry.name
+                                entry.lastCategoryByType[recordType]?.let { selectedCategoryId = it }
+                                focusManager.clearFocus()
+                            }
+                        )
+
+                        GroupCaption(s.getString(R.string.note_label))
+                        OutlinedTextField(
+                            value = note,
+                            onValueChange = { note = it },
+                            placeholder = { Text(s.getString(R.string.description)) },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null, tint = c.muted) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                unfocusedContainerColor = c.surf2,
+                                focusedContainerColor = c.surf2,
+                                unfocusedBorderColor = Color.Transparent
+                            ),
                             modifier = Modifier.fillMaxWidth()
                         )
-                    }
 
-                    // Clearing Lifecycle Status: UNCLEARED / CLEARED / RECONCILED
-                    GroupCaption(s.getString(R.string.status_label))
-                    val statuses = listOf("UNCLEARED", "CLEARED", "RECONCILED")
-                    KakeiSegmented(
-                        options = statuses.map { s.clearingStatus(it) },
-                        selectedIndex = statuses.indexOf(clearingStatus).coerceAtLeast(0),
-                        onSelect = { clearingStatus = statuses[it] }
-                    )
+                        GroupCaption(s.getString(R.string.date_and_time))
+                        BookingDateTimeField(
+                            value = bookingAt,
+                            onChange = {
+                                bookingAt = it
+                                bookingTouched = true
+                            }
+                        )
 
-                    // Splits Builder
-                    if (recordType != "TRANSFER") {
-                        GroupCaption(s.getString(R.string.splits_title))
-                        GroupCard {
-                            splits.forEachIndexed { index, split ->
-                                val category = categories.firstOrNull { it.id == split.categoryId }
-                                val visual = category?.let { categoryVisual(it) }
+                        // Orthogonal Labels / Tags: pick existing ones or create a new one inline
+                        GroupCaption(s.getString(R.string.labels_title))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            labels.forEach { lbl ->
+                                val isSelected = selectedLabels.contains(lbl.id)
+                                KakeiChip(
+                                    text = "#${lbl.name}",
+                                    selected = isSelected,
+                                    color = parseHexColor(lbl.colorHex, c.violet),
+                                    onClick = {
+                                        selectedLabels = if (isSelected) selectedLabels - lbl.id else selectedLabels + lbl.id
+                                    }
+                                )
+                            }
+                            KakeiChip(
+                                text = s.getString(R.string.label),
+                                icon = Icons.Outlined.Add,
+                                iconTint = c.mint,
+                                selected = newLabelName != null,
+                                onClick = { newLabelName = if (newLabelName == null) "" else null }
+                            )
+                        }
+
+                        newLabelName?.let { draft ->
+                            val createLabel = {
+                                val name = draft.trim().removePrefix("#").trim()
+                                if (name.isNotEmpty()) {
+                                    val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }
+                                    val label = existing ?: onCreateLabel(name, LABEL_COLORS[labels.size % LABEL_COLORS.size])
+                                    selectedLabels = selectedLabels + label.id
+                                    newLabelName = null
+                                }
+                            }
+                            OutlinedTextField(
+                                value = draft,
+                                onValueChange = { newLabelName = it },
+                                label = { Text(s.getString(R.string.new_label)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { createLabel() }),
+                                trailingIcon = {
+                                    IconButton(onClick = { createLabel() }, enabled = draft.isNotBlank()) {
+                                        Icon(Icons.Outlined.Check, contentDescription = s.getString(R.string.save_button))
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        // Clearing Lifecycle Status: UNCLEARED / CLEARED / RECONCILED
+                        GroupCaption(s.getString(R.string.status_label))
+                        val statuses = listOf("UNCLEARED", "CLEARED", "RECONCILED")
+                        KakeiSegmented(
+                            options = statuses.map { s.clearingStatus(it) },
+                            selectedIndex = statuses.indexOf(clearingStatus).coerceAtLeast(0),
+                            onSelect = { clearingStatus = statuses[it] }
+                        )
+
+                        // Splits Builder
+                        if (recordType != "TRANSFER") {
+                            GroupCaption(s.getString(R.string.splits_title))
+                            GroupCard {
+                                splits.forEachIndexed { index, split ->
+                                    val category = categories.firstOrNull { it.id == split.categoryId }
+                                    val visual = category?.let { categoryVisual(it) }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        IconTile(
+                                            icon = visual?.icon ?: Icons.Outlined.Apps,
+                                            color = visual?.color ?: c.muted,
+                                            size = 36.dp,
+                                            iconSize = 18.dp,
+                                            cornerRadius = 10.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(14.dp))
+                                        Text(
+                                            text = category?.localizedName(langCode) ?: s.getString(R.string.uncategorized),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = c.text,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = CurrencyFormatter.format(split.amount, currency),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = c.text
+                                        )
+                                        IconButton(onClick = { splits = splits.filterIndexed { i, _ -> i != index } }) {
+                                            Icon(Icons.Outlined.DeleteOutline, contentDescription = s.getString(R.string.delete_button), tint = c.muted)
+                                        }
+                                    }
+                                    RowDivider(startIndent = if (index == splits.lastIndex) 0.dp else 66.dp)
+                                }
+                                val remainder = sentAmount - splits.fold(BigDecimal.ZERO) { acc, it -> acc + it.amount }
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                                        .clickable {
+                                            val half = if (sentAmount > BigDecimal.ZERO) {
+                                                sentAmount.divide(BigDecimal("2"), 2, RoundingMode.HALF_UP)
+                                            } else BigDecimal("1000.00")
+                                            splits = splits + SplitDto(
+                                                id = UUID.randomUUID().toString(),
+                                                categoryId = selectedCategoryId,
+                                                amount = half,
+                                                note = "Split part ${splits.size + 1}"
+                                            )
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    IconTile(
-                                        icon = visual?.icon ?: Icons.Outlined.Apps,
-                                        color = visual?.color ?: c.muted,
-                                        size = 36.dp,
-                                        iconSize = 18.dp,
-                                        cornerRadius = 10.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Icon(Icons.Outlined.Add, contentDescription = null, tint = c.mint, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = category?.localizedName(langCode) ?: s.getString(R.string.uncategorized),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = c.text,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                        text = s.getString(R.string.add_split_button).removePrefix("+").trim(),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = c.mint,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    Text(
-                                        text = CurrencyFormatter.format(split.amount, currency),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = c.text
-                                    )
-                                    IconButton(onClick = { splits = splits.filterIndexed { i, _ -> i != index } }) {
-                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = s.getString(R.string.delete_button), tint = c.muted)
-                                    }
-                                }
-                                RowDivider(startIndent = if (index == splits.lastIndex) 0.dp else 66.dp)
-                            }
-                            val remainder = sentAmount - splits.fold(BigDecimal.ZERO) { acc, it -> acc + it.amount }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        val half = if (sentAmount > BigDecimal.ZERO) {
-                                            sentAmount.divide(BigDecimal("2"), 2, RoundingMode.HALF_UP)
-                                        } else BigDecimal("1000.00")
-                                        splits = splits + SplitDto(
-                                            id = UUID.randomUUID().toString(),
-                                            categoryId = selectedCategoryId,
-                                            amount = half,
-                                            note = "Split part ${splits.size + 1}"
+                                    if (splits.isNotEmpty()) {
+                                        Text(
+                                            text = "${s.getString(R.string.remaining_label)} ${formatMoney(remainder, currency)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (remainder < BigDecimal.ZERO) c.coral else c.muted
                                         )
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Outlined.Add, contentDescription = null, tint = c.mint, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = s.getString(R.string.add_split_button).removePrefix("+").trim(),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = c.mint,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (splits.isNotEmpty()) {
-                                    Text(
-                                        text = "${s.getString(R.string.remaining_label)} ${formatMoney(remainder, currency)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (remainder < BigDecimal.ZERO) c.coral else c.muted
-                                    )
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        EditorPage.MAIN -> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(c.bg)
-            ) {
-                PageTopBar(
-                    title = if (editing) s.getString(R.string.edit_record) else s.getString(R.string.quick_add_transaction),
-                    backContentDescription = s.getString(R.string.back),
-                    onBack = onDismiss,
-                    scrolled = false
-                )
-                // Form above the keypad; the amount takes whatever height is left over.
+            EditorPage.MAIN -> {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .fillMaxSize()
+                        .background(c.bg)
                 ) {
-                    // Type Tabs: EXPENSE / INCOME / TRANSFER (an edit offers expense / income only)
-                    if (types.size > 1) {
-                        KakeiSegmented(
-                            options = types.map { it.second },
-                            selectedIndex = types.indexOfFirst { it.first == recordType },
-                            onSelect = { index ->
-                                HapticHelper.tick(context)
-                                recordType = types[index].first
-                            }
-                        )
-                    }
-
-                    // Big calculator amount display: the running total, with the raw expression below it
+                    PageTopBar(
+                        title = if (editing) s.getString(R.string.edit_record) else s.getString(R.string.quick_add_transaction),
+                        backContentDescription = s.getString(R.string.back),
+                        onBack = onDismiss,
+                        scrolled = false
+                    )
+                    // Form above the keypad; the amount takes whatever height is left over.
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .weight(1f)
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = CurrencyFormatter.symbolFor(currency),
-                                fontSize = 44.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = c.faint
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = displayAmount(expression),
-                                fontSize = 72.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = (-1.5).sp,
-                                color = accentColor,
-                                maxLines = 1,
-                                autoSize = TextAutoSize.StepBased(minFontSize = 28.sp, maxFontSize = 72.sp)
+                        // Type Tabs: EXPENSE / INCOME / TRANSFER (an edit offers expense / income only)
+                        if (types.size > 1) {
+                            KakeiSegmented(
+                                options = types.map { it.second },
+                                selectedIndex = types.indexOfFirst { it.first == recordType },
+                                onSelect = { index ->
+                                    HapticHelper.tick(context)
+                                    recordType = types[index].first
+                                }
                             )
                         }
-                        if (expression.any { it in OPERATORS }) {
-                            Text(
-                                text = expression
-                                    .replace("+", " + ")
-                                    .replace("-", " − ")
-                                    .replace("×", " × ")
-                                    .replace("÷", " ÷ ")
-                                    .replace('.', ','),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Normal,
-                                color = c.faint,
-                                maxLines = 1
-                            )
-                        }
-                    }
 
-                    // Account and category (or transfer target) side by side
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        AccountPickerField(
-                            caption = s.getString(R.string.account),
-                            accounts = if (editing) accounts else accounts.filter { !it.isArchived },
-                            selectedId = selectedAccountId,
-                            onSelect = { selectedAccountId = it },
-                            modifier = Modifier.weight(1f),
-                            enabled = !editing
-                        )
-                        if (recordType == "TRANSFER") {
+                        // Big calculator amount display: the running total, with the raw expression below it
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = CurrencyFormatter.symbolFor(currency),
+                                    fontSize = 44.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = c.faint
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = displayAmount(expression),
+                                    fontSize = 72.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-1.5).sp,
+                                    color = accentColor,
+                                    maxLines = 1,
+                                    autoSize = TextAutoSize.StepBased(minFontSize = 28.sp, maxFontSize = 72.sp)
+                                )
+                            }
+                            if (expression.any { it in OPERATORS }) {
+                                Text(
+                                    text = expression
+                                        .replace("+", " + ")
+                                        .replace("-", " − ")
+                                        .replace("×", " × ")
+                                        .replace("÷", " ÷ ")
+                                        .replace('.', ','),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Normal,
+                                    color = c.faint,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        // Account and category (or transfer target) side by side
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             AccountPickerField(
-                                caption = s.getString(R.string.target_account_label),
-                                accounts = accounts.filter { (editing || !it.isArchived) && it.id != selectedAccountId },
-                                selectedId = targetAccount?.id,
-                                onSelect = { targetAccountId = it },
+                                caption = s.getString(R.string.account),
+                                accounts = if (editing) accounts else accounts.filter { !it.isArchived },
+                                selectedId = selectedAccountId,
+                                onSelect = { selectedAccountId = it },
                                 modifier = Modifier.weight(1f),
-                                transferTarget = true,
                                 enabled = !editing
                             )
-                        } else {
-                            val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
-                            val visual = selectedCategory?.let { categoryVisual(it) }
-                            NavigationField(
-                                caption = s.getString(R.string.category_label),
-                                valueText = selectedCategory?.localizedName(langCode) ?: s.getString(R.string.account_not_selected),
-                                icon = visual?.icon ?: Icons.Outlined.Apps,
-                                iconTint = visual?.color ?: c.muted,
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    page = EditorPage.CATEGORY
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
+                            if (recordType == "TRANSFER") {
+                                AccountPickerField(
+                                    caption = s.getString(R.string.target_account_label),
+                                    accounts = accounts.filter { (editing || !it.isArchived) && it.id != selectedAccountId },
+                                    selectedId = targetAccount?.id,
+                                    onSelect = { targetAccountId = it },
+                                    modifier = Modifier.weight(1f),
+                                    transferTarget = true,
+                                    enabled = !editing
+                                )
+                            } else {
+                                val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
+                                val visual = selectedCategory?.let { categoryVisual(it) }
+                                NavigationField(
+                                    caption = s.getString(R.string.category_label),
+                                    valueText = selectedCategory?.localizedName(langCode) ?: s.getString(R.string.account_not_selected),
+                                    icon = visual?.icon ?: Icons.Outlined.Apps,
+                                    iconTint = visual?.color ?: c.muted,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        page = EditorPage.CATEGORY
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+
+                        if (isCrossCurrency) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = if (receivedIsAnchor) receivedInput else effectiveReceived?.toPlainString().orEmpty(),
+                                    onValueChange = {
+                                        receivedInput = it
+                                        receivedIsAnchor = true
+                                    },
+                                    label = { Text("${s.getString(R.string.transfer_received_label)} ($targetCurrency)") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = if (receivedIsAnchor) effectiveRate?.toPlainString().orEmpty() else rateInput,
+                                    onValueChange = {
+                                        rateInput = it
+                                        receivedIsAnchor = false
+                                    },
+                                    label = { Text("${s.getString(R.string.transfer_rate_label)}: 1 $currency = ? $targetCurrency") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (!crossCurrencyReady) {
+                                Text(
+                                    text = s.getString(R.string.transfer_rate_missing),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
+                        // Secondary details on their own page; the row summarises what is set there
+                        NavigationField(
+                            caption = s.getString(R.string.details_payee_date_labels),
+                            valueText = detailsSummary(
+                                payee = payee,
+                                whenText = "${dayLabel(bookingAt.toLocalDate(), s)}, ${bookingAt.format(DateTimeFormatter.ofPattern("HH:mm"))}",
+                                labelNames = selectedLabels.mapNotNull { labelsById[it]?.name },
+                                note = note,
+                                splitCount = if (recordType == "TRANSFER") 0 else splits.size,
+                                splitsCaption = s.getString(R.string.splits)
+                            ),
+                            icon = Icons.Outlined.Tune,
+                            iconTint = c.muted,
+                            onClick = {
+                                focusManager.clearFocus()
+                                page = EditorPage.DETAILS
+                            },
+                            height = 60.dp,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        if (offerRule && payee.isNotBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = createRule, onCheckedChange = { createRule = it })
+                                Text(
+                                    text = s.getString(R.string.create_smart_rule),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = c.text
+                                )
+                            }
                         }
                     }
 
-                    if (isCrossCurrency) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = if (receivedIsAnchor) receivedInput else effectiveReceived?.toPlainString().orEmpty(),
-                                onValueChange = {
-                                    receivedInput = it
-                                    receivedIsAnchor = true
-                                },
-                                label = { Text("${s.getString(R.string.transfer_received_label)} ($targetCurrency)") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f)
-                            )
-                            OutlinedTextField(
-                                value = if (receivedIsAnchor) effectiveRate?.toPlainString().orEmpty() else rateInput,
-                                onValueChange = {
-                                    rateInput = it
-                                    receivedIsAnchor = false
-                                },
-                                label = { Text("${s.getString(R.string.transfer_rate_label)}: 1 $currency = ? $targetCurrency") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        if (!crossCurrencyReady) {
-                            Text(
-                                text = s.getString(R.string.transfer_rate_missing),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-
-                    // Secondary details on their own page; the row summarises what is set there
-                    NavigationField(
-                        caption = s.getString(R.string.details_payee_date_labels),
-                        valueText = detailsSummary(
-                            payee = payee,
-                            whenText = "${dayLabel(bookingAt.toLocalDate(), s)}, ${bookingAt.format(DateTimeFormatter.ofPattern("HH:mm"))}",
-                            labelNames = selectedLabels.mapNotNull { labelsById[it]?.name },
-                            note = note,
-                            splitCount = if (recordType == "TRANSFER") 0 else splits.size,
-                            splitsCaption = s.getString(R.string.splits)
-                        ),
-                        icon = Icons.Outlined.Tune,
-                        iconTint = c.muted,
-                        onClick = {
-                            focusManager.clearFocus()
-                            page = EditorPage.DETAILS
-                        },
-                        height = 60.dp,
-                        modifier = Modifier.fillMaxWidth()
+                    // Built-in calculator keypad, anchored above the save button
+                    val rows = listOf(
+                        listOf("7", "8", "9", "÷"),
+                        listOf("4", "5", "6", "×"),
+                        listOf("1", "2", "3", "-"),
+                        listOf(".", "0", "⌫", "+")
                     )
-
-                    if (offerRule && payee.isNotBlank()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = createRule, onCheckedChange = { createRule = it })
-                            Text(
-                                text = s.getString(R.string.create_smart_rule),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = c.text
-                            )
-                        }
-                    }
-                }
-
-                // Built-in calculator keypad, anchored above the save button
-                val rows = listOf(
-                    listOf("7", "8", "9", "÷"),
-                    listOf("4", "5", "6", "×"),
-                    listOf("1", "2", "3", "-"),
-                    listOf(".", "0", "⌫", "+")
-                )
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    rows.forEach { row ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            row.forEach { key ->
-                                val isOperator = key in OPERATORS
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(60.dp)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(if (isOperator) accentColor.copy(alpha = 0.14f) else c.surf2)
-                                        .combinedClickable(
-                                            onClick = {
-                                                HapticHelper.tick(context)
-                                                expression = applyCalculatorKey(expression, key)
-                                            },
-                                            // Long-press on backspace clears the whole expression.
-                                            onLongClick = if (key == "⌫") {
-                                                {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rows.forEach { row ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                row.forEach { key ->
+                                    val isOperator = key in OPERATORS
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(60.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(if (isOperator) accentColor.copy(alpha = 0.14f) else c.surf2)
+                                            .combinedClickable(
+                                                onClick = {
                                                     HapticHelper.tick(context)
-                                                    expression = "0"
-                                                }
-                                            } else null
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (key == "⌫") {
-                                        Icon(Icons.AutoMirrored.Outlined.Backspace, contentDescription = null, tint = c.text)
-                                    } else {
-                                        Text(
-                                            text = when (key) {
-                                                "." -> ","
-                                                "-" -> "−"
-                                                else -> key
-                                            },
-                                            fontSize = if (isOperator) 22.sp else 26.sp,
-                                            color = if (isOperator) accentColor else c.text
-                                        )
+                                                    expression = applyCalculatorKey(expression, key)
+                                                },
+                                                // Long-press on backspace clears the whole expression.
+                                                onLongClick = if (key == "⌫") {
+                                                    {
+                                                        HapticHelper.tick(context)
+                                                        expression = "0"
+                                                    }
+                                                } else null
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (key == "⌫") {
+                                            Icon(Icons.AutoMirrored.Outlined.Backspace, contentDescription = null, tint = c.text)
+                                        } else {
+                                            Text(
+                                                text = when (key) {
+                                                    "." -> ","
+                                                    "-" -> "−"
+                                                    else -> key
+                                                },
+                                                fontSize = if (isOperator) 22.sp else 26.sp,
+                                                color = if (isOperator) accentColor else c.text
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // Save, pinned under the keypad
-                KakeiButton(
-                    text = saveLabel,
-                    icon = Icons.Outlined.Check,
-                    color = accentColor,
-                    enabled = crossCurrencyReady && sentAmount > BigDecimal.ZERO,
-                    height = 58.dp,
-                    onClick = {
-                        val evaluated = evaluateExpression(expression)
-                        if (evaluated > BigDecimal.ZERO && selectedAccountId.isNotBlank() && crossCurrencyReady) {
-                            val ruleCategory = selectedCategoryId
-                            if (offerRule && createRule && payee.isNotBlank() && ruleCategory != null && recordType != "TRANSFER") {
-                                onCreateRule?.invoke(payee.trim(), ruleCategory)
+                    // Save, pinned under the keypad
+                    KakeiButton(
+                        text = saveLabel,
+                        icon = Icons.Outlined.Check,
+                        color = accentColor,
+                        enabled = crossCurrencyReady && sentAmount > BigDecimal.ZERO,
+                        height = 58.dp,
+                        onClick = {
+                            val evaluated = evaluateExpression(expression)
+                            if (evaluated > BigDecimal.ZERO && selectedAccountId.isNotBlank() && crossCurrencyReady) {
+                                val ruleCategory = selectedCategoryId
+                                if (offerRule && createRule && payee.isNotBlank() && ruleCategory != null && recordType != "TRANSFER") {
+                                    onCreateRule?.invoke(payee.trim(), ruleCategory)
+                                }
+                                onSave(
+                                    selectedAccountId,
+                                    recordType,
+                                    evaluated,
+                                    if (recordType == "TRANSFER") null else selectedCategoryId,
+                                    payee,
+                                    note,
+                                    clearingStatus,
+                                    if (recordType == "TRANSFER") targetAccountId else null,
+                                    splits,
+                                    selectedLabels.toList(),
+                                    if (isCrossCurrency) effectiveReceived else null,
+                                    if (bookingTouched) bookingAt.atZone(ZoneId.systemDefault()).toInstant().toString() else null
+                                )
                             }
-                            onSave(
-                                selectedAccountId,
-                                recordType,
-                                evaluated,
-                                if (recordType == "TRANSFER") null else selectedCategoryId,
-                                payee,
-                                note,
-                                clearingStatus,
-                                if (recordType == "TRANSFER") targetAccountId else null,
-                                splits,
-                                selectedLabels.toList(),
-                                if (isCrossCurrency) effectiveReceived else null,
-                                if (bookingTouched) bookingAt.atZone(ZoneId.systemDefault()).toInstant().toString() else null
-                            )
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, top = 30.dp, bottom = 12.dp)
-                )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(start = 16.dp, end = 16.dp, top = 30.dp, bottom = 12.dp)
+                    )
+                }
             }
         }
     }

@@ -1,6 +1,11 @@
 package com.kakei.app.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -334,93 +339,116 @@ fun CategoryPickerPage(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            when {
-                query.isNotBlank() -> {
-                    GroupCaption(s.getString(R.string.found, results.size))
-                    if (results.isEmpty()) {
-                        EmptyStateCard(
-                            icon = Icons.Outlined.Search,
-                            title = s.getString(R.string.nothing_found),
-                            hint = s.getString(R.string.try_another_name)
-                        )
+            // Opening / closing a group slides like a page; entering search just cross-fades.
+            val searching = query.isNotBlank()
+            AnimatedContent(
+                targetState = if (searching) SEARCH_VIEW else openGroupId,
+                transitionSpec = {
+                    if (initialState == SEARCH_VIEW || targetState == SEARCH_VIEW) {
+                        fadeIn(tween(180)) togetherWith fadeOut(tween(120))
                     } else {
-                        CategoryListCard(results) { cat ->
-                            val parent = cat.parentId?.let { byId[it] }?.takeIf { it.id != cat.id }
-                            CategoryListRow(
-                                category = cat,
-                                langCode = langCode,
-                                subtitle = parent?.localizedName(langCode),
-                                selected = cat.id == selectedId,
-                                onClick = { pick(cat) }
-                            )
-                        }
+                        pageSlideTransition(forward = targetState != null)
                     }
-                }
-                openGroup != null -> {
-                    val groupColor = categoryVisual(openGroup).color
-                    CategoryListCard(listOf(openGroup) + tree.children[openGroup.id].orEmpty()) { cat ->
-                        if (cat.id == openGroup.id) {
-                            CategoryListRow(
-                                category = cat,
-                                langCode = langCode,
-                                title = s.getString(R.string.whole_group),
-                                icon = Icons.Outlined.Apps,
-                                color = groupColor,
-                                selected = cat.id == selectedId,
-                                onClick = { pick(cat) }
-                            )
-                        } else {
-                            CategoryListRow(
-                                category = cat,
-                                langCode = langCode,
-                                selected = cat.id == selectedId,
-                                onClick = { pick(cat) }
-                            )
+                },
+                label = "categoryPickerView"
+            ) { view ->
+                val shownGroup = view?.takeIf { it != SEARCH_VIEW }?.let { byId[it] }
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(c.bg),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    when {
+                        view == SEARCH_VIEW -> {
+                            GroupCaption(s.getString(R.string.found, results.size))
+                            if (results.isEmpty()) {
+                                EmptyStateCard(
+                                    icon = Icons.Outlined.Search,
+                                    title = s.getString(R.string.nothing_found),
+                                    hint = s.getString(R.string.try_another_name)
+                                )
+                            } else {
+                                CategoryListCard(results) { cat ->
+                                    val parent = cat.parentId?.let { byId[it] }?.takeIf { it.id != cat.id }
+                                    CategoryListRow(
+                                        category = cat,
+                                        langCode = langCode,
+                                        subtitle = parent?.localizedName(langCode),
+                                        selected = cat.id == selectedId,
+                                        onClick = { pick(cat) }
+                                    )
+                                }
+                            }
                         }
-                    }
-                }
-                else -> {
-                    val frequent = frequentIds.mapNotNull { byId[it] }
-                    if (frequent.isNotEmpty()) {
-                        GroupCaption(s.getString(R.string.frequent))
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            frequent.forEach { cat ->
-                                CategoryTile(
-                                    category = cat,
+                        shownGroup != null -> {
+                            val groupColor = categoryVisual(shownGroup).color
+                            CategoryListCard(listOf(shownGroup) + tree.children[shownGroup.id].orEmpty()) { cat ->
+                                if (cat.id == shownGroup.id) {
+                                    CategoryListRow(
+                                        category = cat,
+                                        langCode = langCode,
+                                        title = s.getString(R.string.whole_group),
+                                        icon = Icons.Outlined.Apps,
+                                        color = groupColor,
+                                        selected = cat.id == selectedId,
+                                        onClick = { pick(cat) }
+                                    )
+                                } else {
+                                    CategoryListRow(
+                                        category = cat,
+                                        langCode = langCode,
+                                        selected = cat.id == selectedId,
+                                        onClick = { pick(cat) }
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            val frequent = frequentIds.mapNotNull { byId[it] }
+                            if (frequent.isNotEmpty()) {
+                                GroupCaption(s.getString(R.string.frequent))
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    frequent.forEach { cat ->
+                                        CategoryTile(
+                                            category = cat,
+                                            langCode = langCode,
+                                            active = cat.id == selectedId,
+                                            onClick = { pick(cat) }
+                                        )
+                                    }
+                                }
+                            }
+                            GroupCaption(s.getString(R.string.all_categories))
+                            CategoryListCard(roots) { root ->
+                                val kids = tree.children[root.id].orEmpty()
+                                CategoryListRow(
+                                    category = root,
                                     langCode = langCode,
-                                    active = cat.id == selectedId,
-                                    onClick = { pick(cat) }
+                                    subtitle = if (kids.isNotEmpty()) "${s.getString(R.string.subcategories)}: ${kids.size}" else null,
+                                    selected = root.id == selectedId || kids.any { it.id == selectedId },
+                                    hasChildren = kids.isNotEmpty(),
+                                    onClick = {
+                                        if (kids.isEmpty()) {
+                                            pick(root)
+                                        } else {
+                                            HapticHelper.tick(context)
+                                            openGroupId = root.id
+                                        }
+                                    }
                                 )
                             }
                         }
-                    }
-                    GroupCaption(s.getString(R.string.all_categories))
-                    CategoryListCard(roots) { root ->
-                        val kids = tree.children[root.id].orEmpty()
-                        CategoryListRow(
-                            category = root,
-                            langCode = langCode,
-                            subtitle = if (kids.isNotEmpty()) "${s.getString(R.string.subcategories)}: ${kids.size}" else null,
-                            selected = root.id == selectedId || kids.any { it.id == selectedId },
-                            hasChildren = kids.isNotEmpty(),
-                            onClick = {
-                                if (kids.isEmpty()) {
-                                    pick(root)
-                                } else {
-                                    HapticHelper.tick(context)
-                                    openGroupId = root.id
-                                }
-                            }
-                        )
                     }
                 }
             }
         }
     }
 }
+
+/** [AnimatedContent] key for the search results view of [CategoryPickerPage]. */
+private const val SEARCH_VIEW = "\u0000search"
 
 /** Card of category rows separated by hairlines. */
 @Composable
