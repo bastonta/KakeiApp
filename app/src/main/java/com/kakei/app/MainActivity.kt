@@ -5,6 +5,19 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -258,41 +271,131 @@ fun KakeiAppRoot(
             // New record, profile and the transactions page are full-screen pages, not tabs.
             BackHandler(enabled = showProfile && !showQuickAddModal) { showProfile = false }
             BackHandler(enabled = transactionsPage != null && !showProfile && !showQuickAddModal) { transactionsPage = null }
-            val fullScreenPage = showQuickAddModal || showProfile || transactionsPage != null || editingRecord != null
+            // The record editor is an overlay above the scaffold (see below), so the bottom bar stays under it.
+            val fullScreenPage = showProfile || transactionsPage != null
 
-            Scaffold(
-                modifier = Modifier.fillMaxSize(),
-                containerColor = MaterialTheme.colorScheme.background,
-                contentColor = MaterialTheme.colorScheme.onBackground,
-                contentWindowInsets = WindowInsets.statusBars,
-                snackbarHost = { SnackbarHost(snackbarHostState) },
-                bottomBar = {
-                    if (!fullScreenPage) {
-                        KakeiBottomBar(
-                            items = listOf(
-                                BottomNavItem(res.getString(R.string.nav_home), Icons.Outlined.Home),
-                                BottomNavItem(res.getString(R.string.nav_insights), Icons.Outlined.BarChart),
-                                BottomNavItem(res.getString(R.string.nav_lending), Icons.Outlined.People),
-                                BottomNavItem(res.getString(R.string.nav_goals), Icons.Outlined.TrackChanges)
-                            ),
-                            selectedIndex = currentTab,
-                            onSelect = { currentTab = it },
-                            onAdd = { showQuickAddModal = true },
-                            addContentDescription = res.getString(R.string.quick_add_transaction)
-                        )
+            Box(modifier = Modifier.fillMaxSize()) {
+                val editorOpen = showQuickAddModal || editingRecord != null
+                Scaffold(
+                    // Hidden from accessibility services while the editor overlay covers it.
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(if (editorOpen) Modifier.clearAndSetSemantics {} else Modifier),
+                    containerColor = MaterialTheme.colorScheme.background,
+                    contentColor = MaterialTheme.colorScheme.onBackground,
+                    contentWindowInsets = WindowInsets.statusBars,
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
+                    bottomBar = {
+                        if (!fullScreenPage) {
+                            KakeiBottomBar(
+                                items = listOf(
+                                    BottomNavItem(res.getString(R.string.nav_home), Icons.Outlined.Home),
+                                    BottomNavItem(res.getString(R.string.nav_insights), Icons.Outlined.BarChart),
+                                    BottomNavItem(res.getString(R.string.nav_lending), Icons.Outlined.People),
+                                    BottomNavItem(res.getString(R.string.nav_goals), Icons.Outlined.TrackChanges)
+                                ),
+                                selectedIndex = currentTab,
+                                onSelect = { currentTab = it },
+                                onAdd = { showQuickAddModal = true },
+                                addContentDescription = res.getString(R.string.quick_add_transaction)
+                            )
+                        }
+                    }
+                ) { innerPadding ->
+                    Box(
+                        modifier = Modifier
+                            .padding(innerPadding)
+                            .consumeWindowInsets(innerPadding)
+                            .imePadding()
+                    ) {
+                        if (showProfile) {
+                            ProfileAndHubScreen(
+                                settings = settings,
+                                accounts = accounts,
+                                categories = categories,
+                                rules = rules,
+                                groupMembers = groupMembers,
+                                pendingMutations = pendingMutations,
+                                repository = repository,
+                                onBack = { showProfile = false }
+                            )
+                        } else if (transactionsPage != null) {
+                            val (accountId, focusSearch) = transactionsPage!!
+                            TransactionsScreen(
+                                baseCurrency = settings.profile.defaultCurrency,
+                                langCode = settings.language.code,
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                repository = repository,
+                                initialAccountId = accountId,
+                                focusSearch = focusSearch,
+                                onEditRecord = openRecordEditor,
+                                onBack = { transactionsPage = null }
+                            )
+                        } else when (currentTab) {
+                            0 -> HomeScreen(
+                                settings = settings,
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                instantCapturedRecord = instantCapturedRecord,
+                                repository = repository,
+                                onOpenProfile = { showProfile = true },
+                                onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch },
+                                onEditRecord = openRecordEditor
+                            )
+                            1 -> InsightsAndBudgetsScreen(
+                                baseCurrency = settings.profile.defaultCurrency,
+                                langCode = settings.language.code,
+                                accounts = accounts,
+                                categories = categories,
+                                budgets = budgets,
+                                obligations = obligations,
+                                transactions = transactions,
+                                forecast = forecast,
+                                healthScore = healthScore,
+                                streaks = streaks,
+                                repository = repository
+                            )
+                            2 -> LendingScreen(
+                                baseCurrency = settings.profile.defaultCurrency,
+                                lendingResponse = lendingResponse,
+                                repository = repository,
+                                openSplitBillInitially = initialWidgetAction == "SPLIT_BILL"
+                            )
+                            3 -> SavingsScreen(
+                                baseCurrency = settings.profile.defaultCurrency,
+                                goals = savingsGoals,
+                                repository = repository
+                            )
+                        }
                     }
                 }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .padding(innerPadding)
-                        .consumeWindowInsets(innerPadding)
-                        .imePadding()
-                ) {
-                    val recordToEdit = editingRecord
-                    if (recordToEdit != null) {
-                        key(recordToEdit.id) {
-                            RecordEditorScreen(
+
+                // New / edit record editor slides up over the current screen and back down on close.
+                val editorTarget: EditorTarget? = editingRecord?.let { EditorTarget.Edit(it) }
+                    ?: EditorTarget.New.takeIf { editorOpen }
+                AnimatedContent(
+                    targetState = editorTarget,
+                    transitionSpec = { editorOverlayTransition(opening = targetState != null) },
+                    modifier = Modifier.fillMaxSize(),
+                    label = "recordEditorOverlay"
+                ) { target ->
+                    if (target == null) return@AnimatedContent
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(KakeiTheme.colors.bg)
+                            .statusBarsPadding()
+                            .imePadding()
+                            // Keep taps on empty editor space from reaching the screen underneath.
+                            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+                    ) {
+                        when (target) {
+                            is EditorTarget.Edit -> RecordEditorScreen(
                                 accounts = accounts,
                                 categories = categories,
                                 labels = labels,
@@ -300,14 +403,14 @@ fun KakeiAppRoot(
                                 langCode = settings.language.code,
                                 onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
                                 rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
-                                initialRecord = recordToEdit,
+                                initialRecord = target.record,
                                 onCreateRule = { payee, catId ->
                                     repository.createSmartRule(pattern = payee, matchType = "CONTAINS", categoryId = catId)
                                 },
                                 onDismiss = { editingRecord = null },
                                 onSave = { _, type, amt, catId, payee, note, status, _, splits, labelIds, targetAmount, bookingDateIso ->
                                     repository.updateRecord(
-                                        record = recordToEdit,
+                                        record = target.record,
                                         amount = amt,
                                         categoryId = catId,
                                         payee = payee,
@@ -322,101 +425,56 @@ fun KakeiAppRoot(
                                     editingRecord = null
                                 }
                             )
+                            EditorTarget.New -> RecordEditorScreen(
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                langCode = settings.language.code,
+                                onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
+                                rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
+                                onDismiss = { showQuickAddModal = false },
+                                onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount, bookingDateIso ->
+                                    repository.createRecord(
+                                        accountId = accId,
+                                        type = type,
+                                        amount = amt,
+                                        categoryId = catId,
+                                        payee = payee,
+                                        note = note,
+                                        status = status,
+                                        transferTargetAccountId = targetAccId,
+                                        splits = splits,
+                                        labelIds = labelIds,
+                                        targetAmount = targetAmount,
+                                        bookingDateIso = bookingDateIso ?: Instant.now().toString()
+                                    )
+                                    showQuickAddModal = false
+                                }
+                            )
                         }
-                    } else if (showQuickAddModal) {
-                        RecordEditorScreen(
-                            accounts = accounts,
-                            categories = categories,
-                            labels = labels,
-                            transactions = transactions,
-                            langCode = settings.language.code,
-                            onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
-                            rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
-                            onDismiss = { showQuickAddModal = false },
-                            onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount, bookingDateIso ->
-                                repository.createRecord(
-                                    accountId = accId,
-                                    type = type,
-                                    amount = amt,
-                                    categoryId = catId,
-                                    payee = payee,
-                                    note = note,
-                                    status = status,
-                                    transferTargetAccountId = targetAccId,
-                                    splits = splits,
-                                    labelIds = labelIds,
-                                    targetAmount = targetAmount,
-                                    bookingDateIso = bookingDateIso ?: Instant.now().toString()
-                                )
-                                showQuickAddModal = false
-                            }
-                        )
-                    } else if (showProfile) {
-                        ProfileAndHubScreen(
-                            settings = settings,
-                            accounts = accounts,
-                            categories = categories,
-                            rules = rules,
-                            groupMembers = groupMembers,
-                            pendingMutations = pendingMutations,
-                            repository = repository,
-                            onBack = { showProfile = false }
-                        )
-                    } else if (transactionsPage != null) {
-                        val (accountId, focusSearch) = transactionsPage!!
-                        TransactionsScreen(
-                            baseCurrency = settings.profile.defaultCurrency,
-                            langCode = settings.language.code,
-                            accounts = accounts,
-                            categories = categories,
-                            labels = labels,
-                            transactions = transactions,
-                            repository = repository,
-                            initialAccountId = accountId,
-                            focusSearch = focusSearch,
-                            onEditRecord = openRecordEditor,
-                            onBack = { transactionsPage = null }
-                        )
-                    } else when (currentTab) {
-                        0 -> HomeScreen(
-                            settings = settings,
-                            accounts = accounts,
-                            categories = categories,
-                            labels = labels,
-                            transactions = transactions,
-                            instantCapturedRecord = instantCapturedRecord,
-                            repository = repository,
-                            onOpenProfile = { showProfile = true },
-                            onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch },
-                            onEditRecord = openRecordEditor
-                        )
-                        1 -> InsightsAndBudgetsScreen(
-                            baseCurrency = settings.profile.defaultCurrency,
-                            langCode = settings.language.code,
-                            accounts = accounts,
-                            categories = categories,
-                            budgets = budgets,
-                            obligations = obligations,
-                            transactions = transactions,
-                            forecast = forecast,
-                            healthScore = healthScore,
-                            streaks = streaks,
-                            repository = repository
-                        )
-                        2 -> LendingScreen(
-                            baseCurrency = settings.profile.defaultCurrency,
-                            lendingResponse = lendingResponse,
-                            repository = repository,
-                            openSplitBillInitially = initialWidgetAction == "SPLIT_BILL"
-                        )
-                        3 -> SavingsScreen(
-                            baseCurrency = settings.profile.defaultCurrency,
-                            goals = savingsGoals,
-                            repository = repository
-                        )
                     }
                 }
             }
         }
     }
+}
+
+/** What the record editor overlay is showing. */
+private sealed interface EditorTarget {
+    data object New : EditorTarget
+    data class Edit(val record: TransactionDto) : EditorTarget
+}
+
+/** The editor slides up from the bottom over the current screen and back down when closed. */
+private fun editorOverlayTransition(opening: Boolean): ContentTransform {
+    val slide = tween<IntOffset>(if (opening) 320 else 260, easing = FastOutSlowInEasing)
+    val fade = tween<Float>(if (opening) 220 else 260)
+    return ContentTransform(
+        targetContentEnter = slideInVertically(slide) { it } + fadeIn(fade),
+        initialContentExit = slideOutVertically(slide) { it } + fadeOut(fade),
+        // The closing editor stays above the (empty) incoming content while it slides away.
+        targetContentZIndex = if (opening) 1f else -1f,
+        sizeTransform = null
+    )
 }

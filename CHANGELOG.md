@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The new / edit record editor slides up over the current screen and back down when closed; the screen underneath keeps its state (scroll position, filters).
 - The record editor animates its pages: the category and details pages slide in and out, and opening a category group slides like a page (search cross-fades).
 
 ## [1.8.0] - 2026-11-04
