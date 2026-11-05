@@ -1,6 +1,6 @@
 # Kakei Android Client Application — Project Rules & Guidelines
 
-Welcome to **Kakei Android App** (家計), the native client tier of the Kakei personal and family fintech platform and financial operating system. KakeiApp provides an autonomous, offline-first mobile experience with bank SMS & push notification interception, 7 text home screen widgets, encrypted local SQLCipher storage, an Outbox that syncs with the Kakei REST API (per-item HTTP 207 statuses on batch endpoints), envelope budgeting with dynamic burn rates, and predictive cash flow forecasting.
+Welcome to **Kakei Android App** (家計), the native client tier of the Kakei personal and family fintech platform and financial operating system. KakeiApp provides an autonomous, offline-first mobile experience with bank push notification capture, 7 text home screen widgets, encrypted local SQLCipher storage, an Outbox that syncs with the Kakei REST API (per-item HTTP 207 statuses on batch endpoints), envelope budgeting with dynamic burn rates, and predictive cash flow forecasting.
 
 This document serves as the single source of truth for architecture, conventions, and operational rules for both human developers and AI assistants working in this repository.
 
@@ -19,7 +19,7 @@ KakeiApp/
 │   │   │   │   ├── KakeiApplication.kt               # Application entrypoint & WorkManager scheduler
 │   │   │   │   ├── MainActivity.kt                   # Single-activity Jetpack Compose host
 │   │   │   │   ├── automation/                       # Mobile automation & background capture tier
-│   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
+│   │   │   │   │   ├── BankCaptureEngine.kt          # Alert text helpers, merchant matcher & 5-min dedup
 │   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
 │   │   │   │   │   ├── i18n/                         # AppLanguage + Resources label helpers (strings live in res/values*)
@@ -101,11 +101,11 @@ The project strictly manages all dependencies through the **Gradle Version Catal
 
 ### C. Mobile Automation & Autonomous Bank Capture Tier
 
-1. **SMS & Push Notification Interception**:
-   - `SmsReceiver` (`BroadcastReceiver`, priority 999) intercepts incoming banking SMS.
-   - `BankNotificationListenerService` listens for system push notifications while explicitly ignoring messaging apps (`BankSmsPatterns.ignoredPackages`) to protect user privacy.
+1. **Push Notification Capture (user rules)**:
+   - There is no SMS capture. `BankNotificationListenerService` reads notifications only from apps in `AppSettingsState.pushCaptureApps`.
+   - `PushRuleEngine` (`PushCaptureRules.kt`) applies the user's regex rules of that app (named group `amount`, optional `currency` / `merchant`); unmatched notifications are ignored. Types: `EXPENSE`, `INCOME`, `REFUND` (income, Refunds category), `CANCEL` (deletes the matching `[Auto-` expense from the last 30 days). Rules and the app list are device-local prefs.
 2. **5-Minute Deduplication Window**:
-   - `NotificationDeduplicationHelper` deduplicates notifications received across both SMS and Push channels within a 5-minute sliding window.
+   - `NotificationDeduplicationHelper` drops re-posted notifications and the second alert of one payment from two picked apps within a 5-minute sliding window.
 3. **Smart Merchant Categorization**:
    - `SmartMerchantMatcher` evaluates deterministic user rules (`CounterpartyRuleDto`) using prefix, suffix, and contains matching, falling back to keyword heuristics or flagging the record as `needsReview`.
 4. **Instant Category Overlay (`InstantPopupService`) — not implemented**:
@@ -214,7 +214,7 @@ When developing or modifying code in this repository:
 
 1. **Layer Discipline**: Strictly observe boundaries between `ui/`, `domain/`, `data/`, and `automation/`.
    - UI Composables must never interact directly with `KakeiDatabase` or `KakeiApiClient`; always route actions through `KakeiRepository`.
-   - Automation services (`SmsReceiver`, `BankNotificationListenerService`) delegate parsing to `BankSmsPatterns` and persistence to `KakeiRepository`.
+   - `BankNotificationListenerService` delegates rule matching and persistence to `KakeiRepository` (`PushRuleEngine`, `BankAlertText`).
 2. **Financial Precision**:
    - Always use `java.math.BigDecimal` for financial calculations and monetary amounts. **Never** use floating-point types (`Float` or `Double`) for money amounts.
 3. **Mandatory Post-Edit Verification**:

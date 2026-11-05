@@ -6,7 +6,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.kakei.app.BuildConfig
 import com.kakei.app.R
-import com.kakei.app.automation.BankSmsPatterns
+import com.kakei.app.automation.BankAlertText
 import com.kakei.app.automation.CategorizationMatchResult
 import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.KakeiWidgetUpdater
@@ -26,6 +26,7 @@ import com.kakei.app.core.util.ConvertedTotal
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
 import com.kakei.app.core.util.HashDedupCalculator
+import com.kakei.app.core.util.SystemCategories
 import com.kakei.app.data.local.KakeiDatabase
 import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.local.SyncErrorEntity
@@ -76,12 +77,11 @@ data class AppSettingsState(
     val biometricLockEnabled: Boolean = false,
     /** Background time (seconds) after which the biometric lock engages again; 0 = immediately. */
     val lockTimeoutSeconds: Int = DEFAULT_LOCK_TIMEOUT_SECONDS,
-    val smsCaptureEnabled: Boolean = true,
     val pushCaptureEnabled: Boolean = true,
     val instantPopupEnabled: Boolean = true,
     /** Account that captured bank alerts are filed into when no sender mapping matches. */
     val captureDefaultAccountId: String? = null,
-    /** Alert sender (SMS address / app package) → account id, set when the user files a pending capture. */
+    /** Alert sender (app package) → account id, set when the user files a pending capture. */
     val captureSenderAccounts: Map<String, String> = emptyMap(),
     /** Packages whose push notifications are read; nothing else is ever looked at. */
     val pushCaptureApps: Set<String> = emptySet(),
@@ -133,6 +133,12 @@ data class GroupMemberMutationPayload(
 /** Recent notification texts kept per picked app for the push rule editor. */
 private const val MAX_PUSH_SAMPLES = 10
 
+/** Note prefix of auto-captured records ("[Auto-PUSH] …"); cancellations only void these. */
+private const val CAPTURE_NOTE_PREFIX = "[Auto-"
+
+/** How far back a cancellation push looks for the expense it voids. */
+private const val CANCEL_LOOKBACK_DAYS = 30L
+
 /** Persists the refresh cookie in the Keystore-encrypted [SecurePrefs]. */
 private class SecurePrefsCookieStorage(private val securePrefs: SecurePrefs) : RefreshCookieStorage {
     override fun load(): String? = securePrefs.getString(SecurePrefs.KEY_REFRESH_COOKIE)
@@ -143,7 +149,7 @@ private class SecurePrefsCookieStorage(private val securePrefs: SecurePrefs) : R
  * Central Offline-First Repository coordinating:
  * - Encrypted SQLCipher persistence (`KakeiDatabase`)
  * - Bidirectional REST synchronization with `KakeiApiClient` (including HTTP 207 Multi-Status Outbox)
- * - Automatic SMS & Push notification ingestion (`BankSmsPatterns` + 5-min deduplication + Smart Rules)
+ * - Push notification capture through user rules (`PushRuleEngine` + 5-min deduplication + Smart Rules)
  * - Real-time recalculation of Net Worth, Budgets, Cash Flow Forecast, Health Score, Streaks, and Heatmaps.
  */
 class KakeiRepository(
@@ -344,7 +350,6 @@ class KakeiRepository(
             themeMode = theme,
             biometricLockEnabled = prefs.getBoolean("biometric_lock", false),
             lockTimeoutSeconds = prefs.getInt("lock_timeout_sec", AppSettingsState.DEFAULT_LOCK_TIMEOUT_SECONDS),
-            smsCaptureEnabled = prefs.getBoolean("sms_capture", true),
             pushCaptureEnabled = prefs.getBoolean("push_capture", true),
             instantPopupEnabled = prefs.getBoolean("instant_popup", true),
             captureDefaultAccountId = prefs.getString("capture_default_account", null),
@@ -459,26 +464,23 @@ class KakeiRepository(
     }
 
     fun updateAutomationToggles(
-        smsEnabled: Boolean? = null,
         pushEnabled: Boolean? = null,
         instantPopup: Boolean? = null,
         biometricEnabled: Boolean? = null
     ) {
         val current = _settingsState.value
-        val nextSms = smsEnabled ?: current.smsCaptureEnabled
         val nextPush = pushEnabled ?: current.pushCaptureEnabled
         val nextPopup = instantPopup ?: current.instantPopupEnabled
         // Without an enrolled biometric or screen lock the gate could never be passed.
         val bioUnavailable = biometricEnabled == true && !BiometricHelper.canAuthenticate(appContext)
         val nextBio = if (bioUnavailable) current.biometricLockEnabled else biometricEnabled ?: current.biometricLockEnabled
         prefs.edit {
-            putBoolean("sms_capture", nextSms)
+            remove("sms_capture")
             putBoolean("push_capture", nextPush)
             putBoolean("instant_popup", nextPopup)
             putBoolean("biometric_lock", nextBio)
         }
         _settingsState.value = current.copy(
-            smsCaptureEnabled = nextSms,
             pushCaptureEnabled = nextPush,
             instantPopupEnabled = nextPopup,
             biometricLockEnabled = nextBio,
@@ -2748,55 +2750,21 @@ class KakeiRepository(
     }
 
     // ========================================================================
-    // 12. Native SMS / Push Ingestion Pipeline & Widget Metrics
+    // 12. Push Capture Pipeline & Widget Metrics
     // ========================================================================
-
-    /**
-     * Runs [ingestRawBankAlert] on a single background lane, so SMS / push callbacks never
-     * touch the database on the main thread and alerts are booked one at a time (dedup and
-     * the record hash check see each other's results). [onDone] runs after the alert is handled.
-     */
-    fun ingestRawBankAlertAsync(
-        rawText: String,
-        sourceChannel: String,
-        sender: String?,
-        eventKey: String? = null,
-        onDone: () -> Unit = {}
-    ) {
-        scope.launch(captureDispatcher) {
-            try {
-                // A malformed alert must not crash the app from a background callback.
-                runCatching { ingestRawBankAlert(rawText, sourceChannel, sender, eventKey) }
-            } finally {
-                onDone()
-            }
-        }
-    }
-
-    /**
-     * Parses a bank SMS / push and books it. The target account comes only from the
-     * user's own configuration: the account mapped to this [sender], else the default
-     * capture account. Without one (or when the alert's currency differs from that
-     * account's) the alert is parked in [pendingCaptures] for the user to file; it is
-     * never booked against a guessed or non-existent account.
-     */
-    fun ingestRawBankAlert(
-        rawText: String,
-        sourceChannel: String = "SMS",
-        sender: String? = null,
-        eventKey: String? = null
-    ): TransactionDto? {
-        val defaultCurrency = _settingsState.value.profile.defaultCurrency
-        val parsed = BankSmsPatterns.parse(rawText, sourceChannel, defaultCurrency) ?: return null
-        return bookParsedAlert(parsed, sender, eventKey)
-    }
 
     /**
      * Push from an app the user picked: kept as a recent sample for the rule editor, then
      * booked only if one of that app's own rules matches. Unmatched notifications are dropped.
      */
+    /**
+     * Runs on a single background lane, so listener callbacks never touch the database on the
+     * main thread and alerts are handled one at a time (dedup and the record hash check see
+     * each other's results).
+     */
     fun ingestPushNotificationAsync(packageName: String, rawText: String, eventKey: String?) {
         scope.launch(captureDispatcher) {
+            // A malformed alert must not crash the app from a background callback.
             runCatching { ingestPushNotification(packageName, rawText, eventKey) }
         }
     }
@@ -2811,6 +2779,11 @@ class KakeiRepository(
             rawText,
             settings.profile.defaultCurrency
         ) ?: return null
+        if (!dedupHelper.shouldProcess(parsed, sender = packageName, eventKey = eventKey)) return null
+        if (parsed.operationType == "CANCEL") {
+            cancelCapturedExpense(parsed, packageName, rule.accountId)
+            return null
+        }
         return bookParsedAlert(
             parsed,
             sender = packageName,
@@ -2830,7 +2803,7 @@ class KakeiRepository(
     }
 
     /**
-     * Books a parsed alert after deduplication. The account is [accountIdOverride] (a push
+     * Books a parsed alert. The account is [accountIdOverride] (a push
      * rule's), else the one mapped to [sender], else the default capture account; without
      * one (or on a currency mismatch) the alert is parked in [pendingCaptures].
      */
@@ -2841,7 +2814,6 @@ class KakeiRepository(
         accountIdOverride: String? = null,
         categoryIdOverride: String? = null
     ): TransactionDto? {
-        if (!dedupHelper.shouldProcess(parsed, eventKey = eventKey)) return null
         val sourceChannel = parsed.sourceChannel
 
         val settings = _settingsState.value
@@ -2876,26 +2848,15 @@ class KakeiRepository(
             return null
         }
 
-        val ruleCategory = categoryIdOverride?.takeIf { id -> _categories.value.any { it.id == id } }
-        val classification = if (ruleCategory != null) {
-            CategorizationMatchResult(ruleCategory, null, needsReview = false, confidenceLabel = "Push Rule")
-        } else {
-            SmartMerchantMatcher.classify(
-                payee = parsed.merchant,
-                note = parsed.rawMessage,
-                rules = _rules.value,
-                categories = _categories.value,
-                recordType = parsed.operationType
-            )
-        }
+        val classification = classifyCapture(parsed.operationType, categoryIdOverride, parsed.merchant, parsed.rawMessage)
 
         val result = createRecordDetailed(
             accountId = targetAccount.id,
-            type = parsed.operationType,
+            type = captureRecordType(parsed.operationType),
             amount = parsed.amount,
             categoryId = classification.categoryId,
             payee = parsed.merchant,
-            note = "[Auto-$sourceChannel] ${BankSmsPatterns.redactForNote(parsed.rawMessage)}",
+            note = "$CAPTURE_NOTE_PREFIX$sourceChannel] ${BankAlertText.redactForNote(parsed.rawMessage)}",
             status = "CLEARED",
             needsReview = classification.needsReview,
             bookingDateIso = bookingDate
@@ -2908,8 +2869,107 @@ class KakeiRepository(
         return created
     }
 
+    /** A refund is money back: it books as income. */
+    private fun captureRecordType(operationType: String): String =
+        if (operationType == "REFUND") "INCOME" else operationType
+
+    /**
+     * Category of a captured record: the rule's own category, else Refunds for a refund,
+     * else the smart rules / keyword classifier.
+     */
+    private fun classifyCapture(
+        operationType: String,
+        categoryIdOverride: String?,
+        merchant: String?,
+        rawText: String
+    ): CategorizationMatchResult {
+        val known = _categories.value
+        val fixed = categoryIdOverride?.takeIf { id -> known.any { it.id == id } }
+            ?: SystemCategories.REFUNDS.takeIf { operationType == "REFUND" && known.any { it.id == SystemCategories.REFUNDS } }
+        if (fixed != null) {
+            return CategorizationMatchResult(fixed, null, needsReview = false, confidenceLabel = "Push Rule")
+        }
+        return SmartMerchantMatcher.classify(
+            payee = merchant,
+            note = rawText,
+            rules = _rules.value,
+            categories = known,
+            recordType = captureRecordType(operationType)
+        )
+    }
+
+    /**
+     * Voids the expense a cancellation push refers to: the latest auto-captured expense of
+     * the same amount and currency from the last [CANCEL_LOOKBACK_DAYS] days (in the rule's
+     * account, when it names one), preferring one whose payee matches the alert's merchant.
+     * An expense still waiting in [pendingCaptures] is dropped instead. With nothing to
+     * cancel, the alert is parked as a pending capture the user can only dismiss.
+     */
+    private fun cancelCapturedExpense(parsed: ParsedBankNotification, sender: String, accountIdOverride: String?) {
+        val since = LocalDate.now().minusDays(CANCEL_LOOKBACK_DAYS).toString()
+        val currency = parsed.currency
+        val candidates = _transactions.value.filter {
+            it.type == "EXPENSE" &&
+                it.amount.compareTo(parsed.amount) == 0 &&
+                it.currency.equals(currency, ignoreCase = true) &&
+                it.note?.startsWith(CAPTURE_NOTE_PREFIX) == true &&
+                it.bookingDate.take(10) >= since &&
+                (accountIdOverride == null || it.accountId == accountIdOverride)
+        }
+        val merchant = parsed.merchant.trim()
+        val payeeMatches = candidates.filter { tx ->
+            val payee = tx.payee?.trim().orEmpty()
+            payee.isNotEmpty() && merchant.isNotEmpty() &&
+                (payee.contains(merchant, ignoreCase = true) || merchant.contains(payee, ignoreCase = true))
+        }
+        val original = payeeMatches.maxByOrNull { it.bookingDate } ?: candidates.maxByOrNull { it.bookingDate }
+        if (original != null) {
+            deleteRecord(original)
+            if (_instantCapturedRecord.value?.id == original.id) _instantCapturedRecord.value = null
+            postMessage(
+                str(
+                    R.string.push_cancel_applied,
+                    CurrencyFormatter.format(original.amount, original.currency),
+                    original.payee ?: ""
+                )
+            )
+            return
+        }
+
+        val pendingOriginal = _pendingCaptures.value
+            .filter {
+                it.operationType == "EXPENSE" &&
+                    it.amount.compareTo(parsed.amount) == 0 &&
+                    it.currency.equals(currency, ignoreCase = true)
+            }
+            .maxByOrNull { it.createdAt }
+        if (pendingOriginal != null) {
+            dismissPendingCapture(pendingOriginal.id)
+            return
+        }
+
+        val now = Instant.now().toString()
+        val capture = PendingCaptureEntity(
+            id = UUID.randomUUID().toString(),
+            sourceChannel = parsed.sourceChannel,
+            sender = sender,
+            rawText = parsed.rawMessage,
+            operationType = "CANCEL",
+            amount = parsed.amount,
+            currency = currency.uppercase(Locale.ROOT),
+            merchant = merchant.takeIf { it.isNotBlank() },
+            bookingDate = now,
+            reason = "NO_ORIGINAL",
+            createdAt = now
+        )
+        putDto(KakeiDatabase.COL_PENDING_CAPTURES, capture.id, capture.createdAt, capture)
+        _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
+    }
+
     /** Books a pending capture into [accountId]; optionally remembers the account for its sender. */
     fun filePendingCapture(capture: PendingCaptureEntity, accountId: String, rememberSender: Boolean) {
+        // A cancellation with no record to void has nothing to book; it can only be dismissed.
+        if (capture.operationType == "CANCEL") return
         val account = _accounts.value.firstOrNull { it.id == accountId } ?: return
         if (!account.currency.equals(capture.currency, ignoreCase = true)) {
             postMessage(
@@ -2917,20 +2977,14 @@ class KakeiRepository(
             )
             return
         }
-        val classification = SmartMerchantMatcher.classify(
-            payee = capture.merchant,
-            note = capture.rawText,
-            rules = _rules.value,
-            categories = _categories.value,
-            recordType = capture.operationType
-        )
+        val classification = classifyCapture(capture.operationType, null, capture.merchant, capture.rawText)
         val result = createRecordDetailed(
             accountId = account.id,
-            type = capture.operationType,
+            type = captureRecordType(capture.operationType),
             amount = capture.amount,
             categoryId = classification.categoryId,
             payee = capture.merchant,
-            note = "[Auto-${capture.sourceChannel}] ${BankSmsPatterns.redactForNote(capture.rawText)}",
+            note = "$CAPTURE_NOTE_PREFIX${capture.sourceChannel}] ${BankAlertText.redactForNote(capture.rawText)}",
             needsReview = classification.needsReview,
             bookingDateIso = capture.bookingDate
         )

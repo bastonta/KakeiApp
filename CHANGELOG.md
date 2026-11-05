@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Push rules can cancel and refund: a "Cancellation" rule deletes the latest auto-captured expense with the same amount and currency from the last 30 days (preferring a matching payee); a "Refund" rule books the money back as income in Refunds. A cancellation with nothing to void shows up in pending captures.
+
+### Removed
+- SMS capture: the SMS receiver, the `RECEIVE_SMS` permission, the SMS toggle, the built-in bank alert parser and the debug alert simulator.
+
 ### Changed
-- Push capture is now set up by hand: only notifications from apps you pick in Settings are read, and one becomes a record only when one of that app's regex rules matches it (named groups `amount`, optional `currency` and `merchant`; per-rule type, account and category). Unmatched notifications are ignored, and the built-in parser no longer reads push. Existing installs read no push until apps and rules are added. SMS capture is unchanged.
+- Push capture is now set up by hand: only notifications from apps you pick in Settings are read, and one becomes a record only when one of that app's regex rules matches it (named groups `amount`, optional `currency` and `merchant`; per-rule type, account and category). Unmatched notifications are ignored. Existing installs read no push until apps and rules are added.
 - The new / edit record editor slides up over the current screen and back down when closed; the screen underneath keeps its state (scroll position, filters).
 - The record editor animates its pages: the category and details pages slide in and out, and opening a category group slides like a page (search cross-fades).
 

@@ -6,12 +6,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
-import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.service.quicksettings.Tile
@@ -22,28 +20,6 @@ import androidx.work.WorkerParameters
 import com.kakei.app.KakeiApplication
 import com.kakei.app.MainActivity
 import com.kakei.app.R
-
-/**
- * BroadcastReceiver intercepting incoming transactional SMS messages (`SmsReceiver`).
- */
-class SmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
-        val app = context.applicationContext as? KakeiApplication ?: return
-        if (!app.repository.settingsState.value.smsCaptureEnabled) return
-
-        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        val combinedBody = messages.joinToString("") { it.displayMessageBody.orEmpty() }
-        val sender = messages.firstOrNull()?.originatingAddress
-        if (combinedBody.isBlank()) return
-
-        // Parsing and DB writes run off the main thread; goAsync keeps the receiver alive meanwhile.
-        val pending = goAsync()
-        app.repository.ingestRawBankAlertAsync(combinedBody, sourceChannel = "SMS", sender = sender) {
-            pending.finish()
-        }
-    }
-}
 
 /**
  * NotificationListenerService reading push notifications only from the apps the user

@@ -39,7 +39,6 @@ import java.util.Locale
 
 /** Snapshot of everything bank-alert capture needs from the OS. */
 private data class CapturePermissionState(
-    val receiveSms: Boolean,
     val postNotifications: Boolean,
     val notificationListener: Boolean,
     val overlay: Boolean
@@ -49,7 +48,6 @@ private fun readCapturePermissions(context: Context): CapturePermissionState {
     fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     return CapturePermissionState(
-        receiveSms = granted(Manifest.permission.RECEIVE_SMS),
         postNotifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             granted(Manifest.permission.POST_NOTIFICATIONS),
         notificationListener = NotificationManagerCompat.getEnabledListenerPackages(context)
@@ -59,7 +57,7 @@ private fun readCapturePermissions(context: Context): CapturePermissionState {
 }
 
 /**
- * Auto-capture onboarding: runtime SMS / notification permissions, notification-listener
+ * Auto-capture onboarding: notification permission, notification-listener
  * and overlay access (system settings screens), the default account captured alerts are
  * filed into, and the alerts still waiting for an account. Status refreshes on resume.
  */
@@ -94,9 +92,6 @@ fun AutoCaptureCard(
             color = MaterialTheme.colorScheme.onSurface
         )
 
-        PermissionRow(s.getString(R.string.auto_capture_sms_permission), permissions.receiveSms, s.getString(R.string.grant_permission_button)) {
-            permissionLauncher.launch(arrayOf(Manifest.permission.RECEIVE_SMS))
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             PermissionRow(s.getString(R.string.auto_capture_notification_permission), permissions.postNotifications, s.getString(R.string.grant_permission_button)) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
@@ -178,12 +173,15 @@ private fun PendingCaptureRow(
     repository: KakeiRepository
 ) {
     val s = LocalResources.current
-    var rememberSender by remember(capture.id) { mutableStateOf(!capture.sender.isNullOrBlank()) }
-    val matching = accounts.filter { it.currency.equals(capture.currency, ignoreCase = true) }
+    val isCancel = capture.operationType == "CANCEL"
+    var rememberSender by remember(capture.id) { mutableStateOf(!capture.sender.isNullOrBlank() && !isCancel) }
+    val matching = if (isCancel) emptyList() else accounts.filter { it.currency.equals(capture.currency, ignoreCase = true) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            text = "${CurrencyFormatter.format(capture.amount, capture.currency)} · ${capture.merchant ?: capture.operationType}",
+            text = "${s.getString(pushOperationLabel(capture.operationType))} · " +
+                "${CurrencyFormatter.format(capture.amount, capture.currency)}" +
+                (capture.merchant?.let { " · $it" } ?: ""),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -191,7 +189,8 @@ private fun PendingCaptureRow(
             text = listOfNotNull(
                 capture.sender,
                 CurrencyFormatter.formatShortDate(capture.bookingDate),
-                s.getString(R.string.pending_capture_currency_mismatch).takeIf { capture.reason == "CURRENCY_MISMATCH" }
+                s.getString(R.string.pending_capture_currency_mismatch).takeIf { capture.reason == "CURRENCY_MISMATCH" },
+                s.getString(R.string.pending_capture_no_original).takeIf { capture.reason == "NO_ORIGINAL" }
             ).joinToString(" · ") + "\n" + capture.rawText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -210,7 +209,7 @@ private fun PendingCaptureRow(
             }
             TextButton(onClick = { repository.dismissPendingCapture(capture.id) }) { Text(s.getString(R.string.dismiss_button)) }
         }
-        if (!capture.sender.isNullOrBlank()) {
+        if (!capture.sender.isNullOrBlank() && !isCancel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = rememberSender, onCheckedChange = { rememberSender = it })
                 Text(s.getString(R.string.pending_capture_remember), style = MaterialTheme.typography.bodySmall)

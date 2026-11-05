@@ -8,18 +8,17 @@
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-31-blue.svg)](https://developer.android.com/)
 [![Security](https://img.shields.io/badge/Encryption-SQLCipher%20AES--256-blueviolet.svg)](https://www.zetetic.net/sqlcipher/)
 
-**Kakei Android Client** (Japanese: 家計 — *household finance / family budget*) is the native mobile tier of the Kakei fintech platform and financial operating system. Engineered as an autonomous, offline-first personal finance hub, KakeiApp features background bank transaction interception from SMS and push notifications, 7 text home screen widgets, an encrypted SQLCipher ledger, and Outbox-based synchronization with the Kakei backend.
+**Kakei Android Client** (Japanese: 家計 — *household finance / family budget*) is the native mobile tier of the Kakei fintech platform and financial operating system. Engineered as an autonomous, offline-first personal finance hub, KakeiApp features rule-based bank transaction capture from push notifications, 7 text home screen widgets, an encrypted SQLCipher ledger, and Outbox-based synchronization with the Kakei backend.
 
 ---
 
 ## ✨ Features
 
 - **🤖 Autonomous Bank Transaction Capture**:
-  - Dual regex parser (`BankSmsPatterns`) automatically capturing financial transactions from bank SMS and push notifications.
-  - Native pattern recognition for major banks: **Kaspi Bank**, **Halyk Bank**, **Freedom Bank**, **ForteBank**, **Jusan Bank**, **Bank CenterCredit (BCC)**, **Sber**, **T-Bank**, **Revolut**, **Wise**, and **Google Pay**.
-  - Intelligent OTP & verification code filter: authentication codes and password reset messages are automatically ignored.
-  - **5-Minute Deduplication Window** (`NotificationDeduplicationHelper`): prevents duplicate entries when a bank sends both a push notification and an SMS alert for the same transaction.
-  - Strict privacy protection: messaging applications (**WhatsApp**, **Telegram**, **Signal**, **Facebook Messenger**, **Instagram**, **Discord**, **Viber**) are explicitly filtered out and never inspected.
+  - Push capture set up by the user (`PushRuleEngine`): only notifications from apps picked in Settings are read, and one is booked only when one of that app's regex rules matches (named groups `amount`, optional `currency` / `merchant`).
+  - Rule types: expense, income, refund (income in Refunds) and cancellation, which deletes the matching auto-captured expense.
+  - **5-Minute Deduplication Window** (`NotificationDeduplicationHelper`): drops re-posted notifications and the second alert when two picked apps announce the same payment.
+  - Privacy: no app is read until the user picks it; unmatched notifications are ignored, and only the last few texts per picked app are kept in memory for testing rules.
 - **📲 7 Home Screen Widgets**:
   - Seven widget providers (`BudgetRingWidget`, `GoalsRingWidget`, `TodaySpendWidget`, `DebtBalanceWidget`, `QuickAddWidget`, `SplitBillWidget`, `NetWorthWidget`) share one text-card layout: a title plus a one-line metric summary. Tapping a widget opens the matching screen in the app.
   - No ring visuals or in-widget split-bill calculator.
@@ -73,7 +72,7 @@ KakeiApp/
 │   │   │   │   ├── KakeiApplication.kt               # Application entrypoint & WorkManager scheduler
 │   │   │   │   ├── MainActivity.kt                   # Single-activity Jetpack Compose host
 │   │   │   │   ├── automation/                       # Mobile automation & background capture tier
-│   │   │   │   │   ├── BankCaptureEngine.kt          # SMS/Push regex parsers, merchant matcher & 5-min dedup
+│   │   │   │   │   ├── BankCaptureEngine.kt          # Alert text helpers, merchant matcher & 5-min dedup
 │   │   │   │   │   └── AndroidAutomationServices.kt   # Receivers, NotificationListener, QS Tile, Widgets, Workers
 │   │   │   │   ├── core/                             # Cross-cutting foundational modules
 │   │   │   │   │   ├── i18n/                         # AppLanguage + Resources label helpers (strings live in res/values*)
@@ -205,8 +204,7 @@ Kakei is engineered around a **privacy-first zero-trust architecture**:
 
 | Permission | Purpose | Privacy Guarantee |
 | :--- | :--- | :--- |
-| `RECEIVE_SMS` | Capturing transactional bank notifications | Processed strictly on-device; personal messages and OTPs are ignored |
-| `BIND_NOTIFICATION_LISTENER_SERVICE` | Intercepting bank push notifications | Messengers (WhatsApp, Telegram, etc.) are strictly blacklisted |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Reading bank push notifications | Only apps the user picks are read; processed on-device |
 | `SYSTEM_ALERT_WINDOW` | Reserved for a future category overlay (`InstantPopupService` is currently a no-op) | Nothing is drawn over other apps yet |
 | `USE_BIOMETRIC` | Biometric fingerprint/face lock | Managed entirely by secure hardware enclave via AndroidKeyStore |
 

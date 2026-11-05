@@ -12,6 +12,8 @@ import java.util.Locale
  * notification. It must define the named group `amount`; `currency` and `merchant` are
  * optional. Without a `currency` group the rule's [currency] (else the profile default) is used.
  * [accountId] / [categoryId] override the sender-account mapping and auto-categorization.
+ * A CANCEL rule books nothing: it deletes the latest captured expense with the same amount
+ * and currency (preferring one whose payee matches the `merchant` group).
  */
 @Serializable
 data class PushCaptureRule(
@@ -19,7 +21,8 @@ data class PushCaptureRule(
     val packageName: String,
     val name: String,
     val pattern: String,
-    val operationType: String = "EXPENSE", // "EXPENSE" | "INCOME"
+    /** "EXPENSE" | "INCOME" | "CANCEL" (voids the captured expense it refers to) | "REFUND" (income, Refunds category) */
+    val operationType: String = "EXPENSE",
     val currency: String? = null,
     val accountId: String? = null,
     val categoryId: String? = null,
@@ -42,6 +45,7 @@ sealed interface PushRuleResult {
 object PushRuleEngine {
 
     private const val AMOUNT_GROUP = "(?<amount>"
+    val OPERATION_TYPES = listOf("EXPENSE", "INCOME", "CANCEL", "REFUND")
     private val compiled = HashMap<String, Result<Regex>>()
 
     /** Normalizes notification text the same way the rule preview does. */
@@ -59,10 +63,10 @@ object PushRuleEngine {
         val text = normalize(rawText)
         val match = regex.find(text) ?: return PushRuleResult.NoMatch
 
-        val amount = match.group("amount")?.let(BankSmsPatterns::parseNormalizedDecimal)
+        val amount = match.group("amount")?.let(BankAlertText::parseNormalizedDecimal)
             ?.takeIf { it > BigDecimal.ZERO }
             ?: return PushRuleResult.Invalid(PushRuleResult.Reason.BAD_AMOUNT)
-        val currency = match.group("currency")?.let(BankSmsPatterns::normalizeCurrency)
+        val currency = match.group("currency")?.let(BankAlertText::normalizeCurrency)
             ?: rule.currency?.trim()?.takeIf { it.isNotEmpty() }?.uppercase(Locale.ROOT)
             ?: defaultCurrency.uppercase(Locale.ROOT)
         val merchant = match.group("merchant")?.trim()?.trim('.', ',', ':', '-')?.trim()
@@ -73,7 +77,7 @@ object PushRuleEngine {
             ParsedBankNotification(
                 amount = amount.setScale(2, RoundingMode.HALF_UP),
                 currency = currency,
-                operationType = if (rule.operationType.equals("INCOME", ignoreCase = true)) "INCOME" else "EXPENSE",
+                operationType = rule.operationType.uppercase(Locale.ROOT).takeIf { it in OPERATION_TYPES } ?: "EXPENSE",
                 merchant = merchant,
                 rawMessage = text,
                 sourceChannel = "PUSH"

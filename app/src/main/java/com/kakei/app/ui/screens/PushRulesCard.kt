@@ -40,6 +40,14 @@ import java.util.UUID
 
 private data class InstalledApp(val packageName: String, val label: String)
 
+/** Label resource of a rule / alert operation type. */
+internal fun pushOperationLabel(operationType: String): Int = when (operationType) {
+    "INCOME" -> R.string.push_rule_income
+    "CANCEL" -> R.string.push_rule_cancel_type
+    "REFUND" -> R.string.push_rule_refund
+    else -> R.string.push_rule_expense
+}
+
 private fun appLabel(context: Context, packageName: String): String =
     runCatching {
         val pm = context.packageManager
@@ -186,7 +194,7 @@ private fun PushRuleRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = rule.name.ifBlank { s.getString(R.string.push_rule_unnamed) } + " · " +
-                    s.getString(if (rule.operationType == "INCOME") R.string.push_rule_income else R.string.push_rule_expense),
+                    s.getString(pushOperationLabel(rule.operationType)),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -292,7 +300,7 @@ private fun PushRuleEditorDialog(
         operationType = type,
         currency = currency.trim().uppercase().takeIf { it.isNotEmpty() },
         accountId = accountId,
-        categoryId = categoryId
+        categoryId = categoryId.takeIf { type != "CANCEL" }
     )
     val validation = PushRuleEngine.validate(pattern)
     val preview = if (validation == null && testText.isNotBlank()) {
@@ -341,10 +349,22 @@ private fun PushRuleEditorDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = type == "EXPENSE", onClick = { type = "EXPENSE" }, label = { Text(s.getString(R.string.push_rule_expense)) })
-                    FilterChip(selected = type == "INCOME", onClick = { type = "INCOME" }, label = { Text(s.getString(R.string.push_rule_income)) })
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PushRuleEngine.OPERATION_TYPES.forEach { op ->
+                        FilterChip(selected = type == op, onClick = { type = op }, label = { Text(s.getString(pushOperationLabel(op))) })
+                    }
                 }
+                Text(
+                    text = s.getString(
+                        when (type) {
+                            "CANCEL" -> R.string.push_rule_cancel_help
+                            "REFUND" -> R.string.push_rule_refund_help
+                            else -> R.string.push_rule_type_help
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = currency,
                     onValueChange = { currency = it.take(3) },
@@ -361,11 +381,13 @@ private fun PushRuleEditorDialog(
                         FilterChip(selected = accountId == acc.id, onClick = { accountId = acc.id }, label = { Text("${acc.name} (${acc.currency})") })
                     }
                 }
-                Text(s.getString(R.string.push_rule_category), style = MaterialTheme.typography.labelLarge)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(selected = categoryId == null, onClick = { categoryId = null }, label = { Text(s.getString(R.string.push_rule_auto)) })
-                    categories.forEach { cat ->
-                        FilterChip(selected = categoryId == cat.id, onClick = { categoryId = cat.id }, label = { Text(cat.localizedName(langCode)) })
+                if (type != "CANCEL") {
+                    Text(s.getString(R.string.push_rule_category), style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = categoryId == null, onClick = { categoryId = null }, label = { Text(s.getString(R.string.push_rule_auto)) })
+                        categories.forEach { cat ->
+                            FilterChip(selected = categoryId == cat.id, onClick = { categoryId = cat.id }, label = { Text(cat.localizedName(langCode)) })
+                        }
                     }
                 }
 
@@ -403,7 +425,7 @@ private fun PushRuleEditorDialog(
                     null -> "" to true
                     is PushRuleResult.Matched -> {
                         val p = preview.parsed
-                        "${s.getString(if (p.operationType == "INCOME") R.string.push_rule_income else R.string.push_rule_expense)} · " +
+                        "${s.getString(pushOperationLabel(p.operationType))} · " +
                             "${CurrencyFormatter.format(p.amount, p.currency)} · ${p.merchant}" to true
                     }
                     PushRuleResult.NoMatch -> s.getString(R.string.push_rule_no_match) to false

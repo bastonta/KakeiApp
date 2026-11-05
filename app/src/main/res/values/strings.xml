@@ -80,7 +80,6 @@
     <string name="group_sharing_title">Family Group Sharing</string>
     <string name="import_export_title">Import &amp; Export (CSV / OFX / XLSX / PDF)</string>
     <string name="diagnostics_title">Permissions &amp; SQLCipher Diagnostics</string>
-    <string name="simulate_sms_capture_button">Test: Simulate Bank SMS Capture</string>
     <string name="logout_button">Sign Out</string>
     <string name="language_label">Interface Language</string>
     <string name="theme_label">Appearance Theme</string>
@@ -99,7 +98,6 @@
     <string name="exchange_rate_from_label">From</string>
     <string name="exchange_rate_to_label">To</string>
     <string name="auto_capture_title">Auto-Capture Permissions</string>
-    <string name="auto_capture_sms_permission">Receive bank SMS</string>
     <string name="auto_capture_notification_permission">Show notifications</string>
     <string name="auto_capture_listener_access">Bank notification access</string>
     <string name="auto_capture_overlay_access">Display over other apps</string>
@@ -181,7 +179,7 @@
     <string name="today">Today</string>
     <string name="yesterday">Yesterday</string>
     <string name="back">Back</string>
-    <string name="records_from_sms_push">Records from SMS &amp; push</string>
+    <string name="records_from_sms_push">Records from push notifications</string>
     <string name="kaspi_halyk_freedom_and_other">Kaspi, Halyk, Freedom and other banks</string>
     <string name="forecast_budgets">Forecast &amp; budgets</string>
     <string name="how_much_you_can_spend">How much you can spend per day — no spreadsheets</string>
@@ -201,8 +199,6 @@
     <string name="server_not_connected">Server not connected</string>
     <string name="sync">Sync</string>
     <string name="auto_capture">Auto-capture</string>
-    <string name="bank_sms">Bank SMS</string>
-    <string name="kaspi_halyk_freedom_and_more">Kaspi, Halyk, Freedom and more</string>
     <string name="push_notifications">Push notifications</string>
     <string name="quick_category">Quick category</string>
     <string name="home_card_right_after_a">Home card right after a purchase</string>
@@ -288,7 +284,7 @@
     <string name="last_30_days">Last 30 days</string>
     <string name="vs_previous">vs previous</string>
     <string name="no_records_yet">No records yet</string>
-    <string name="tap_to_add_an_expense">Tap \"+\" to add an expense or income, or enable SMS capture in your profile.</string>
+    <string name="tap_to_add_an_expense">Tap \"+\" to add an expense or income, or set up push capture in your profile.</string>
     <string name="recent_records">Recent records</string>
     <string name="all">All</string>
     <string name="account_name">Account Name</string>
@@ -526,4 +522,11 @@
     <string name="push_rule_test_text">Notification text</string>
     <string name="push_rule_no_match">No match: this notification would be ignored.</string>
     <string name="push_capture_subtitle">Picked apps, your rules</string>
+    <string name="push_rule_cancel_type">Cancellation</string>
+    <string name="push_rule_refund">Refund</string>
+    <string name="push_rule_type_help">The notification is booked as a new record.</string>
+    <string name="push_rule_cancel_help">Books nothing: deletes the latest auto-captured expense with the same amount and currency from the last 30 days (in the chosen account, if any), preferring one whose payee matches the merchant group.</string>
+    <string name="push_rule_refund_help">Money back: booked as income, in the Refunds category unless you pick another.</string>
+    <string name="push_cancel_applied">Purchase cancelled by push: %1$s %2$s</string>
+    <string name="pending_capture_no_original">Cancellation: no matching record found</string>
 </resources>

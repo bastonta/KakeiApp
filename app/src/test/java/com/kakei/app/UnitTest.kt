@@ -1,8 +1,9 @@
 package com.kakei.app
 
-import com.kakei.app.automation.BankSmsPatterns
+import com.kakei.app.automation.BankAlertText
 import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.NotificationDeduplicationHelper
+import com.kakei.app.automation.ParsedBankNotification
 import com.kakei.app.automation.PushCaptureRule
 import com.kakei.app.automation.PushRuleEngine
 import com.kakei.app.automation.PushRuleResult
@@ -112,69 +113,6 @@ class UnitTest {
     }
 
     @Test
-    fun bankSmsPatterns_parsesKaspiHalykAndIgnoresOtp() {
-        val kaspi = BankSmsPatterns.parse(
-            "Kaspi Gold: Покупка 4 850 ₸ в Magnum Cash & Carry. Доступно: 607 550 ₸",
-            sourceChannel = "SMS"
-        )
-        assertNotNull(kaspi)
-        assertEquals(BigDecimal("4850.00"), kaspi!!.amount)
-        assertEquals("KZT", kaspi.currency)
-        assertEquals("EXPENSE", kaspi.operationType)
-        assertTrue(kaspi.merchant.contains("Magnum", ignoreCase = true))
-
-        val income = BankSmsPatterns.parse(
-            "Freedom Bank: Пополнение 250 USD зарплатный перевод",
-            sourceChannel = "PUSH"
-        )
-        assertNotNull(income)
-        assertEquals(BigDecimal("250.00"), income!!.amount)
-        assertEquals("USD", income.currency)
-        assertEquals("INCOME", income.operationType)
-
-        val otp = BankSmsPatterns.parse("Никому не сообщайте код подтверждения 4821 для оплаты 5000 KZT")
-        assertNull(otp)
-    }
-
-    @Test
-    fun bankSmsPatterns_parsesKaspiPushFormats() {
-        val purchase = BankSmsPatterns.parse(
-            "Kaspi.kz Покупка: 2 500,00 ₸ MAGNUM AL-FARABI. Доступно: 100 000 ₸",
-            sourceChannel = "PUSH"
-        )!!
-        assertEquals(BigDecimal("2500.00"), purchase.amount)
-        assertEquals("EXPENSE", purchase.operationType)
-        assertEquals("MAGNUM AL-FARABI", purchase.merchant)
-
-        val outgoing = BankSmsPatterns.parse("Kaspi.kz Перевод 5 000 ₸ Айдар Н.", sourceChannel = "PUSH")!!
-        assertEquals("EXPENSE", outgoing.operationType)
-        assertEquals(BigDecimal("5000.00"), outgoing.amount)
-        assertEquals("Айдар Н", outgoing.merchant)
-
-        val incoming = BankSmsPatterns.parse("Kaspi.kz Перевод от Айдар Н. 5 000 ₸", sourceChannel = "PUSH")!!
-        assertEquals("INCOME", incoming.operationType)
-
-        val received = BankSmsPatterns.parse("Вам поступил перевод 12 000 ₸", sourceChannel = "PUSH")!!
-        assertEquals("INCOME", received.operationType)
-
-        val cashbackOnPurchase = BankSmsPatterns.parse("Покупка 1 000 ₸ в Wolt, кэшбэк 50 ₸")!!
-        assertEquals("EXPENSE", cashbackOnPurchase.operationType)
-        assertEquals(BigDecimal("1000.00"), cashbackOnPurchase.amount)
-    }
-
-    @Test
-    fun bankSmsPatterns_matchesKeywordsAtWordStartOnly() {
-        // "format" / "photp" must not be read as "atm" / "otp"
-        assertNull(BankSmsPatterns.parse("Новый format файла, размер 5000 KZT"))
-        assertNotNull(BankSmsPatterns.parse("Снятие наличных ATM 20 000 ₸ Halyk"))
-        // the card tail "*1234" is not part of the amount, and "тг" needs a word end
-        val card = BankSmsPatterns.parse("Карта *1234 оплата 990 тг. в Small")!!
-        assertEquals(BigDecimal("990.00"), card.amount)
-        assertEquals("KZT", card.currency)
-        assertEquals("Small", card.merchant)
-    }
-
-    @Test
     fun pushRuleEngine_extractsNamedGroupsAndIgnoresUnmatched() {
         val kaspi = PushCaptureRule(
             id = "r1",
@@ -231,48 +169,74 @@ class UnitTest {
         )
     }
 
+    private fun alert(amount: String, type: String = "EXPENSE", raw: String = "alert") =
+        ParsedBankNotification(BigDecimal(amount).setScale(2), "KZT", type, "Starbucks", raw)
+
     @Test
-    fun bankSmsPatterns_redactsBalanceAndCardFromNote() {
+    fun notificationDeduplicationHelper_keepsRepeatedPurchasesFromOneApp() {
+        val dedup = NotificationDeduplicationHelper()
+        val coffee = alert("1500")
+        val t0 = 1_700_000_000_000L
+        assertTrue(dedup.shouldProcess(coffee, "kz.kaspi", t0, eventKey = "kaspi|1"))
+        // a second coffee a minute later is a separate payment
+        assertTrue(dedup.shouldProcess(coffee, "kz.kaspi", t0 + 60_000L, eventKey = "kaspi|2"))
+        // the first notification re-posted (updated) is not
+        assertFalse(dedup.shouldProcess(coffee, "kz.kaspi", t0 + 90_000L, eventKey = "kaspi|1"))
+
+        // each alert from a second app pairs with one alert of the first app only
+        assertFalse(dedup.shouldProcess(coffee, "com.wallet", t0 + 100_000L))
+        assertFalse(dedup.shouldProcess(coffee, "com.wallet", t0 + 110_000L))
+        assertTrue(dedup.shouldProcess(coffee, "com.wallet", t0 + 120_000L))
+    }
+
+    @Test
+    fun notificationDeduplicationHelper_drops5MinuteDuplicatesAcrossApps() {
+        val dedup = NotificationDeduplicationHelper(windowMillis = 5 * 60 * 1000L)
+        val t0 = 1_700_000_000_000L
+        assertTrue(dedup.shouldProcess(alert("3200"), "kz.kaspi", t0))
+        // 30 seconds later from another app -> duplicate dropped
+        assertFalse(dedup.shouldProcess(alert("3200"), "com.wallet", t0 + 30_000L))
+        // 6 minutes later -> allowed again
+        assertTrue(dedup.shouldProcess(alert("3200"), "com.wallet", t0 + 6 * 60 * 1000L))
+        // a cancellation of the same amount is not a duplicate of the purchase
+        assertTrue(dedup.shouldProcess(alert("3200", type = "CANCEL"), "kz.kaspi", t0 + 6 * 60 * 1000L + 1))
+    }
+
+    @Test
+    fun pushRuleEngine_supportsCancelAndRefundTypes() {
+        val cancel = PushCaptureRule("c", "app", "Cancel", """Отмена покупки (?<amount>[0-9 ]+) ₸ (?<merchant>.+)""", operationType = "cancel")
+        val parsed = (PushRuleEngine.apply(cancel, "Отмена покупки 2 500 ₸ MAGNUM", "KZT") as PushRuleResult.Matched).parsed
+        assertEquals("CANCEL", parsed.operationType)
+        assertEquals(BigDecimal("2500.00"), parsed.amount)
+        assertEquals("MAGNUM", parsed.merchant)
+
+        val refund = cancel.copy(operationType = "REFUND", pattern = """Возврат (?<amount>[0-9 ,]+) ₸""")
+        assertEquals("REFUND", (PushRuleEngine.apply(refund, "Возврат 990,50 ₸", "KZT") as PushRuleResult.Matched).parsed.operationType)
+
+        val unknown = cancel.copy(operationType = "SOMETHING")
+        assertEquals("EXPENSE", (PushRuleEngine.apply(unknown, "Отмена покупки 1 ₸ X", "KZT") as PushRuleResult.Matched).parsed.operationType)
+    }
+
+    @Test
+    fun bankAlertText_normalizesAmountsAndCurrencies() {
+        assertEquals(0, BigDecimal("2500").compareTo(BankAlertText.parseNormalizedDecimal("2\u00a0500 ")))
+        assertEquals(0, BigDecimal("1234.56").compareTo(BankAlertText.parseNormalizedDecimal("1,234.56")))
+        assertEquals(0, BigDecimal("12000").compareTo(BankAlertText.parseNormalizedDecimal("12.000")))
+        assertEquals("KZT", BankAlertText.normalizeCurrency("тенге"))
+        assertEquals("CHF", BankAlertText.normalizeCurrency("chf"))
+        assertNull(BankAlertText.normalizeCurrency("руб.лей"))
+    }
+
+    @Test
+    fun bankAlertText_redactsBalanceAndCardFromNote() {
         assertEquals(
             "Kaspi Gold: Покупка 4 850 ₸ в Magnum.",
-            BankSmsPatterns.redactForNote("Kaspi Gold: Покупка 4 850 ₸ в Magnum. Доступно: 607 550 ₸")
+            BankAlertText.redactForNote("Kaspi Gold: Покупка 4 850 ₸ в Magnum. Доступно: 607 550 ₸")
         )
-        val redacted = BankSmsPatterns.redactForNote("Halyk *4321 оплата 1 200 KZT в KFC. Баланс 50 000 KZT")
+        val redacted = BankAlertText.redactForNote("Halyk *4321 оплата 1 200 KZT в KFC. Баланс 50 000 KZT")
         assertFalse(redacted.contains("4321"))
         assertFalse(redacted.contains("50 000"))
         assertTrue(redacted.contains("1 200 KZT"))
-    }
-
-    @Test
-    fun notificationDeduplicationHelper_keepsRepeatedPurchasesOnOneChannel() {
-        val dedup = NotificationDeduplicationHelper()
-        val coffee = BankSmsPatterns.parse("Покупка 1 500 ₸ в Starbucks", sourceChannel = "PUSH")!!
-        val t0 = 1_700_000_000_000L
-        assertTrue(dedup.shouldProcess(coffee, t0, eventKey = "kaspi|1"))
-        // a second coffee a minute later is a separate payment
-        assertTrue(dedup.shouldProcess(coffee, t0 + 60_000L, eventKey = "kaspi|2"))
-        // the first notification re-posted (updated) is not
-        assertFalse(dedup.shouldProcess(coffee, t0 + 90_000L, eventKey = "kaspi|1"))
-
-        // each SMS pairs with one push only
-        val sms = BankSmsPatterns.parse("Покупка 1 500 ₸ в Starbucks", sourceChannel = "SMS")!!
-        assertFalse(dedup.shouldProcess(sms, t0 + 100_000L))
-        assertFalse(dedup.shouldProcess(sms, t0 + 110_000L))
-        assertTrue(dedup.shouldProcess(sms, t0 + 120_000L))
-    }
-
-    @Test
-    fun notificationDeduplicationHelper_drops5MinuteDuplicatesAcrossSmsAndPush() {
-        val dedup = NotificationDeduplicationHelper(windowMillis = 5 * 60 * 1000L)
-        val smsAlert = BankSmsPatterns.parse("Kaspi Gold: Покупка 3 200 ₸ в Yandex Go")!!
-        val pushAlert = BankSmsPatterns.parse("Оплата 3200 KZT в Yandex Go", sourceChannel = "PUSH")!!
-
-        val t0 = 1_700_000_000_000L
-        assertTrue(dedup.shouldProcess(smsAlert, t0))
-        // 30 seconds later via PUSH -> duplicate dropped
-        assertFalse(dedup.shouldProcess(pushAlert, t0 + 30_000L))
-        // 6 minutes later -> allowed again
-        assertTrue(dedup.shouldProcess(pushAlert, t0 + 6 * 60 * 1000L))
     }
 
     @Test

@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Profile page (opened from the Home avatar): Synchronization, SMS/Push Automation & Biometrics,
+ * Profile page (opened from the Home avatar): Synchronization, Push Automation & Biometrics,
  * Appearance (language, theme, base currency), Categories & Smart Merchant Rule Simulator,
  * Family Group Sharing, Exchange Rates, CSV/OFX Import & Export, Encrypted Backups & System Diagnostics.
  */
@@ -88,14 +88,6 @@ fun ProfileAndHubScreen(
     var showReminderTimeDialog by remember { mutableStateOf(false) }
     var showAddPasskeyDialog by remember { mutableStateOf(false) }
     var passkeyToDelete by remember { mutableStateOf<UserPasskeyItem?>(null) }
-    var sampleSmsIdx by remember { mutableIntStateOf(0) }
-
-    val sampleBankAlerts = listOf(
-        "Kaspi Gold: Покупка 4 850 ₸ в Magnum Cash & Carry. Доступно: 607 550 ₸",
-        "Halyk Bank: Оплата 1 950 KZT в Starbucks Coffee. Карта *4421",
-        "Freedom Bank: Пополнение 250 USD зарплатный перевод Tech Corp",
-        "Kaspi Gold: Оплата 3 200 ₸ в Yandex Go. Доступно: 604 350 ₸"
-    )
 
     // The probe hits Settings / system services: run it off the main thread, and again
     // each time the screen resumes (the user may have just granted a permission).
@@ -276,19 +268,10 @@ fun ProfileAndHubScreen(
                 }
             }
 
-            // 2. Native SMS / Push capture & security toggles
+            // 2. Push capture & security toggles
             item { GroupCaption(s.getString(R.string.auto_capture)) }
             item {
                 GroupCard {
-                    SettingsRow(
-                        icon = Icons.AutoMirrored.Outlined.Chat,
-                        iconColor = c.cyan,
-                        title = s.getString(R.string.bank_sms),
-                        subtitle = s.getString(R.string.kaspi_halyk_freedom_and_more),
-                        checked = settings.smsCaptureEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(smsEnabled = it) }
-                    )
-                    RowDivider(startIndent = 66.dp)
                     SettingsRow(
                         icon = Icons.Outlined.Notifications,
                         iconColor = c.amber,
@@ -495,32 +478,18 @@ fun ProfileAndHubScreen(
                 }
             }
 
-            // 5. Developer tools: synthetic alerts would book fake money into real accounts.
-            if (BuildConfig.DEBUG) {
+            // 5. Developer tools: demo data only for an empty debug install.
+            if (BuildConfig.DEBUG && repository.canLoadDemoData && accounts.isEmpty()) {
                 item { GroupCaption(s.getString(R.string.developer)) }
                 item {
                     GroupCard {
                         SettingsRow(
-                            icon = Icons.Outlined.Sms,
-                            iconColor = c.amber,
-                            title = s.getString(R.string.simulate_sms_capture_button),
+                            icon = Icons.Outlined.Inventory2,
+                            iconColor = c.violet,
+                            title = s.getString(R.string.load_demo_data_button),
                             showChevron = false,
-                            onClick = {
-                                val raw = sampleBankAlerts[sampleSmsIdx % sampleBankAlerts.size]
-                                sampleSmsIdx++
-                                repository.ingestRawBankAlertAsync(raw, sourceChannel = "SMS", sender = "DEBUG-SIMULATOR")
-                            }
+                            onClick = { repository.loadDemoDataForDevelopment() }
                         )
-                        if (repository.canLoadDemoData && accounts.isEmpty()) {
-                            RowDivider(startIndent = 66.dp)
-                            SettingsRow(
-                                icon = Icons.Outlined.Inventory2,
-                                iconColor = c.violet,
-                                title = s.getString(R.string.load_demo_data_button),
-                                showChevron = false,
-                                onClick = { repository.loadDemoDataForDevelopment() }
-                            )
-                        }
                     }
                 }
             }

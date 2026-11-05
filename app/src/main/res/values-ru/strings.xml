@@ -79,7 +79,6 @@
     <string name="group_sharing_title">Семейный доступ</string>
     <string name="import_export_title">Импорт и Экспорт (CSV / OFX / XLSX / PDF)</string>
     <string name="diagnostics_title">Диагностика разрешений и SQLCipher</string>
-    <string name="simulate_sms_capture_button">Тест: Симулировать банковское SMS</string>
     <string name="logout_button">Выйти из аккаунта</string>
     <string name="language_label">Язык интерфейса</string>
     <string name="theme_label">Тема оформления</string>
@@ -98,7 +97,6 @@
     <string name="exchange_rate_from_label">Из</string>
     <string name="exchange_rate_to_label">В</string>
     <string name="auto_capture_title">Автозахват операций: разрешения</string>
-    <string name="auto_capture_sms_permission">Получение SMS банка</string>
     <string name="auto_capture_notification_permission">Показ уведомлений</string>
     <string name="auto_capture_listener_access">Доступ к уведомлениям банков</string>
     <string name="auto_capture_overlay_access">Окно поверх других приложений</string>
@@ -180,7 +178,7 @@
     <string name="today">Сегодня</string>
     <string name="yesterday">Вчера</string>
     <string name="back">Назад</string>
-    <string name="records_from_sms_push">Операции из SMS и push</string>
+    <string name="records_from_sms_push">Операции из push-уведомлений</string>
     <string name="kaspi_halyk_freedom_and_other">Kaspi, Halyk, Freedom и другие банки</string>
     <string name="forecast_budgets">Прогноз и бюджеты</string>
     <string name="how_much_you_can_spend">Сколько можно тратить в день — без таблиц</string>
@@ -200,8 +198,6 @@
     <string name="server_not_connected">Сервер не подключён</string>
     <string name="sync">Обновить</string>
     <string name="auto_capture">Автозахват</string>
-    <string name="bank_sms">SMS банков</string>
-    <string name="kaspi_halyk_freedom_and_more">Kaspi, Halyk, Freedom и другие</string>
     <string name="push_notifications">Push-уведомления</string>
     <string name="quick_category">Быстрая категория</string>
     <string name="home_card_right_after_a">Карточка на главной сразу после покупки</string>
@@ -287,7 +283,7 @@
     <string name="last_30_days">Последние 30 дней</string>
     <string name="vs_previous">к прошлому</string>
     <string name="no_records_yet">Операций пока нет</string>
-    <string name="tap_to_add_an_expense">Нажмите «+», чтобы добавить расход или доход, или включите автозахват SMS в профиле.</string>
+    <string name="tap_to_add_an_expense">Нажмите «+», чтобы добавить расход или доход, или настройте захват push в профиле.</string>
     <string name="recent_records">Последние операции</string>
     <string name="all">Все</string>
     <string name="account_name">Название счёта</string>
@@ -536,4 +532,11 @@
     <string name="push_rule_test_text">Текст уведомления</string>
     <string name="push_rule_no_match">Не совпало: уведомление будет проигнорировано.</string>
     <string name="push_capture_subtitle">Выбранные приложения, свои правила</string>
+    <string name="push_rule_cancel_type">Отмена</string>
+    <string name="push_rule_refund">Возврат</string>
+    <string name="push_rule_type_help">Уведомление записывается как новая операция.</string>
+    <string name="push_rule_cancel_help">Ничего не записывает: удаляет последний автоматически записанный расход с той же суммой и валютой за 30 дней (на выбранном счёте, если он указан), в первую очередь тот, где получатель совпадает с группой merchant.</string>
+    <string name="push_rule_refund_help">Возврат средств: записывается как доход в категорию «Возвраты», если не выбрана другая.</string>
+    <string name="push_cancel_applied">Покупка отменена по push: %1$s %2$s</string>
+    <string name="pending_capture_no_original">Отмена: подходящая запись не найдена</string>
 </resources>
