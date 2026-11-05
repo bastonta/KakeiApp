@@ -293,7 +293,7 @@ fun ProfileAndHubScreen(
                         icon = Icons.Outlined.Notifications,
                         iconColor = c.amber,
                         title = s.getString(R.string.push_notifications),
-                        subtitle = s.getString(R.string.n_5_min_deduplication),
+                        subtitle = s.getString(R.string.push_capture_subtitle),
                         checked = settings.pushCaptureEnabled,
                         onCheckedChange = { repository.updateAutomationToggles(pushEnabled = it) }
                     )
@@ -331,6 +331,16 @@ fun ProfileAndHubScreen(
             // 2b. Auto-capture permissions, default capture account & alerts awaiting an account
             item {
                 AutoCaptureCard(settings = settings, accounts = accounts, repository = repository)
+            }
+
+            // 2b'. Push capture: picked apps and the user's regex rules
+            item {
+                PushCaptureRulesCard(
+                    settings = settings,
+                    accounts = accounts,
+                    categories = categories,
+                    repository = repository
+                )
             }
 
             // 2c. Passkeys registered on the Kakei account (refreshed on every sync)

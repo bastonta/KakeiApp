@@ -203,7 +203,6 @@
     <string name="bank_sms">SMS банков</string>
     <string name="kaspi_halyk_freedom_and_more">Kaspi, Halyk, Freedom и другие</string>
     <string name="push_notifications">Push-уведомления</string>
-    <string name="n_5_min_deduplication">Дедупликация 5 мин</string>
     <string name="quick_category">Быстрая категория</string>
     <string name="home_card_right_after_a">Карточка на главной сразу после покупки</string>
     <string name="biometric_unlock">Вход по биометрии</string>
@@ -504,4 +503,37 @@
         <item quantity="many">%d дней</item>
         <item quantity="other">%d дня</item>
     </plurals>
+    <!-- Push capture rules -->
+    <string name="push_rules_title">Правила для push-уведомлений</string>
+    <string name="push_rules_hint">Читаются только уведомления выбранных приложений. Запись создаётся, только если подошло одно из правил этого приложения; остальное игнорируется.</string>
+    <string name="push_rules_capture_off">Захват push выключен выше.</string>
+    <string name="push_rules_none">Правил нет: уведомления этого приложения не записываются.</string>
+    <string name="push_rules_samples_count">Последние уведомления приложения: %1$d (хранятся в памяти для проверки правил)</string>
+    <string name="push_rules_add">Добавить правило</string>
+    <string name="push_rules_pick_apps">Выбрать приложения</string>
+    <string name="push_rules_done">Готово</string>
+    <string name="push_rules_search">Поиск приложений</string>
+    <string name="push_rule_unnamed">Без названия</string>
+    <string name="push_rule_income">Доход</string>
+    <string name="push_rule_expense">Расход</string>
+    <string name="push_rule_edit">Изменить правило</string>
+    <string name="push_rule_delete">Удалить правило</string>
+    <string name="push_rule_save">Сохранить</string>
+    <string name="push_rule_cancel">Отмена</string>
+    <string name="push_rule_editor_title">Правило push</string>
+    <string name="push_rule_name">Название (станет получателем, если нет группы merchant)</string>
+    <string name="push_rule_pattern">Регулярное выражение</string>
+    <string name="push_rule_pattern_help">Ищется в «заголовок текст», без учёта регистра. Обязательна группа (?&lt;amount&gt;…); необязательны (?&lt;currency&gt;…) и (?&lt;merchant&gt;…).</string>
+    <string name="push_rule_err_no_amount">Добавьте именованную группу (?&lt;amount&gt;…) для суммы.</string>
+    <string name="push_rule_err_regex">Некорректное регулярное выражение.</string>
+    <string name="push_rule_err_amount">Совпало, но группа amount — не число.</string>
+    <string name="push_rule_currency">Валюта, если её нет в тексте (пусто = валюта профиля)</string>
+    <string name="push_rule_account">Счёт</string>
+    <string name="push_rule_category">Категория</string>
+    <string name="push_rule_auto">Авто</string>
+    <string name="push_rule_test">Проверка</string>
+    <string name="push_rule_no_samples">Уведомлений от приложения пока не было. Вставьте текст ниже, чтобы проверить правило.</string>
+    <string name="push_rule_test_text">Текст уведомления</string>
+    <string name="push_rule_no_match">Не совпало: уведомление будет проигнорировано.</string>
+    <string name="push_capture_subtitle">Выбранные приложения, свои правила</string>
 </resources>

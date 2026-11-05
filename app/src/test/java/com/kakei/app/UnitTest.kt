@@ -3,6 +3,9 @@ package com.kakei.app
 import com.kakei.app.automation.BankSmsPatterns
 import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.NotificationDeduplicationHelper
+import com.kakei.app.automation.PushCaptureRule
+import com.kakei.app.automation.PushRuleEngine
+import com.kakei.app.automation.PushRuleResult
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.security.PasskeyHelper
@@ -169,6 +172,63 @@ class UnitTest {
         assertEquals(BigDecimal("990.00"), card.amount)
         assertEquals("KZT", card.currency)
         assertEquals("Small", card.merchant)
+    }
+
+    @Test
+    fun pushRuleEngine_extractsNamedGroupsAndIgnoresUnmatched() {
+        val kaspi = PushCaptureRule(
+            id = "r1",
+            packageName = "kz.kaspi.mobile",
+            name = "Kaspi purchase",
+            pattern = """Покупка:?\s*(?<amount>[0-9][0-9 .,]*)\s*(?<currency>₸|KZT)\s+(?<merchant>[^.]+)"""
+        )
+        val text = "Kaspi.kz\nПокупка: 2 500,00 ₸ MAGNUM AL-FARABI. Доступно: 100 000 ₸"
+        val hit = PushRuleEngine.match(listOf(kaspi), "kz.kaspi.mobile", text, "USD")
+        assertNotNull(hit)
+        val parsed = hit!!.second
+        assertEquals(BigDecimal("2500.00"), parsed.amount)
+        assertEquals("KZT", parsed.currency)
+        assertEquals("EXPENSE", parsed.operationType)
+        assertEquals("MAGNUM AL-FARABI", parsed.merchant)
+        assertEquals("PUSH", parsed.sourceChannel)
+
+        // Rules belong to their own app; disabled rules and non-matching text are ignored.
+        assertNull(PushRuleEngine.match(listOf(kaspi), "com.other.bank", text, "USD"))
+        assertNull(PushRuleEngine.match(listOf(kaspi.copy(enabled = false)), "kz.kaspi.mobile", text, "USD"))
+        assertNull(PushRuleEngine.match(listOf(kaspi), "kz.kaspi.mobile", "Ваш код 1234", "USD"))
+    }
+
+    @Test
+    fun pushRuleEngine_fallsBackToRuleCurrencyAndName() {
+        val rule = PushCaptureRule(
+            id = "r2",
+            packageName = "app",
+            name = "Salary",
+            pattern = """зачислено (?<amount>[0-9 ]+)""",
+            operationType = "INCOME",
+            currency = "eur"
+        )
+        val result = PushRuleEngine.apply(rule, "Вам зачислено 1 200", "KZT")
+        assertTrue(result is PushRuleResult.Matched)
+        val parsed = (result as PushRuleResult.Matched).parsed
+        assertEquals(BigDecimal("1200.00"), parsed.amount)
+        assertEquals("EUR", parsed.currency)
+        assertEquals("INCOME", parsed.operationType)
+        assertEquals("Salary", parsed.merchant)
+
+        assertEquals("KZT", (PushRuleEngine.apply(rule.copy(currency = null), "зачислено 5", "KZT") as PushRuleResult.Matched).parsed.currency)
+    }
+
+    @Test
+    fun pushRuleEngine_validatesPatterns() {
+        assertEquals(PushRuleResult.Reason.NO_AMOUNT_GROUP, PushRuleEngine.validate("Покупка ([0-9]+)"))
+        assertEquals(PushRuleResult.Reason.BAD_REGEX, PushRuleEngine.validate("(?<amount>[0-9+"))
+        assertNull(PushRuleEngine.validate("(?<amount>[0-9]+)"))
+        val bad = PushCaptureRule("r3", "app", "", "(?<amount>[a-z]+)")
+        assertEquals(
+            PushRuleResult.Invalid(PushRuleResult.Reason.BAD_AMOUNT),
+            PushRuleEngine.apply(bad, "abc", "KZT")
+        )
     }
 
     @Test

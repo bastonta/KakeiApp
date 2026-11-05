@@ -204,7 +204,6 @@
     <string name="bank_sms">Bank SMS</string>
     <string name="kaspi_halyk_freedom_and_more">Kaspi, Halyk, Freedom and more</string>
     <string name="push_notifications">Push notifications</string>
-    <string name="n_5_min_deduplication">5-min deduplication</string>
     <string name="quick_category">Quick category</string>
     <string name="home_card_right_after_a">Home card right after a purchase</string>
     <string name="biometric_unlock">Biometric unlock</string>
@@ -494,4 +493,37 @@
         <item quantity="one">%d day</item>
         <item quantity="other">%d days</item>
     </plurals>
+    <!-- Push capture rules -->
+    <string name="push_rules_title">Push notification rules</string>
+    <string name="push_rules_hint">Only notifications from the apps you pick are read. A notification becomes a record only when one of that app\'s rules matches it; everything else is ignored.</string>
+    <string name="push_rules_capture_off">Push capture is turned off above.</string>
+    <string name="push_rules_none">No rules yet: notifications from this app are not booked.</string>
+    <string name="push_rules_samples_count">Recent notifications from this app: %1$d (kept in memory for testing rules)</string>
+    <string name="push_rules_add">Add rule</string>
+    <string name="push_rules_pick_apps">Choose apps</string>
+    <string name="push_rules_done">Done</string>
+    <string name="push_rules_search">Search apps</string>
+    <string name="push_rule_unnamed">Unnamed rule</string>
+    <string name="push_rule_income">Income</string>
+    <string name="push_rule_expense">Expense</string>
+    <string name="push_rule_edit">Edit rule</string>
+    <string name="push_rule_delete">Delete rule</string>
+    <string name="push_rule_save">Save</string>
+    <string name="push_rule_cancel">Cancel</string>
+    <string name="push_rule_editor_title">Push rule</string>
+    <string name="push_rule_name">Name (used as payee if there is no merchant group)</string>
+    <string name="push_rule_pattern">Regular expression</string>
+    <string name="push_rule_pattern_help">Searched in \"title text\", case-insensitive. Required group (?&lt;amount&gt;…); optional (?&lt;currency&gt;…) and (?&lt;merchant&gt;…).</string>
+    <string name="push_rule_err_no_amount">Add a named group (?&lt;amount&gt;…) for the amount.</string>
+    <string name="push_rule_err_regex">Invalid regular expression.</string>
+    <string name="push_rule_err_amount">Matched, but the amount group is not a number.</string>
+    <string name="push_rule_currency">Currency if the text has none (blank = profile default)</string>
+    <string name="push_rule_account">Account</string>
+    <string name="push_rule_category">Category</string>
+    <string name="push_rule_auto">Auto</string>
+    <string name="push_rule_test">Test</string>
+    <string name="push_rule_no_samples">No notifications from this app yet. Paste a text below to test the rule.</string>
+    <string name="push_rule_test_text">Notification text</string>
+    <string name="push_rule_no_match">No match: this notification would be ignored.</string>
+    <string name="push_capture_subtitle">Picked apps, your rules</string>
 </resources>

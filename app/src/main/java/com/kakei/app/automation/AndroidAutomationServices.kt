@@ -46,19 +46,20 @@ class SmsReceiver : BroadcastReceiver() {
 }
 
 /**
- * NotificationListenerService intercepting payment and banking push notifications
- * while strictly ignoring messaging apps (`BankNotificationListenerService`).
+ * NotificationListenerService reading push notifications only from the apps the user
+ * picked (`BankNotificationListenerService`); they are booked only through the user's rules.
  */
 class BankNotificationListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn ?: return
         val pkg = notification.packageName ?: return
-        if (pkg == packageName || BankSmsPatterns.ignoredPackages.contains(pkg)) return
+        if (pkg == packageName) return
         // A group summary repeats its children's text; the children are captured individually.
         if (notification.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val app = applicationContext as? KakeiApplication ?: return
-        if (!app.repository.settingsState.value.pushCaptureEnabled) return
+        val settings = app.repository.settingsState.value
+        if (!settings.pushCaptureEnabled || pkg !in settings.pushCaptureApps) return
 
         val extras = notification.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
@@ -68,12 +69,7 @@ class BankNotificationListenerService : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val combined = "$title $text".trim()
         if (combined.isNotBlank()) {
-            app.repository.ingestRawBankAlertAsync(
-                combined,
-                sourceChannel = "PUSH",
-                sender = pkg,
-                eventKey = notification.key
-            )
+            app.repository.ingestPushNotificationAsync(pkg, combined, eventKey = notification.key)
         }
     }
 }

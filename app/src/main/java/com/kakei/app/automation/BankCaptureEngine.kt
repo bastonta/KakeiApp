@@ -26,17 +26,6 @@ data class ParsedBankNotification(
  */
 object BankSmsPatterns {
 
-    // Ignored messaging packages to guarantee privacy (messaging apps are never read)
-    val ignoredPackages = setOf(
-        "com.whatsapp",
-        "org.telegram.messenger",
-        "com.facebook.orca",
-        "com.instagram.android",
-        "com.discord",
-        "org.thoughtcrime.securesms",
-        "com.viber.voip"
-    )
-
     private val currencyMap = mapOf(
         "₸" to "KZT",
         "ТЕНГЕ" to "KZT",
@@ -196,7 +185,14 @@ object BankSmsPatterns {
         return (expenseKeywords + incomeKeywords + outgoingTransferKeywords).any { lower == it || lower.startsWith(it) && lower.length <= it.length + 2 }
     }
 
-    private fun parseNormalizedDecimal(raw: String): BigDecimal? {
+    /** Maps a currency token ("₸", "тенге", "usd") to its ISO code, or null when unknown. */
+    fun normalizeCurrency(raw: String): String? {
+        val key = raw.trim().uppercase(Locale.ROOT).removeSuffix(".")
+        return currencyMap[key] ?: key.takeIf { it.length == 3 && it.all { c -> c in 'A'..'Z' } }
+    }
+
+    /** Parses "2 500,50", "1,234.56", "12.000" etc. into a decimal. */
+    fun parseNormalizedDecimal(raw: String): BigDecimal? {
         val compact = raw.replace(" ", "").replace(" ", "")
         val normalized = when {
             compact.contains(",") && compact.contains(".") -> {

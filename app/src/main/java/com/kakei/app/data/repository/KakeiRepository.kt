@@ -7,9 +7,13 @@ import androidx.core.content.edit
 import com.kakei.app.BuildConfig
 import com.kakei.app.R
 import com.kakei.app.automation.BankSmsPatterns
+import com.kakei.app.automation.CategorizationMatchResult
 import com.kakei.app.automation.ExpenseReminderScheduler
 import com.kakei.app.automation.KakeiWidgetUpdater
 import com.kakei.app.automation.NotificationDeduplicationHelper
+import com.kakei.app.automation.ParsedBankNotification
+import com.kakei.app.automation.PushCaptureRule
+import com.kakei.app.automation.PushRuleEngine
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
@@ -45,6 +49,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
@@ -78,6 +83,10 @@ data class AppSettingsState(
     val captureDefaultAccountId: String? = null,
     /** Alert sender (SMS address / app package) → account id, set when the user files a pending capture. */
     val captureSenderAccounts: Map<String, String> = emptyMap(),
+    /** Packages whose push notifications are read; nothing else is ever looked at. */
+    val pushCaptureApps: Set<String> = emptySet(),
+    /** User regex rules that turn push notifications of [pushCaptureApps] into records. */
+    val pushCaptureRules: List<PushCaptureRule> = emptyList(),
     /** Daily local notification reminding to record the day's expenses. */
     val expenseReminderEnabled: Boolean = false,
     /** Reminder time as minutes after local midnight. */
@@ -120,6 +129,9 @@ data class GroupMemberMutationPayload(
     val memberUserId: String? = null,
     val permissionLevel: String? = null
 )
+
+/** Recent notification texts kept per picked app for the push rule editor. */
+private const val MAX_PUSH_SAMPLES = 10
 
 /** Persists the refresh cookie in the Keystore-encrypted [SecurePrefs]. */
 private class SecurePrefsCookieStorage(private val securePrefs: SecurePrefs) : RefreshCookieStorage {
@@ -257,6 +269,10 @@ class KakeiRepository(
     /** Parsed bank alerts waiting for the user to choose an account. */
     val pendingCaptures: StateFlow<List<PendingCaptureEntity>> = _pendingCaptures.asStateFlow()
 
+    /** Latest notification texts per picked app (memory only), shown when writing rules. */
+    private val _recentPushSamples = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val recentPushSamples: StateFlow<Map<String, List<String>>> = _recentPushSamples.asStateFlow()
+
     private val _instantCapturedRecord = MutableStateFlow<TransactionDto?>(null)
     val instantCapturedRecord: StateFlow<TransactionDto?> = _instantCapturedRecord.asStateFlow()
 
@@ -340,6 +356,10 @@ class KakeiRepository(
             captureSenderAccounts = runCatching {
                 database.json.decodeFromString<Map<String, String>>(prefs.getString("capture_sender_accounts", null) ?: "{}")
             }.getOrDefault(emptyMap()),
+            pushCaptureApps = prefs.getStringSet("push_capture_apps", null)?.toSet().orEmpty(),
+            pushCaptureRules = runCatching {
+                database.json.decodeFromString<List<PushCaptureRule>>(prefs.getString("push_capture_rules", null) ?: "[]")
+            }.getOrDefault(emptyList()),
             lastSyncTimestamp = prefs.getString("last_sync", null),
             profile = ProfileInfoResponse(
                 userId = prefs.getString("user_id", "local-user") ?: "local-user",
@@ -2768,12 +2788,67 @@ class KakeiRepository(
     ): TransactionDto? {
         val defaultCurrency = _settingsState.value.profile.defaultCurrency
         val parsed = BankSmsPatterns.parse(rawText, sourceChannel, defaultCurrency) ?: return null
+        return bookParsedAlert(parsed, sender, eventKey)
+    }
+
+    /**
+     * Push from an app the user picked: kept as a recent sample for the rule editor, then
+     * booked only if one of that app's own rules matches. Unmatched notifications are dropped.
+     */
+    fun ingestPushNotificationAsync(packageName: String, rawText: String, eventKey: String?) {
+        scope.launch(captureDispatcher) {
+            runCatching { ingestPushNotification(packageName, rawText, eventKey) }
+        }
+    }
+
+    fun ingestPushNotification(packageName: String, rawText: String, eventKey: String? = null): TransactionDto? {
+        val settings = _settingsState.value
+        if (packageName !in settings.pushCaptureApps) return null
+        rememberPushSample(packageName, rawText)
+        val (rule, parsed) = PushRuleEngine.match(
+            settings.pushCaptureRules,
+            packageName,
+            rawText,
+            settings.profile.defaultCurrency
+        ) ?: return null
+        return bookParsedAlert(
+            parsed,
+            sender = packageName,
+            eventKey = eventKey,
+            accountIdOverride = rule.accountId,
+            categoryIdOverride = rule.categoryId
+        )
+    }
+
+    private fun rememberPushSample(packageName: String, rawText: String) {
+        val text = PushRuleEngine.normalize(rawText)
+        if (text.isBlank()) return
+        _recentPushSamples.update { current ->
+            val list = (listOf(text) + current[packageName].orEmpty().filter { it != text }).take(MAX_PUSH_SAMPLES)
+            current + (packageName to list)
+        }
+    }
+
+    /**
+     * Books a parsed alert after deduplication. The account is [accountIdOverride] (a push
+     * rule's), else the one mapped to [sender], else the default capture account; without
+     * one (or on a currency mismatch) the alert is parked in [pendingCaptures].
+     */
+    private fun bookParsedAlert(
+        parsed: ParsedBankNotification,
+        sender: String?,
+        eventKey: String?,
+        accountIdOverride: String? = null,
+        categoryIdOverride: String? = null
+    ): TransactionDto? {
         if (!dedupHelper.shouldProcess(parsed, eventKey = eventKey)) return null
+        val sourceChannel = parsed.sourceChannel
 
         val settings = _settingsState.value
         val usable = _accounts.value.filter { !it.isArchived && it.permissionLevel != "READ_ONLY" }.associateBy { it.id }
         val senderKey = sender?.trim()?.takeIf { it.isNotEmpty() }
-        val targetAccount = senderKey?.let { settings.captureSenderAccounts[it] }?.let { usable[it] }
+        val targetAccount = accountIdOverride?.let { usable[it] }
+            ?: senderKey?.let { settings.captureSenderAccounts[it] }?.let { usable[it] }
             ?: settings.captureDefaultAccountId?.let { usable[it] }
 
         val bookingDate = Instant.now().toString()
@@ -2801,13 +2876,18 @@ class KakeiRepository(
             return null
         }
 
-        val classification = SmartMerchantMatcher.classify(
-            payee = parsed.merchant,
-            note = parsed.rawMessage,
-            rules = _rules.value,
-            categories = _categories.value,
-            recordType = parsed.operationType
-        )
+        val ruleCategory = categoryIdOverride?.takeIf { id -> _categories.value.any { it.id == id } }
+        val classification = if (ruleCategory != null) {
+            CategorizationMatchResult(ruleCategory, null, needsReview = false, confidenceLabel = "Push Rule")
+        } else {
+            SmartMerchantMatcher.classify(
+                payee = parsed.merchant,
+                note = parsed.rawMessage,
+                rules = _rules.value,
+                categories = _categories.value,
+                recordType = parsed.operationType
+            )
+        }
 
         val result = createRecordDetailed(
             accountId = targetAccount.id,
@@ -2879,6 +2959,30 @@ class KakeiRepository(
         if (accountId == null) map.remove(sender) else map[sender] = accountId
         prefs.edit { putString("capture_sender_accounts", database.json.encodeToString(map.toMap())) }
         _settingsState.value = _settingsState.value.copy(captureSenderAccounts = map.toMap())
+    }
+
+    fun setPushCaptureApp(packageName: String, enabled: Boolean) {
+        val current = _settingsState.value.pushCaptureApps
+        val next = if (enabled) current + packageName else current - packageName
+        prefs.edit { putStringSet("push_capture_apps", next) }
+        if (!enabled) _recentPushSamples.update { it - packageName }
+        _settingsState.value = _settingsState.value.copy(pushCaptureApps = next)
+    }
+
+    /** Inserts or replaces (by id) a push rule. */
+    fun upsertPushCaptureRule(rule: PushCaptureRule) {
+        val rules = _settingsState.value.pushCaptureRules
+        val next = if (rules.any { it.id == rule.id }) rules.map { if (it.id == rule.id) rule else it } else rules + rule
+        savePushCaptureRules(next)
+    }
+
+    fun deletePushCaptureRule(id: String) {
+        savePushCaptureRules(_settingsState.value.pushCaptureRules.filterNot { it.id == id })
+    }
+
+    private fun savePushCaptureRules(rules: List<PushCaptureRule>) {
+        prefs.edit { putString("push_capture_rules", database.json.encodeToString(rules)) }
+        _settingsState.value = _settingsState.value.copy(pushCaptureRules = rules)
     }
 
     fun getWidgetMetricSummary(widgetAction: String): String {
