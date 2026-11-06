@@ -128,6 +128,7 @@ fun InsightsAndBudgetsScreen(
             2 -> PlanningSubScreen(
                 forecast = forecast,
                 obligations = obligations,
+                accounts = accounts,
                 categories = categories,
                 onOpenCreate = {
                     editingObligation = null
@@ -227,8 +228,18 @@ fun InsightsAndBudgetsScreen(
         }
         var intervalDays by remember { mutableStateOf((editing?.intervalDays ?: 30).toString()) }
         var showStartPicker by remember { mutableStateOf(false) }
-        val defaultAccId = accounts.firstOrNull()?.id.orEmpty()
-        val dialogCurrency = editing?.currency ?: baseCurrency
+        // The payment's own account stays listed even if it was archived or made read-only since.
+        val pickableAccounts = remember(accounts, editing?.accountId) {
+            accounts.filter {
+                it.id == editing?.accountId || (!it.isArchived && it.permissionLevel != "READ_ONLY")
+            }
+        }
+        var accountId by remember {
+            mutableStateOf(editing?.accountId ?: pickableAccounts.firstOrNull()?.id.orEmpty())
+        }
+        val selectedAccount = accounts.firstOrNull { it.id == accountId }
+        // Payments are posted in the currency of the account they are charged to.
+        val dialogCurrency = selectedAccount?.currency ?: editing?.currency ?: baseCurrency
 
         AlertDialog(
             onDismissRequest = { showCreateObligationDialog = false },
@@ -240,6 +251,13 @@ fun InsightsAndBudgetsScreen(
                         onValueChange = { title = it },
                         label = { Text(s.getString(R.string.title_payee)) },
                         singleLine = true
+                    )
+                    AccountPickerField(
+                        caption = s.getString(R.string.account),
+                        accounts = pickableAccounts,
+                        selectedId = accountId,
+                        onSelect = { accountId = it },
+                        modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = amount,
@@ -307,10 +325,12 @@ fun InsightsAndBudgetsScreen(
                             "EVERY_N_DAYS" -> interval != null
                             else -> true
                         }
-                        if (editing != null && title.isNotBlank() && amt > BigDecimal.ZERO && scheduleValid) {
+                        if (editing != null && title.isNotBlank() && amt > BigDecimal.ZERO && accountId.isNotBlank() && scheduleValid) {
                             repository.updateObligation(
                                 id = editing.id,
                                 title = title,
+                                accountId = accountId,
+                                currency = dialogCurrency,
                                 type = opType,
                                 amount = amt,
                                 frequency = freq,
@@ -319,14 +339,14 @@ fun InsightsAndBudgetsScreen(
                                 intervalDays = interval
                             )
                             showCreateObligationDialog = false
-                        } else if (editing == null && title.isNotBlank() && amt > BigDecimal.ZERO && defaultAccId.isNotBlank() && scheduleValid) {
+                        } else if (editing == null && title.isNotBlank() && amt > BigDecimal.ZERO && accountId.isNotBlank() && scheduleValid) {
                             repository.createObligation(
                                 title = title,
-                                accountId = defaultAccId,
+                                accountId = accountId,
                                 categoryId = null,
                                 type = opType,
                                 amount = amt,
-                                currency = baseCurrency,
+                                currency = dialogCurrency,
                                 frequency = freq,
                                 startDate = startDate,
                                 dayOfMonth = dom,
@@ -842,6 +862,7 @@ private fun BudgetSummaryCard(budgets: List<BudgetEnvelopeDto>, currency: String
 private fun PlanningSubScreen(
     forecast: CashFlowForecastDto,
     obligations: List<PlannedObligationDto>,
+    accounts: List<AccountDto>,
     categories: List<CategoryDto>,
     onOpenCreate: () -> Unit,
     onEdit: (PlannedObligationDto) -> Unit,
@@ -851,6 +872,7 @@ private fun PlanningSubScreen(
     val s = LocalResources.current
     val c = KakeiTheme.colors
     val catMap = remember(categories) { categories.associateBy { it.id } }
+    val accMap = remember(accounts) { accounts.associateBy { it.id } }
     var menuId by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
@@ -942,7 +964,10 @@ private fun PlanningSubScreen(
                                 icon = visual.icon,
                                 iconColor = visual.color,
                                 title = ob.title,
-                                subtitle = s.obligationPeriod(ob.frequency, ob.dayOfMonth, ob.intervalDays),
+                                subtitle = listOfNotNull(
+                                    s.obligationPeriod(ob.frequency, ob.dayOfMonth, ob.intervalDays),
+                                    accMap[ob.accountId]?.name
+                                ).joinToString(" · "),
                                 amount = (if (ob.type == "INCOME") "+" else "−") + CurrencyFormatter.format(ob.amount, ob.currency),
                                 amountColor = if (ob.type == "INCOME") c.mint else c.text,
                                 trailingCaption = shortDate(ob.nextDueDate, s) ?: ob.nextDueDate,

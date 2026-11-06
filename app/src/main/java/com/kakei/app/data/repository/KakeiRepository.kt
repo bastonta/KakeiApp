@@ -2261,6 +2261,8 @@ class KakeiRepository(
     fun updateObligation(
         id: String,
         title: String,
+        accountId: String,
+        currency: String,
         type: String,
         amount: BigDecimal,
         frequency: String,
@@ -2277,6 +2279,10 @@ class KakeiRepository(
         val trimmedTitle = title.trim()
         val updated = existing.copy(
             title = trimmedTitle,
+            accountId = accountId,
+            currency = currency,
+            // A transfer cannot land on the account it leaves from.
+            targetAccountId = existing.targetAccountId?.takeIf { it != accountId },
             type = type,
             amount = amount.setScale(2, RoundingMode.HALF_UP),
             frequency = frequency,
