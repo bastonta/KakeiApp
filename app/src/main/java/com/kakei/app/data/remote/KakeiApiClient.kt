@@ -323,8 +323,14 @@ class KakeiApiClient(
     suspend fun validatePasswordReset(req: PasswordResetValidationRequest): Result<PasswordResetValidationResponse> =
         requestJson("POST", "/identity/password-reset-validation", json.encodeToString(req))
 
-    suspend fun resetPassword(req: PasswordResetRequest): Result<Unit> =
-        requestJson("POST", "/identity/password-reset", json.encodeToString(req))
+    /**
+     * Sets the new password. The server answers like `/identity/login`: a session for the new
+     * credentials (or a 2FA step when [LoginResponse.need2fa]) plus a fresh refresh cookie.
+     */
+    suspend fun resetPassword(req: PasswordResetRequest): Result<LoginResponse> =
+        requestJson<LoginResponse>("POST", "/identity/password-reset", json.encodeToString(req)).onSuccess {
+            if (!it.need2fa) accessToken = it.token
+        }
 
     suspend fun revokeToken(): Result<Unit> =
         requestJson<Unit>("POST", "/identity/token/revoke").also { clearSession() }
@@ -339,8 +345,15 @@ class KakeiApiClient(
     suspend fun deleteAccount(req: AccountDeleteRequest): Result<Unit> =
         requestJson("DELETE", "/profile/account", json.encodeToString(req))
 
-    suspend fun changePassword(req: PasswordChangeRequest): Result<Unit> =
-        requestJson("POST", "/profile/password-change", json.encodeToString(req))
+    /**
+     * Changes the password. Every other session ends; this one continues with the access token
+     * returned here and the refresh cookie set by the same response.
+     */
+    suspend fun changePassword(req: PasswordChangeRequest): Result<LoginResponse> =
+        requestJson<LoginResponse>("POST", "/profile/password-change", json.encodeToString(req)).onSuccess {
+            accessToken = it.token
+            onAccessTokenRefreshed?.invoke(it.token)
+        }
 
     suspend fun enable2fa(): Result<TfaEnableResponse> =
         requestJson("POST", "/profile/2fa-enable")

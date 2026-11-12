@@ -153,7 +153,9 @@ data class EmailConfirmResponse(
 
 @Serializable
 data class EmailConfirmResendRequest(
+    /** The id returned by `/identity/register`; a code is re-sent only for that registration. */
     val userId: String? = null,
+    /** Ignored by the server (kept for compatibility); without [userId] the user must register again. */
     val email: String? = null
 )
 
