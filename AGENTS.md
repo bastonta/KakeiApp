@@ -103,13 +103,15 @@ The project strictly manages all dependencies through the **Gradle Version Catal
 
 1. **Push Notification Capture (user rules)**:
    - There is no SMS capture. `BankNotificationListenerService` reads notifications only from apps in `AppSettingsState.pushCaptureApps`.
-   - `PushRuleEngine` (`PushCaptureRules.kt`) applies the user's regex rules of that app (named group `amount`, optional `currency` / `merchant`); unmatched notifications are ignored. Types: `EXPENSE`, `INCOME`, `REFUND` (income, Refunds category), `CANCEL` (deletes the matching `[Auto-` expense from the last 30 days). Rules and the app list are device-local prefs.
+   - `PushRuleEngine` (`PushCaptureRules.kt`) applies the user's regex rules of that app (optional named groups `amount`, `currency`, `merchant`); unmatched notifications are ignored. Types: `EXPENSE`, `INCOME`, `REFUND` (income, Refunds category), `CANCEL` (deletes the matching `[Auto-` expense from the last 30 days; the only type that requires `amount`). Rules and the app list are device-local prefs.
+   - An alert without an amount (bus ticket, parking autopayment) books with the rule's `fixedAmount` when set; otherwise it is parked as a `PendingCaptureEntity` (reason `NO_AMOUNT`) until the user enters the amount. The server refuses zero-amount records, so these never sync before that.
+   - `PushRuleTemplates` holds ready-made rules for known bank alerts (Kaspi, Halyk), offered as chips in the rule editor; each has a unit test against the real alert text.
 2. **5-Minute Deduplication Window**:
    - `NotificationDeduplicationHelper` drops re-posted notifications and the second alert of one payment from two picked apps within a 5-minute sliding window.
 3. **Smart Merchant Categorization**:
    - `SmartMerchantMatcher` evaluates deterministic user rules (`CounterpartyRuleDto`) using prefix, suffix, and contains matching, falling back to keyword heuristics or flagging the record as `needsReview`.
 4. **Instant Category Overlay (`InstantPopupService`) — not implemented**:
-   - The service is declared in the manifest but calls `stopSelf()` immediately in `onStartCommand` (`AndroidAutomationServices.kt`); no overlay window is shown. `SYSTEM_ALERT_WINDOW` is requested and its status is shown in settings, but nothing uses it yet. Captured alerts are reviewed inside the app (Home screen card / pending-capture list).
+   - The service is declared in the manifest but calls `stopSelf()` immediately in `onStartCommand` (`AndroidAutomationServices.kt`); no overlay window is shown. `SYSTEM_ALERT_WINDOW` is requested and its status is shown in settings, but nothing uses it yet. Captured alerts are reviewed inside the app: Home shows only a counter of unprocessed operations (records with `needsReview` + parked `PendingCaptureEntity` alerts), and the transactions page has the "All / Unprocessed" quick filter where a parked alert opens the record editor prefilled (`RecordDraft`, `KakeiRepository.bookPendingCapture`).
 5. **Quick Settings Tile (`QuickAddTileService`)**:
    - Allows users to open the rapid transaction creation sheet directly from the Android Quick Settings shade.
 6. **7 Home Screen Widgets**:

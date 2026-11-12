@@ -25,7 +25,6 @@
     <string name="accounts_title">Accounts</string>
     <string name="add_account">Add Account</string>
     <string name="recent_transactions">Transactions</string>
-    <string name="needs_review_banner">Auto-categorized items need review</string>
     <string name="confirm_category">Confirm</string>
     <string name="create_smart_rule">Create smart rule for merchant</string>
     <string name="quick_add_transaction">Add Record</string>
@@ -107,10 +106,6 @@
     <string name="open_settings_button">Settings</string>
     <string name="capture_default_account_label">Account for captured transactions</string>
     <string name="capture_no_default_account">None — alerts wait for review</string>
-    <string name="pending_captures_title">Waiting for an account</string>
-    <string name="pending_capture_remember">Remember account for this sender</string>
-    <string name="pending_capture_currency_mismatch">currency differs from the account</string>
-    <string name="dismiss_button">Dismiss</string>
     <string name="load_demo_data_button">Load demo data (debug)</string>
     <string name="unlock_kakei">Unlock Kakei</string>
     <string name="biometrics_or_device_credential">Biometrics or device credential</string>
@@ -149,7 +144,6 @@
     <string name="imported_records_duplicates_skipped">Imported %1$s records (%2$s duplicates skipped)</string>
     <string name="restored_encrypted_backup_records">Restored encrypted backup (%1$s records)</string>
     <string name="backup_restore_failed">Backup restore failed: %1$s</string>
-    <string name="is_in_the_alert_is">%1$s is in %2$s, the alert is in %3$s</string>
     <string name="demo_data_is_only_loaded">Demo data is only loaded into an empty offline replica</string>
     <string name="local_database_re_encrypted_with">Local database re-encrypted with a hardware-backed key</string>
     <string name="local_encrypted_data_could_not">Local encrypted data could not be unlocked and was reset; it will be restored from Kakei Server after sign-in</string>
@@ -200,8 +194,6 @@
     <string name="sync">Sync</string>
     <string name="auto_capture">Auto-capture</string>
     <string name="push_notifications">Push notifications</string>
-    <string name="quick_category">Quick category</string>
-    <string name="home_card_right_after_a">Home card right after a purchase</string>
     <string name="biometric_unlock">Biometric unlock</string>
     <string name="lock_after">Lock after</string>
     <string name="time_in_background_before_relock">Time in background before relock</string>
@@ -279,7 +271,6 @@
     <string name="no_new_notifications">No new notifications</string>
     <string name="add">+ Add</string>
     <string name="order">Order</string>
-    <string name="review">Review</string>
     <string name="spending_structure">Spending structure</string>
     <string name="last_30_days">Last 30 days</string>
     <string name="vs_previous">vs previous</string>
@@ -303,9 +294,7 @@
     <string name="expenses">Expenses</string>
     <string name="account_order">Account order</string>
     <string name="drag_to_reorder">Drag to reorder</string>
-    <string name="new_transaction">New transaction</string>
     <string name="bank_alert">Bank alert</string>
-    <string name="just_now">just now</string>
     <string name="envelope_name">Envelope Name</string>
     <string name="budget_limit">Budget Limit (%1$s)</string>
     <string name="edit_payment">Edit payment</string>
@@ -399,7 +388,6 @@
     <string name="categories">Categories</string>
     <string name="categories_count">%1$d categories</string>
     <string name="merchant">Merchant</string>
-    <string name="needs_review">Needs review</string>
     <string name="change_the_period_or_reset">Change the period or reset the filters.</string>
     <string name="apply">Apply</string>
     <string name="pick_one_or_more_a">Pick one or more. A group includes its subcategories.</string>
@@ -417,10 +405,6 @@
     <plurals name="records_count">
         <item quantity="one">%d record</item>
         <item quantity="other">%d records</item>
-    </plurals>
-    <plurals name="records_need_category">
-        <item quantity="one">%d record needs a category</item>
-        <item quantity="other">%d records need a category</item>
     </plurals>
     <plurals name="days_without_spending">
         <item quantity="one">%d day without spending</item>
@@ -509,8 +493,8 @@
     <string name="push_rule_editor_title">Push rule</string>
     <string name="push_rule_name">Name (used as payee if there is no merchant group)</string>
     <string name="push_rule_pattern">Regular expression</string>
-    <string name="push_rule_pattern_help">Searched in \"title text\", case-insensitive. Required group (?&lt;amount&gt;…); optional (?&lt;currency&gt;…) and (?&lt;merchant&gt;…).</string>
-    <string name="push_rule_err_no_amount">Add a named group (?&lt;amount&gt;…) for the amount.</string>
+    <string name="push_rule_pattern_help">Searched in \"title text\", case-insensitive. Optional groups: (?&lt;amount&gt;…), (?&lt;currency&gt;…) and (?&lt;merchant&gt;…). Without an amount group the record waits for you to enter the amount.</string>
+    <string name="push_rule_err_no_amount">A cancellation needs a named group (?&lt;amount&gt;…): the expense is found by its amount.</string>
     <string name="push_rule_err_regex">Invalid regular expression.</string>
     <string name="push_rule_err_amount">Matched, but the amount group is not a number.</string>
     <string name="push_rule_currency">Currency if the text has none (blank = profile default)</string>
@@ -528,5 +512,24 @@
     <string name="push_rule_cancel_help">Books nothing: deletes the latest auto-captured expense with the same amount and currency from the last 30 days (in the chosen account, if any), preferring one whose payee matches the merchant group.</string>
     <string name="push_rule_refund_help">Money back: booked as income, in the Refunds category unless you pick another.</string>
     <string name="push_cancel_applied">Purchase cancelled by push: %1$s %2$s</string>
-    <string name="pending_capture_no_original">Cancellation: no matching record found</string>
+    <string name="push_rule_templates">Ready-made templates</string>
+    <string name="push_rule_fixed_amount">Fixed amount (the notification has none)</string>
+    <string name="push_rule_fixed_amount_help">Leave blank to enter the amount later in the unprocessed list.</string>
+    <string name="push_rule_amount_later">no amount, entered later</string>
+    <string name="open">Open</string>
+    <string name="all_records">All</string>
+    <string name="unprocessed">Unprocessed</string>
+    <string name="from_notifications">From notifications</string>
+    <string name="all_processed">All done</string>
+    <string name="all_processed_hint">Nothing is waiting for an amount or a category.</string>
+    <string name="capture_no_amount">No amount</string>
+    <string name="capture_no_account">No account</string>
+    <string name="capture_currency_mismatch">Other currency</string>
+    <string name="capture_no_original">Nothing to cancel</string>
+    <string name="capture_rejected">Rejected by server</string>
+    <string name="capture_fill_in">Fill in</string>
+    <plurals name="records_to_process">
+        <item quantity="one">%d operation to process</item>
+        <item quantity="other">%d operations to process</item>
+    </plurals>
 </resources>

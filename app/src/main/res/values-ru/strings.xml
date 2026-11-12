@@ -24,7 +24,6 @@
     <string name="accounts_title">Счета</string>
     <string name="add_account">Новый счёт</string>
     <string name="recent_transactions">Операции</string>
-    <string name="needs_review_banner">Требуется проверка автокатегоризации</string>
     <string name="confirm_category">Подтвердить</string>
     <string name="create_smart_rule">Создать правило для получателя</string>
     <string name="quick_add_transaction">Новая операция</string>
@@ -106,10 +105,6 @@
     <string name="open_settings_button">Настройки</string>
     <string name="capture_default_account_label">Счёт для захваченных операций</string>
     <string name="capture_no_default_account">Не выбран — операции ждут проверки</string>
-    <string name="pending_captures_title">Ожидают выбора счёта</string>
-    <string name="pending_capture_remember">Запомнить счёт для этого отправителя</string>
-    <string name="pending_capture_currency_mismatch">валюта не совпадает со счётом</string>
-    <string name="dismiss_button">Скрыть</string>
     <string name="load_demo_data_button">Загрузить демо-данные (debug)</string>
     <string name="unlock_kakei">Вход в Kakei</string>
     <string name="biometrics_or_device_credential">Биометрия или код устройства</string>
@@ -148,7 +143,6 @@
     <string name="imported_records_duplicates_skipped">Импортировано: %1$s (пропущено дублей: %2$s)</string>
     <string name="restored_encrypted_backup_records">Бэкап восстановлен (записей: %1$s)</string>
     <string name="backup_restore_failed">Не удалось восстановить бэкап: %1$s</string>
-    <string name="is_in_the_alert_is">Счёт %1$s в %2$s, а уведомление в %3$s</string>
     <string name="demo_data_is_only_loaded">Демо-данные загружаются только в пустую локальную базу</string>
     <string name="local_database_re_encrypted_with">Локальная база перешифрована аппаратным ключом</string>
     <string name="local_encrypted_data_could_not">Не удалось расшифровать локальные данные, они сброшены и восстановятся с Kakei Server после входа</string>
@@ -199,8 +193,6 @@
     <string name="sync">Обновить</string>
     <string name="auto_capture">Автозахват</string>
     <string name="push_notifications">Push-уведомления</string>
-    <string name="quick_category">Быстрая категория</string>
-    <string name="home_card_right_after_a">Карточка на главной сразу после покупки</string>
     <string name="biometric_unlock">Вход по биометрии</string>
     <string name="lock_after">Блокировать через</string>
     <string name="time_in_background_before_relock">Время в фоне до повторного входа</string>
@@ -278,7 +270,6 @@
     <string name="no_new_notifications">Новых уведомлений нет</string>
     <string name="add">+ Добавить</string>
     <string name="order">Порядок</string>
-    <string name="review">Разобрать</string>
     <string name="spending_structure">Структура расходов</string>
     <string name="last_30_days">Последние 30 дней</string>
     <string name="vs_previous">к прошлому</string>
@@ -302,9 +293,7 @@
     <string name="expenses">Расходы</string>
     <string name="account_order">Порядок счетов</string>
     <string name="drag_to_reorder">Перетащите, чтобы изменить порядок</string>
-    <string name="new_transaction">Новая операция</string>
     <string name="bank_alert">Банковское уведомление</string>
-    <string name="just_now">только что</string>
     <string name="envelope_name">Название конверта</string>
     <string name="budget_limit">Лимит (%1$s)</string>
     <string name="edit_payment">Изменить платёж</string>
@@ -398,7 +387,6 @@
     <string name="categories">Категории</string>
     <string name="categories_count">Категорий: %1$d</string>
     <string name="merchant">Мерчант</string>
-    <string name="needs_review">Проверить</string>
     <string name="change_the_period_or_reset">Измените период или сбросьте фильтры.</string>
     <string name="apply">Применить</string>
     <string name="pick_one_or_more_a">Можно выбрать несколько. Группа включает подкатегории.</string>
@@ -417,12 +405,6 @@
         <item quantity="few">%d операции</item>
         <item quantity="many">%d операций</item>
         <item quantity="other">%d операции</item>
-    </plurals>
-    <plurals name="records_need_category">
-        <item quantity="one">%d операция ждёт категорию</item>
-        <item quantity="few">%d операции ждут категорию</item>
-        <item quantity="many">%d операций ждут категорию</item>
-        <item quantity="other">%d операции ждут категорию</item>
     </plurals>
     <plurals name="days_without_spending">
         <item quantity="one">%d день без трат</item>
@@ -519,8 +501,8 @@
     <string name="push_rule_editor_title">Правило push</string>
     <string name="push_rule_name">Название (станет получателем, если нет группы merchant)</string>
     <string name="push_rule_pattern">Регулярное выражение</string>
-    <string name="push_rule_pattern_help">Ищется в «заголовок текст», без учёта регистра. Обязательна группа (?&lt;amount&gt;…); необязательны (?&lt;currency&gt;…) и (?&lt;merchant&gt;…).</string>
-    <string name="push_rule_err_no_amount">Добавьте именованную группу (?&lt;amount&gt;…) для суммы.</string>
+    <string name="push_rule_pattern_help">Ищется в «заголовок текст», без учёта регистра. Необязательные группы: (?&lt;amount&gt;…), (?&lt;currency&gt;…) и (?&lt;merchant&gt;…). Без группы amount операция ждёт, пока вы введёте сумму.</string>
+    <string name="push_rule_err_no_amount">Отмене нужна именованная группа (?&lt;amount&gt;…): расход ищется по сумме.</string>
     <string name="push_rule_err_regex">Некорректное регулярное выражение.</string>
     <string name="push_rule_err_amount">Совпало, но группа amount — не число.</string>
     <string name="push_rule_currency">Валюта, если её нет в тексте (пусто = валюта профиля)</string>
@@ -538,5 +520,26 @@
     <string name="push_rule_cancel_help">Ничего не записывает: удаляет последний автоматически записанный расход с той же суммой и валютой за 30 дней (на выбранном счёте, если он указан), в первую очередь тот, где получатель совпадает с группой merchant.</string>
     <string name="push_rule_refund_help">Возврат средств: записывается как доход в категорию «Возвраты», если не выбрана другая.</string>
     <string name="push_cancel_applied">Покупка отменена по push: %1$s %2$s</string>
-    <string name="pending_capture_no_original">Отмена: подходящая запись не найдена</string>
+    <string name="push_rule_templates">Готовые шаблоны</string>
+    <string name="push_rule_fixed_amount">Фиксированная сумма (в уведомлении её нет)</string>
+    <string name="push_rule_fixed_amount_help">Оставьте пустым, чтобы ввести сумму позже в списке необработанных.</string>
+    <string name="push_rule_amount_later">без суммы, введёте позже</string>
+    <string name="open">Открыть</string>
+    <string name="all_records">Все</string>
+    <string name="unprocessed">Не обработанные</string>
+    <string name="from_notifications">Из уведомлений</string>
+    <string name="all_processed">Всё обработано</string>
+    <string name="all_processed_hint">Ничего не ждёт суммы или категории.</string>
+    <string name="capture_no_amount">Нет суммы</string>
+    <string name="capture_no_account">Нет счёта</string>
+    <string name="capture_currency_mismatch">Другая валюта</string>
+    <string name="capture_no_original">Нечего отменять</string>
+    <string name="capture_rejected">Отклонено сервером</string>
+    <string name="capture_fill_in">Заполнить</string>
+    <plurals name="records_to_process">
+        <item quantity="one">%d операция ждёт обработки</item>
+        <item quantity="few">%d операции ждут обработки</item>
+        <item quantity="many">%d операций ждут обработки</item>
+        <item quantity="other">%d операции ждут обработки</item>
+    </plurals>
 </resources>

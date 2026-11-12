@@ -46,6 +46,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kakei.app.core.i18n.AppLanguage
 import com.kakei.app.core.security.BiometricHelper
+import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.remote.dto.TransactionDto
 import com.kakei.app.data.repository.KakeiRepository
 import com.kakei.app.ui.components.BottomNavItem
@@ -196,7 +197,7 @@ fun KakeiAppRoot(
     val pendingMutations by repository.pendingMutations.collectAsState()
     val healthScore by repository.healthScore.collectAsState()
     val streaks by repository.streaks.collectAsState()
-    val instantCapturedRecord by repository.instantCapturedRecord.collectAsState()
+    val pendingCaptures by repository.pendingCaptures.collectAsState()
 
     val res = LocalResources.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -222,8 +223,8 @@ fun KakeiAppRoot(
     }
     var showQuickAddModal by remember { mutableStateOf(initialQuickAdd) }
     var showProfile by rememberSaveable { mutableStateOf(false) }
-    // Full-screen transactions page opened from Home: (account filter, focus search).
-    var transactionsPage by remember { mutableStateOf<Pair<String?, Boolean>?>(null) }
+    // Full-screen transactions page opened from Home.
+    var transactionsPage by remember { mutableStateOf<TransactionsPageArgs?>(null) }
     // Record opened in the editor; a transfer is always edited through its debit leg.
     var editingRecord by remember { mutableStateOf<TransactionDto?>(null) }
     val openRecordEditor: (TransactionDto) -> Unit = { tx ->
@@ -231,6 +232,8 @@ fun KakeiAppRoot(
             transactions.firstOrNull { it.transferPairId == tx.transferPairId && !it.isTransferCredit } ?: tx
         } else tx
     }
+    // Parked bank alert being completed in the editor (amount, account, category).
+    var filingCapture by remember { mutableStateOf<PendingCaptureEntity?>(null) }
 
     // Biometric app lock. Re-checked on resume: the user may have removed the device
     // screen lock meanwhile, and a lock that can never be passed must not engage.
@@ -275,7 +278,7 @@ fun KakeiAppRoot(
             val fullScreenPage = showProfile || transactionsPage != null
 
             Box(modifier = Modifier.fillMaxSize()) {
-                val editorOpen = showQuickAddModal || editingRecord != null
+                val editorOpen = showQuickAddModal || editingRecord != null || filingCapture != null
                 Scaffold(
                     // Hidden from accessibility services while the editor overlay covers it.
                     modifier = Modifier
@@ -320,7 +323,7 @@ fun KakeiAppRoot(
                                 onBack = { showProfile = false }
                             )
                         } else if (transactionsPage != null) {
-                            val (accountId, focusSearch) = transactionsPage!!
+                            val args = transactionsPage!!
                             TransactionsScreen(
                                 baseCurrency = settings.profile.defaultCurrency,
                                 langCode = settings.language.code,
@@ -328,10 +331,13 @@ fun KakeiAppRoot(
                                 categories = categories,
                                 labels = labels,
                                 transactions = transactions,
+                                pendingCaptures = pendingCaptures,
                                 repository = repository,
-                                initialAccountId = accountId,
-                                focusSearch = focusSearch,
+                                initialAccountId = args.accountId,
+                                focusSearch = args.focusSearch,
+                                initialUnprocessedOnly = args.unprocessedOnly,
                                 onEditRecord = openRecordEditor,
+                                onOpenCapture = { filingCapture = it },
                                 onBack = { transactionsPage = null }
                             )
                         } else when (currentTab) {
@@ -341,10 +347,12 @@ fun KakeiAppRoot(
                                 categories = categories,
                                 labels = labels,
                                 transactions = transactions,
-                                instantCapturedRecord = instantCapturedRecord,
                                 repository = repository,
                                 onOpenProfile = { showProfile = true },
-                                onOpenTransactions = { accountId, focusSearch -> transactionsPage = accountId to focusSearch },
+                                onOpenTransactions = { accountId, focusSearch ->
+                                    transactionsPage = TransactionsPageArgs(accountId, focusSearch)
+                                },
+                                onOpenUnprocessed = { transactionsPage = TransactionsPageArgs(unprocessedOnly = true) },
                                 onEditRecord = openRecordEditor
                             )
                             1 -> InsightsAndBudgetsScreen(
@@ -377,6 +385,7 @@ fun KakeiAppRoot(
 
                 // New / edit record editor slides up over the current screen and back down on close.
                 val editorTarget: EditorTarget? = editingRecord?.let { EditorTarget.Edit(it) }
+                    ?: filingCapture?.let { EditorTarget.Capture(it) }
                     ?: EditorTarget.New.takeIf { editorOpen }
                 AnimatedContent(
                     targetState = editorTarget,
@@ -425,6 +434,39 @@ fun KakeiAppRoot(
                                     editingRecord = null
                                 }
                             )
+                            is EditorTarget.Capture -> RecordEditorScreen(
+                                accounts = accounts,
+                                categories = categories,
+                                labels = labels,
+                                transactions = transactions,
+                                langCode = settings.language.code,
+                                onCreateLabel = { name, colorHex -> repository.createLabel(name, colorHex) },
+                                rateFor = { from, to -> repository.rateBook.value.rate(from, to) },
+                                draft = remember(target.capture.id) { repository.draftForCapture(target.capture) },
+                                onCreateRule = { payee, catId ->
+                                    repository.createSmartRule(pattern = payee, matchType = "CONTAINS", categoryId = catId)
+                                },
+                                onDismiss = { filingCapture = null },
+                                onSave = { accId, type, amt, catId, payee, note, status, targetAccId, splits, labelIds, targetAmount, bookingDateIso ->
+                                    val booked = repository.bookPendingCapture(
+                                        capture = target.capture,
+                                        accountId = accId,
+                                        type = type,
+                                        amount = amt,
+                                        categoryId = catId,
+                                        payee = payee,
+                                        note = note,
+                                        status = status,
+                                        transferTargetAccountId = targetAccId,
+                                        splits = splits,
+                                        labelIds = labelIds,
+                                        targetAmount = targetAmount,
+                                        bookingDateIso = bookingDateIso
+                                    )
+                                    // On a refusal the editor stays open with what was entered.
+                                    if (booked) filingCapture = null
+                                }
+                            )
                             EditorTarget.New -> RecordEditorScreen(
                                 accounts = accounts,
                                 categories = categories,
@@ -464,7 +506,15 @@ fun KakeiAppRoot(
 private sealed interface EditorTarget {
     data object New : EditorTarget
     data class Edit(val record: TransactionDto) : EditorTarget
+    data class Capture(val capture: PendingCaptureEntity) : EditorTarget
 }
+
+/** What the full-screen transactions page opens with. */
+private data class TransactionsPageArgs(
+    val accountId: String? = null,
+    val focusSearch: Boolean = false,
+    val unprocessedOnly: Boolean = false
+)
 
 /** The editor slides up from the bottom over the current screen and back down when closed. */
 private fun editorOverlayTransition(opening: Boolean): ContentTransform {

@@ -29,6 +29,7 @@ import com.kakei.app.core.i18n.clearingStatus
 import com.kakei.app.core.i18n.operationType
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.core.util.ExchangeRateBook
+import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.LabelDto
@@ -78,8 +79,10 @@ private sealed interface LedgerEntry {
 /**
  * Full-screen transactions page opened from Home ("All" / search). Unlike the Home ledger it
  * lazily composes every record on its own, and filters by text, type, period (presets or a
- * custom date range), account, categories (a group includes its subcategories), merchant
- * (payee) and the review queue.
+ * custom date range), account, categories (a group includes its subcategories) and merchant
+ * (payee). The "Unprocessed" quick filter narrows it to what still needs the user: records
+ * waiting for a category and bank alerts that could not be booked on their own
+ * ([pendingCaptures]: no amount, no account); those are completed in the record editor.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,10 +93,16 @@ fun TransactionsScreen(
     categories: List<CategoryDto>,
     labels: List<LabelDto>,
     transactions: List<TransactionDto>,
+    /** Bank alerts parked for the user to complete, newest first. */
+    pendingCaptures: List<PendingCaptureEntity>,
     repository: KakeiRepository,
     initialAccountId: String? = null,
     focusSearch: Boolean = false,
+    /** Open on the "Unprocessed" quick filter (the Home counter leads here). */
+    initialUnprocessedOnly: Boolean = false,
     onEditRecord: (TransactionDto) -> Unit,
+    /** Opens the record editor prefilled from a parked alert. */
+    onOpenCapture: (PendingCaptureEntity) -> Unit,
     onBack: () -> Unit
 ) {
     val s = LocalResources.current
@@ -109,7 +118,7 @@ fun TransactionsScreen(
     var accountFilter by remember { mutableStateOf(initialAccountId) }
     var categoryFilter by remember { mutableStateOf<Set<String>>(emptySet()) }
     var payeeFilter by remember { mutableStateOf<String?>(null) }
-    var reviewOnly by remember { mutableStateOf(false) }
+    var unprocessedOnly by remember { mutableStateOf(initialUnprocessedOnly) }
 
     var showRangePicker by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -136,14 +145,30 @@ fun TransactionsScreen(
     val effectiveCategories = remember(categoryFilter, tree) {
         categoryFilter.flatMapTo(HashSet()) { id -> listOf(id) + tree.children[id].orEmpty().map { it.id } }
     }
-    val range = period.range(today, customRange)
+    // The unprocessed queue is short and must be seen whole, whatever month it started in.
+    val range = if (unprocessedOnly) null else period.range(today, customRange)
+    val unprocessedCount = remember(transactions, pendingCaptures) {
+        transactions.count { it.needsReview } + pendingCaptures.size
+    }
 
-    val filtered = remember(dated, query, typeFilter, range, accountFilter, effectiveCategories, payeeFilter, reviewOnly) {
+    // Parked alerts are not records yet: they have no category, and their payee is not in the
+    // ledger, so those two filters hide them. The period does not apply: they are all current.
+    val shownCaptures = remember(pendingCaptures, query, typeFilter, accountFilter, categoryFilter, payeeFilter) {
+        val q = query.trim()
+        if (categoryFilter.isNotEmpty() || payeeFilter != null) emptyList() else pendingCaptures.filter { cap ->
+            (typeFilter == null || captureRecordType(cap) == typeFilter) &&
+                (accountFilter == null || cap.accountId == null || cap.accountId == accountFilter) &&
+                (q.isEmpty() || cap.merchant?.contains(q, ignoreCase = true) == true ||
+                    cap.rawText.contains(q, ignoreCase = true))
+        }
+    }
+
+    val filtered = remember(dated, query, typeFilter, range, accountFilter, effectiveCategories, payeeFilter, unprocessedOnly) {
         val q = query.trim()
         dated.filter { (tx, date) ->
             (typeFilter == null || tx.type == typeFilter) &&
                 (accountFilter == null || tx.accountId == accountFilter) &&
-                (!reviewOnly || tx.needsReview) &&
+                (!unprocessedOnly || tx.needsReview) &&
                 (payeeFilter == null || tx.payee?.trim().equals(payeeFilter, ignoreCase = true)) &&
                 (range == null || (date != null && !date.isBefore(range.start) && !date.isAfter(range.endInclusive))) &&
                 (effectiveCategories.isEmpty() || tx.categoryId in effectiveCategories ||
@@ -180,7 +205,7 @@ fun TransactionsScreen(
     }
 
     val activeFilterCount = listOf(
-        typeFilter != null, accountFilter != null, categoryFilter.isNotEmpty(), payeeFilter != null, reviewOnly
+        typeFilter != null, accountFilter != null, categoryFilter.isNotEmpty(), payeeFilter != null
     ).count { it }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusSearch) {
@@ -202,7 +227,6 @@ fun TransactionsScreen(
                     accountFilter = null
                     categoryFilter = emptySet()
                     payeeFilter = null
-                    reviewOnly = false
                 }) {
                     Text(s.getString(R.string.exchange_rate_reset_button), color = c.mint)
                 }
@@ -237,8 +261,21 @@ fun TransactionsScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
+            // Quick filter: everything, or only what still needs the user
+            item(key = "quick") {
+                KakeiSegmented(
+                    options = listOf(
+                        s.getString(R.string.all_records),
+                        s.getString(R.string.unprocessed) + if (unprocessedCount > 0) " · $unprocessedCount" else ""
+                    ),
+                    selectedIndex = if (unprocessedOnly) 1 else 0,
+                    onSelect = { unprocessedOnly = it == 1 }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // Period presets + custom range
-            item(key = "period") {
+            if (!unprocessedOnly) item(key = "period") {
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -264,7 +301,7 @@ fun TransactionsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Type, account, category, merchant, review
+            // Type, account, category, merchant
             item(key = "filters") {
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -334,13 +371,6 @@ fun TransactionsScreen(
                         selected = payeeFilter != null,
                         onClick = { showPayeeDialog = true }
                     )
-                    KakeiChip(
-                        text = s.getString(R.string.needs_review),
-                        icon = Icons.Outlined.Flag,
-                        color = c.amber,
-                        selected = reviewOnly,
-                        onClick = { reviewOnly = !reviewOnly }
-                    )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -370,14 +400,52 @@ fun TransactionsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            if (entries.isEmpty()) {
-                item(key = "empty") {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    EmptyStateCard(
-                        icon = Icons.AutoMirrored.Outlined.ReceiptLong,
-                        title = s.getString(R.string.nothing_found),
-                        hint = s.getString(R.string.change_the_period_or_reset)
+            // Bank alerts waiting for an amount or an account, above the ledger
+            if (shownCaptures.isNotEmpty()) {
+                item(key = "captures-header") {
+                    Text(
+                        s.getString(R.string.from_notifications),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.muted,
+                        modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 14.dp, bottom = 6.dp)
                     )
+                }
+                item(key = "captures") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(c.surf)
+                    ) {
+                        shownCaptures.forEachIndexed { i, capture ->
+                            if (i > 0) RowDivider(startIndent = 74.dp)
+                            PendingCaptureItem(
+                                capture = capture,
+                                account = capture.accountId?.let { accountMap[it] },
+                                onOpen = { onOpenCapture(capture) },
+                                onDismiss = { repository.dismissPendingCapture(capture.id) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (entries.isEmpty()) {
+                if (shownCaptures.isEmpty()) item(key = "empty") {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (unprocessedOnly && unprocessedCount == 0) {
+                        EmptyStateCard(
+                            icon = Icons.Outlined.TaskAlt,
+                            title = s.getString(R.string.all_processed),
+                            hint = s.getString(R.string.all_processed_hint)
+                        )
+                    } else {
+                        EmptyStateCard(
+                            icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                            title = s.getString(R.string.nothing_found),
+                            hint = s.getString(R.string.change_the_period_or_reset)
+                        )
+                    }
                 }
             } else {
                 // Every record is its own lazy item, so long periods scroll without composing whole days at once.
@@ -568,6 +636,81 @@ fun TransactionsScreen(
             onConfirm = { catId, createRule -> repository.confirmReview(item, catId, createRule) },
             onDismiss = { reviewTarget = null }
         )
+    }
+}
+
+/** Record type a parked alert books as (a refund is income). */
+private fun captureRecordType(capture: PendingCaptureEntity): String =
+    if (capture.operationType == "REFUND") "INCOME" else capture.operationType
+
+/** Why a parked alert was not booked on its own, as a short badge. */
+private fun captureReasonLabel(reason: String): Int = when (reason) {
+    "NO_AMOUNT" -> R.string.capture_no_amount
+    "CURRENCY_MISMATCH" -> R.string.capture_currency_mismatch
+    "NO_ORIGINAL" -> R.string.capture_no_original
+    "SERVER_REJECTED" -> R.string.capture_rejected
+    else -> R.string.capture_no_account
+}
+
+/**
+ * A bank alert waiting in the unprocessed list. A tap opens the record editor prefilled
+ * from it; a cancellation that found no expense to void has nothing to book and can only
+ * be removed.
+ */
+@Composable
+private fun PendingCaptureItem(
+    capture: PendingCaptureEntity,
+    account: AccountDto?,
+    onOpen: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val s = LocalResources.current
+    val c = KakeiTheme.colors
+    var menuOpen by remember { mutableStateOf(false) }
+    val fillable = capture.operationType != "CANCEL"
+    val type = captureRecordType(capture)
+    Box {
+        TransactionRow(
+            icon = Icons.Outlined.NotificationsActive,
+            iconColor = c.amber,
+            title = capture.merchant ?: s.getString(R.string.bank_alert),
+            subtitle = listOfNotNull(
+                s.getString(pushOperationLabel(capture.operationType)),
+                account?.name
+            ).joinToString(" · "),
+            amount = capture.amount?.let {
+                (if (type == "INCOME") "+" else "−") + CurrencyFormatter.format(it, capture.currency)
+            } ?: "—",
+            amountColor = if (capture.amount == null) c.faint else if (type == "INCOME") c.mint else c.text,
+            trailingCaption = CurrencyFormatter.formatShortDate(capture.bookingDate),
+            badge = s.getString(captureReasonLabel(capture.reason)),
+            badgeColor = c.amber,
+            extra = capture.rawText,
+            modifier = Modifier.combinedClickable(
+                onClick = { if (fillable) onOpen() else menuOpen = true },
+                onLongClick = { menuOpen = true }
+            )
+        )
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            if (fillable) {
+                DropdownMenuItem(
+                    text = { Text(s.getString(R.string.capture_fill_in)) },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onOpen()
+                    }
+                )
+            }
+            DropdownMenuItem(
+                text = { Text(s.getString(R.string.delete_button), color = c.coral) },
+                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = c.coral) },
+                onClick = {
+                    menuOpen = false
+                    onDismiss()
+                }
+            )
+        }
     }
 }
 

@@ -15,7 +15,7 @@
 ## ✨ Features
 
 - **🤖 Autonomous Bank Transaction Capture**:
-  - Push capture set up by the user (`PushRuleEngine`): only notifications from apps picked in Settings are read, and one is booked only when one of that app's regex rules matches (named groups `amount`, optional `currency` / `merchant`).
+  - Push capture set up by the user (`PushRuleEngine`): only notifications from apps picked in Settings are read, and one is booked only when one of that app's regex rules matches (optional named groups `amount`, `currency`, `merchant`). An alert without an amount takes the rule's fixed amount or waits in the unprocessed list until the amount is entered; ready-made templates cover common Kaspi and Halyk alerts.
   - Rule types: expense, income, refund (income in Refunds) and cancellation, which deletes the matching auto-captured expense.
   - **5-Minute Deduplication Window** (`NotificationDeduplicationHelper`): drops re-posted notifications and the second alert when two picked apps announce the same payment.
   - Privacy: no app is read until the user picks it; unmatched notifications are ignored, and only the last few texts per picked app are kept in memory for testing rules.

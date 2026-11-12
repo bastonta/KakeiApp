@@ -54,11 +54,12 @@ private const val SPEND_WINDOW_DAYS = 30L
 
 /**
  * Tab 1: Home combining:
- * - "Главная" header with search, review notifications and the profile avatar
+ * - "Главная" header with search, the unprocessed-operations bell and the profile avatar
  * - Net Worth hero card with the month delta and the month's income / expense
- * - Instant Captured Alert card with one-tap categorization
  * - Two-column accounts grid (tap opens the account's records) + Create Account dialog
- * - `NeedsReview` queue banner, 30-day spending structure and the latest records
+ * - Unprocessed counter (records without a category + bank alerts without an amount or
+ *   account); a tap opens the transactions page on its "Unprocessed" filter
+ * - 30-day spending structure and the latest records
  */
 @Composable
 fun HomeScreen(
@@ -67,10 +68,11 @@ fun HomeScreen(
     categories: List<CategoryDto>,
     labels: List<LabelDto>,
     transactions: List<TransactionDto>,
-    instantCapturedRecord: TransactionDto?,
     repository: KakeiRepository,
     onOpenProfile: () -> Unit,
     onOpenTransactions: (accountId: String?, focusSearch: Boolean) -> Unit,
+    /** Opens the transactions page on its "Unprocessed" quick filter. */
+    onOpenUnprocessed: () -> Unit,
     onEditRecord: (TransactionDto) -> Unit
 ) {
     val s = LocalResources.current
@@ -167,7 +169,12 @@ fun HomeScreen(
         (windowTotal - previousWindowTotal).multiply(BigDecimal(100)).divide(previousWindowTotal, 1, RoundingMode.HALF_UP)
     } else null
 
-    val needsReviewItems = remember(transactions) { transactions.filter { it.needsReview } }
+    // Everything still waiting for the user: records without a confirmed category and bank
+    // alerts that could not be booked on their own (no amount, no account).
+    val pendingCaptures by repository.pendingCaptures.collectAsState()
+    val unprocessedCount = remember(transactions, pendingCaptures) {
+        transactions.count { it.needsReview } + pendingCaptures.size
+    }
     // Home only shows the latest records; the full, filterable history is a separate page.
     val recentRecords = remember(transactions) { transactions.take(RECENT_RECORDS_LIMIT) }
 
@@ -194,12 +201,11 @@ fun HomeScreen(
                 Box {
                     CircleIconButton(
                         icon = Icons.Outlined.Notifications,
-                        contentDescription = s.getString(R.string.needs_review_banner),
-                        badge = needsReviewItems.isNotEmpty(),
+                        contentDescription = s.getString(R.string.unprocessed),
+                        badge = unprocessedCount > 0,
                         size = 44.dp,
                         onClick = {
-                            val first = needsReviewItems.firstOrNull()
-                            if (first != null) onEditRecord(first) else showNoNotifications = true
+                            if (unprocessedCount > 0) onOpenUnprocessed() else showNoNotifications = true
                         }
                     )
                     DropdownMenu(expanded = showNoNotifications, onDismissRequest = { showNoNotifications = false }) {
@@ -232,22 +238,7 @@ fun HomeScreen(
             )
         }
 
-        // 3. Instant captured alert (InstantPopupService UX, shown in-app)
-        if (instantCapturedRecord != null) {
-            item {
-                InstantCaptureCard(
-                    record = instantCapturedRecord,
-                    categories = categories,
-                    langCode = langCode,
-                    onCategory = { cat ->
-                        repository.confirmReview(record = instantCapturedRecord, categoryId = cat.id, createRule = true)
-                    },
-                    onDismiss = { repository.dismissInstantCapturedBanner() }
-                )
-            }
-        }
-
-        // 4. Accounts grid; a tap opens the account's records, a long press edits it.
+        // 3. Accounts grid; a tap opens the account's records, a long press edits it.
         // One item, so the grid keeps its own 10dp rhythm instead of the list's 16dp gaps.
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -279,27 +270,27 @@ fun HomeScreen(
             }
         }
 
-        // 5. NeedsReview queue banner
-        if (needsReviewItems.isNotEmpty()) {
+        // 4. Unprocessed counter: only how many, the work itself happens on the transactions page
+        if (unprocessedCount > 0) {
             item {
-                val n = needsReviewItems.size.toLong()
+                val n = unprocessedCount.toLong()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .kakeiCard(cornerRadius = 16.dp, color = c.amber.copy(alpha = 0.10f), borderColor = c.amber.copy(alpha = 0.25f))
-                        .clickable { onEditRecord(needsReviewItems.first()) }
+                        .clickable(onClick = onOpenUnprocessed)
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Outlined.Sell, contentDescription = null, tint = c.amber, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Outlined.Inbox, contentDescription = null, tint = c.amber, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = s.getQuantityString(R.plurals.records_need_category, n.toInt(), n),
+                        text = s.getQuantityString(R.plurals.records_to_process, n.toInt(), n),
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.text,
                         modifier = Modifier.weight(1f)
                     )
-                    Text(s.getString(R.string.review), style = MaterialTheme.typography.labelLarge, color = c.amber)
+                    Text(s.getString(R.string.open), style = MaterialTheme.typography.labelLarge, color = c.amber)
                     Icon(
                         Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                         contentDescription = null,
@@ -310,7 +301,7 @@ fun HomeScreen(
             }
         }
 
-        // 6. Spending structure over the last 30 days
+        // 5. Spending structure over the last 30 days
         if (windowSpend.isNotEmpty()) {
             item {
                 CategoryDonutCard(
@@ -326,7 +317,7 @@ fun HomeScreen(
             }
         }
 
-        // 7. Latest records
+        // 6. Latest records
         item {
             if (recentRecords.isEmpty()) {
                 EmptyStateCard(
@@ -763,52 +754,4 @@ private fun ReorderAccountsDialog(
             }
         }
     )
-}
-
-@Composable
-private fun InstantCaptureCard(
-    record: TransactionDto,
-    categories: List<CategoryDto>,
-    langCode: String,
-    onCategory: (CategoryDto) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val s = LocalResources.current
-    val c = KakeiTheme.colors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .kakeiCard(color = c.amber.copy(alpha = 0.08f), borderColor = c.amber.copy(alpha = 0.45f))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(icon = Icons.Outlined.Bolt, color = c.amber, size = 36.dp, iconSize = 18.dp, cornerRadius = 10.dp)
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = s.getString(R.string.new_transaction),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = c.text
-                )
-                Text(
-                    text = "${record.payee ?: s.getString(R.string.bank_alert)} · ${s.getString(R.string.just_now)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(signedRecordAmount(record), style = MaterialTheme.typography.titleLarge, color = c.text)
-            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = s.getString(R.string.dismiss_button), tint = c.muted, modifier = Modifier.size(18.dp))
-            }
-        }
-        CategoryPickerRow(
-            categories = categories,
-            selectedId = record.categoryId.takeIf { !record.needsReview },
-            langCode = langCode,
-            onSelect = onCategory
-        )
-    }
 }

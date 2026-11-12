@@ -78,7 +78,6 @@ data class AppSettingsState(
     /** Background time (seconds) after which the biometric lock engages again; 0 = immediately. */
     val lockTimeoutSeconds: Int = DEFAULT_LOCK_TIMEOUT_SECONDS,
     val pushCaptureEnabled: Boolean = true,
-    val instantPopupEnabled: Boolean = true,
     /** Account that captured bank alerts are filed into when no sender mapping matches. */
     val captureDefaultAccountId: String? = null,
     /** Alert sender (app package) → account id, set when the user files a pending capture. */
@@ -132,6 +131,19 @@ data class GroupMemberMutationPayload(
 
 /** Recent notification texts kept per picked app for the push rule editor. */
 private const val MAX_PUSH_SAMPLES = 10
+
+/** Prefill of the record editor for a new record built from a parked bank alert. */
+data class RecordDraft(
+    val type: String,
+    /** Null when the alert stated no amount: the user enters it. */
+    val amount: BigDecimal?,
+    val accountId: String?,
+    val categoryId: String?,
+    val payee: String?,
+    val note: String?,
+    /** ISO instant of the alert; the record keeps it unless the user picks another. */
+    val bookingDate: String
+)
 
 /** Note prefix of auto-captured records ("[Auto-PUSH] …"); cancellations only void these. */
 private const val CAPTURE_NOTE_PREFIX = "[Auto-"
@@ -279,8 +291,6 @@ class KakeiRepository(
     private val _recentPushSamples = MutableStateFlow<Map<String, List<String>>>(emptyMap())
     val recentPushSamples: StateFlow<Map<String, List<String>>> = _recentPushSamples.asStateFlow()
 
-    private val _instantCapturedRecord = MutableStateFlow<TransactionDto?>(null)
-    val instantCapturedRecord: StateFlow<TransactionDto?> = _instantCapturedRecord.asStateFlow()
 
     init {
         apiClient.updateBaseUrl(_settingsState.value.serverBaseUrl)
@@ -351,7 +361,6 @@ class KakeiRepository(
             biometricLockEnabled = prefs.getBoolean("biometric_lock", false),
             lockTimeoutSeconds = prefs.getInt("lock_timeout_sec", AppSettingsState.DEFAULT_LOCK_TIMEOUT_SECONDS),
             pushCaptureEnabled = prefs.getBoolean("push_capture", true),
-            instantPopupEnabled = prefs.getBoolean("instant_popup", true),
             captureDefaultAccountId = prefs.getString("capture_default_account", null),
             expenseReminderEnabled = prefs.getBoolean("expense_reminder", false),
             expenseReminderMinuteOfDay = prefs.getInt(
@@ -465,24 +474,21 @@ class KakeiRepository(
 
     fun updateAutomationToggles(
         pushEnabled: Boolean? = null,
-        instantPopup: Boolean? = null,
         biometricEnabled: Boolean? = null
     ) {
         val current = _settingsState.value
         val nextPush = pushEnabled ?: current.pushCaptureEnabled
-        val nextPopup = instantPopup ?: current.instantPopupEnabled
         // Without an enrolled biometric or screen lock the gate could never be passed.
         val bioUnavailable = biometricEnabled == true && !BiometricHelper.canAuthenticate(appContext)
         val nextBio = if (bioUnavailable) current.biometricLockEnabled else biometricEnabled ?: current.biometricLockEnabled
         prefs.edit {
             remove("sms_capture")
             putBoolean("push_capture", nextPush)
-            putBoolean("instant_popup", nextPopup)
+            remove("instant_popup")
             putBoolean("biometric_lock", nextBio)
         }
         _settingsState.value = current.copy(
             pushCaptureEnabled = nextPush,
-            instantPopupEnabled = nextPopup,
             biometricLockEnabled = nextBio,
             statusMessage = if (bioUnavailable) {
                 str(R.string.set_up_biometrics_or_a)
@@ -1937,9 +1943,6 @@ class KakeiRepository(
             updated.bookingDate,
             database.json.encodeToString(updated)
         )
-        if (_instantCapturedRecord.value?.id == record.id) {
-            _instantCapturedRecord.value = null
-        }
         val ruleCreatedLocally = createRule && !record.payee.isNullOrBlank()
         if (ruleCreatedLocally) {
             createSmartRule(
@@ -2083,10 +2086,6 @@ class KakeiRepository(
             payloadJson = database.json.encodeToString(item),
             expectedSyncRevision = item.expectedSyncRevision
         )
-    }
-
-    fun dismissInstantCapturedBanner() {
-        _instantCapturedRecord.value = null
     }
 
     /** Signed effect a record has on its own account balance (mirrors the server rule). */
@@ -2793,7 +2792,6 @@ class KakeiRepository(
         return bookParsedAlert(
             parsed,
             sender = packageName,
-            eventKey = eventKey,
             accountIdOverride = rule.accountId,
             categoryIdOverride = rule.categoryId
         )
@@ -2810,13 +2808,13 @@ class KakeiRepository(
 
     /**
      * Books a parsed alert. The account is [accountIdOverride] (a push
-     * rule's), else the one mapped to [sender], else the default capture account; without
-     * one (or on a currency mismatch) the alert is parked in [pendingCaptures].
+     * rule's), else the one mapped to [sender], else the default capture account. An alert
+     * without an amount, without an account or in another currency than its account is
+     * parked in [pendingCaptures] for the user to complete.
      */
     private fun bookParsedAlert(
         parsed: ParsedBankNotification,
         sender: String?,
-        eventKey: String?,
         accountIdOverride: String? = null,
         categoryIdOverride: String? = null
     ): TransactionDto? {
@@ -2830,24 +2828,28 @@ class KakeiRepository(
             ?: settings.captureDefaultAccountId?.let { usable[it] }
 
         val bookingDate = Instant.now().toString()
+        val amount = parsed.amount
         val reason = when {
+            amount == null -> "NO_AMOUNT"
             targetAccount == null -> "NO_ACCOUNT"
             !targetAccount.currency.equals(parsed.currency, ignoreCase = true) -> "CURRENCY_MISMATCH"
             else -> null
         }
-        if (targetAccount == null || reason != null) {
+        if (amount == null || targetAccount == null || reason != null) {
             val capture = PendingCaptureEntity(
                 id = UUID.randomUUID().toString(),
                 sourceChannel = sourceChannel,
                 sender = senderKey,
                 rawText = parsed.rawMessage,
                 operationType = parsed.operationType,
-                amount = parsed.amount,
+                amount = amount,
                 currency = parsed.currency.uppercase(Locale.ROOT),
                 merchant = parsed.merchant.takeIf { it.isNotBlank() },
                 bookingDate = bookingDate,
                 reason = reason ?: "NO_ACCOUNT",
-                createdAt = bookingDate
+                createdAt = bookingDate,
+                accountId = targetAccount?.id,
+                categoryId = categoryIdOverride
             )
             putDto(KakeiDatabase.COL_PENDING_CAPTURES, capture.id, capture.createdAt, capture)
             _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
@@ -2859,21 +2861,20 @@ class KakeiRepository(
         val result = createRecordDetailed(
             accountId = targetAccount.id,
             type = captureRecordType(parsed.operationType),
-            amount = parsed.amount,
+            amount = amount,
             categoryId = classification.categoryId,
             payee = parsed.merchant,
-            note = "$CAPTURE_NOTE_PREFIX$sourceChannel] ${BankAlertText.redactForNote(parsed.rawMessage)}",
+            note = captureNote(sourceChannel, parsed.rawMessage),
             status = "CLEARED",
             needsReview = classification.needsReview,
             bookingDateIso = bookingDate
         )
-
-        val created = result.record?.takeIf { !result.duplicate }
-        if (created != null && _settingsState.value.instantPopupEnabled) {
-            _instantCapturedRecord.value = created
-        }
-        return created
+        return result.record?.takeIf { !result.duplicate }
     }
+
+    /** Note of an auto-captured record: the alert itself, without balances and card numbers. */
+    private fun captureNote(sourceChannel: String, rawText: String): String =
+        "$CAPTURE_NOTE_PREFIX$sourceChannel] ${BankAlertText.redactForNote(rawText)}"
 
     /** A refund is money back: it books as income. */
     private fun captureRecordType(operationType: String): String =
@@ -2912,11 +2913,13 @@ class KakeiRepository(
      * cancel, the alert is parked as a pending capture the user can only dismiss.
      */
     private fun cancelCapturedExpense(parsed: ParsedBankNotification, sender: String, accountIdOverride: String?) {
+        // A cancellation rule always reads the amount; it is how the expense is found.
+        val amount = parsed.amount ?: return
         val since = LocalDate.now().minusDays(CANCEL_LOOKBACK_DAYS).toString()
         val currency = parsed.currency
         val candidates = _transactions.value.filter {
             it.type == "EXPENSE" &&
-                it.amount.compareTo(parsed.amount) == 0 &&
+                it.amount.compareTo(amount) == 0 &&
                 it.currency.equals(currency, ignoreCase = true) &&
                 it.note?.startsWith(CAPTURE_NOTE_PREFIX) == true &&
                 it.bookingDate.take(10) >= since &&
@@ -2931,7 +2934,6 @@ class KakeiRepository(
         val original = payeeMatches.maxByOrNull { it.bookingDate } ?: candidates.maxByOrNull { it.bookingDate }
         if (original != null) {
             deleteRecord(original)
-            if (_instantCapturedRecord.value?.id == original.id) _instantCapturedRecord.value = null
             postMessage(
                 str(
                     R.string.push_cancel_applied,
@@ -2945,7 +2947,7 @@ class KakeiRepository(
         val pendingOriginal = _pendingCaptures.value
             .filter {
                 it.operationType == "EXPENSE" &&
-                    it.amount.compareTo(parsed.amount) == 0 &&
+                    it.amount?.compareTo(amount) == 0 &&
                     it.currency.equals(currency, ignoreCase = true)
             }
             .maxByOrNull { it.createdAt }
@@ -2961,7 +2963,7 @@ class KakeiRepository(
             sender = sender,
             rawText = parsed.rawMessage,
             operationType = "CANCEL",
-            amount = parsed.amount,
+            amount = amount,
             currency = currency.uppercase(Locale.ROOT),
             merchant = merchant.takeIf { it.isNotBlank() },
             bookingDate = now,
@@ -2972,36 +2974,79 @@ class KakeiRepository(
         _pendingCaptures.value = database.listItems(KakeiDatabase.COL_PENDING_CAPTURES, descending = true)
     }
 
-    /** Books a pending capture into [accountId]; optionally remembers the account for its sender. */
-    fun filePendingCapture(capture: PendingCaptureEntity, accountId: String, rememberSender: Boolean) {
-        // A cancellation with no record to void has nothing to book; it can only be dismissed.
-        if (capture.operationType == "CANCEL") return
-        val account = _accounts.value.firstOrNull { it.id == accountId } ?: return
-        if (!account.currency.equals(capture.currency, ignoreCase = true)) {
-            postMessage(
-                str(R.string.is_in_the_alert_is, account.name, account.currency, capture.currency)
-            )
-            return
-        }
-        val classification = classifyCapture(capture.operationType, null, capture.merchant, capture.rawText)
-        val result = createRecordDetailed(
-            accountId = account.id,
+    /**
+     * Editor prefill for a parked alert: what its rule and the classifier already know.
+     * The account is the one the alert resolved to, unless the alert names an amount in
+     * another currency; then an account in the alert's currency is preferred.
+     */
+    fun draftForCapture(capture: PendingCaptureEntity): RecordDraft {
+        val usable = _accounts.value.filter { !it.isArchived && it.permissionLevel != "READ_ONLY" }
+        fun matchesCurrency(acc: AccountDto) = acc.currency.equals(capture.currency, ignoreCase = true)
+        val resolved = usable.firstOrNull { it.id == capture.accountId }
+        val account = resolved?.takeIf { capture.amount == null || matchesCurrency(it) }
+            ?: usable.firstOrNull(::matchesCurrency)
+            ?: resolved
+        return RecordDraft(
             type = captureRecordType(capture.operationType),
             amount = capture.amount,
-            categoryId = classification.categoryId,
+            accountId = account?.id,
+            categoryId = classifyCapture(capture.operationType, capture.categoryId, capture.merchant, capture.rawText).categoryId,
             payee = capture.merchant,
-            note = "$CAPTURE_NOTE_PREFIX${capture.sourceChannel}] ${BankAlertText.redactForNote(capture.rawText)}",
-            needsReview = classification.needsReview,
-            bookingDateIso = capture.bookingDate
+            note = captureNote(capture.sourceChannel, capture.rawText),
+            bookingDate = capture.bookingDate
+        )
+    }
+
+    /**
+     * Books a parked alert with what the user stated in the editor and drops it from the
+     * queue. An alert parked for want of an account teaches its sender's account, so the
+     * next alerts of that app book on their own. False when nothing was booked.
+     */
+    fun bookPendingCapture(
+        capture: PendingCaptureEntity,
+        accountId: String,
+        type: String,
+        amount: BigDecimal,
+        categoryId: String?,
+        payee: String?,
+        note: String?,
+        status: String,
+        transferTargetAccountId: String?,
+        splits: List<SplitDto>,
+        labelIds: List<String>,
+        targetAmount: BigDecimal?,
+        bookingDateIso: String?
+    ): Boolean {
+        // A cancellation with no record to void has nothing to book; it can only be dismissed.
+        if (capture.operationType == "CANCEL") return false
+        val result = createRecordDetailed(
+            accountId = accountId,
+            type = type,
+            amount = amount,
+            categoryId = categoryId,
+            payee = payee,
+            note = note,
+            status = status,
+            transferTargetAccountId = transferTargetAccountId,
+            splits = splits,
+            labelIds = labelIds,
+            // Saved without a category: it stays in the unprocessed list.
+            needsReview = type != "TRANSFER" && categoryId == null && splits.isEmpty(),
+            bookingDateIso = bookingDateIso ?: capture.bookingDate,
+            targetAmount = targetAmount
         )
         if (result.record == null) {
             result.error?.let { postMessage(it) }
-            return
+            return false
         }
-        if (rememberSender && !capture.sender.isNullOrBlank()) {
-            setCaptureSenderAccount(capture.sender, account.id)
+        val sender = capture.sender
+        if (capture.reason == "NO_ACCOUNT" && !sender.isNullOrBlank() &&
+            sender !in _settingsState.value.captureSenderAccounts
+        ) {
+            setCaptureSenderAccount(sender, accountId)
         }
         dismissPendingCapture(capture.id)
+        return true
     }
 
     fun dismissPendingCapture(id: String) {

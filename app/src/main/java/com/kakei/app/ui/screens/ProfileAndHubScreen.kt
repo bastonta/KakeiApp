@@ -282,15 +282,6 @@ fun ProfileAndHubScreen(
                     )
                     RowDivider(startIndent = 66.dp)
                     SettingsRow(
-                        icon = Icons.Outlined.Bolt,
-                        iconColor = c.mint,
-                        title = s.getString(R.string.quick_category),
-                        subtitle = s.getString(R.string.home_card_right_after_a),
-                        checked = settings.instantPopupEnabled,
-                        onCheckedChange = { repository.updateAutomationToggles(instantPopup = it) }
-                    )
-                    RowDivider(startIndent = 66.dp)
-                    SettingsRow(
                         icon = Icons.Outlined.Fingerprint,
                         iconColor = c.violet,
                         title = s.getString(R.string.biometric_unlock),

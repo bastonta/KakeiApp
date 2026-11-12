@@ -53,10 +53,11 @@ data class SyncErrorEntity(
 )
 
 /**
- * A bank SMS / push that was parsed but could not be filed automatically: no account is
- * mapped to its sender (and no default capture account is set), its currency does not
- * match the mapped account, or the server rejected the record. It waits for the user to
- * pick an account instead of being booked against a guessed or non-existent one.
+ * A bank push that was parsed but could not be filed automatically: it states no amount
+ * (a bus ticket, a parking autopayment), no account is mapped to its sender (and no
+ * default capture account is set), its currency does not match the mapped account, or the
+ * server rejected the record. It waits in the unprocessed list for the user to complete it
+ * instead of being booked with a guessed amount or account.
  */
 @Serializable
 data class PendingCaptureEntity(
@@ -66,13 +67,18 @@ data class PendingCaptureEntity(
     val sender: String? = null,
     val rawText: String,
     val operationType: String,
-    val amount: DecimalStr,
+    /** Null when the alert stated no amount (reason NO_AMOUNT): the user enters it when filing. */
+    val amount: DecimalStr? = null,
     val currency: String,
     val merchant: String? = null,
     val bookingDate: String,
-    /** NO_ACCOUNT | CURRENCY_MISMATCH | SERVER_REJECTED */
+    /** NO_AMOUNT | NO_ACCOUNT | CURRENCY_MISMATCH | NO_ORIGINAL (cancellation) | SERVER_REJECTED */
     val reason: String,
-    val createdAt: String
+    val createdAt: String,
+    /** Account the alert resolved to (rule, sender mapping or default), prefilled when filing. */
+    val accountId: String? = null,
+    /** Category fixed by the push rule, prefilled when filing. */
+    val categoryId: String? = null
 )
 
 /**

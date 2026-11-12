@@ -18,9 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -29,7 +27,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.kakei.app.R
 import com.kakei.app.core.util.CurrencyFormatter
-import com.kakei.app.data.local.PendingCaptureEntity
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.repository.AppSettingsState
 import com.kakei.app.data.repository.KakeiRepository
@@ -58,8 +55,9 @@ private fun readCapturePermissions(context: Context): CapturePermissionState {
 
 /**
  * Auto-capture onboarding: notification permission, notification-listener
- * and overlay access (system settings screens), the default account captured alerts are
- * filed into, and the alerts still waiting for an account. Status refreshes on resume.
+ * and overlay access (system settings screens) and the default account captured alerts are
+ * filed into. Status refreshes on resume. Alerts that could not be booked on their own wait
+ * in the unprocessed list of the transactions page.
  */
 @Composable
 fun AutoCaptureCard(
@@ -77,7 +75,6 @@ fun AutoCaptureCard(
     ) { permissions = readCapturePermissions(context) }
 
     val usableAccounts = accounts.filter { !it.isArchived && it.permissionLevel != "READ_ONLY" }
-    val pendingCaptures by repository.pendingCaptures.collectAsState()
 
     Column(
         modifier = Modifier
@@ -129,18 +126,6 @@ fun AutoCaptureCard(
                 )
             }
         }
-
-        if (pendingCaptures.isNotEmpty()) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-            Text(
-                text = "${s.getString(R.string.pending_captures_title)} (${pendingCaptures.size})",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            pendingCaptures.forEach { capture ->
-                PendingCaptureRow(capture, usableAccounts, repository)
-            }
-        }
     }
 }
 
@@ -162,58 +147,6 @@ private fun PermissionRow(title: String, granted: Boolean, actionLabel: String, 
         }
         if (!granted) {
             FilledTonalButton(onClick = onAction) { Text(actionLabel, maxLines = 1) }
-        }
-    }
-}
-
-@Composable
-private fun PendingCaptureRow(
-    capture: PendingCaptureEntity,
-    accounts: List<AccountDto>,
-    repository: KakeiRepository
-) {
-    val s = LocalResources.current
-    val isCancel = capture.operationType == "CANCEL"
-    var rememberSender by remember(capture.id) { mutableStateOf(!capture.sender.isNullOrBlank() && !isCancel) }
-    val matching = if (isCancel) emptyList() else accounts.filter { it.currency.equals(capture.currency, ignoreCase = true) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = "${s.getString(pushOperationLabel(capture.operationType))} · " +
-                "${CurrencyFormatter.format(capture.amount, capture.currency)}" +
-                (capture.merchant?.let { " · $it" } ?: ""),
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = listOfNotNull(
-                capture.sender,
-                CurrencyFormatter.formatShortDate(capture.bookingDate),
-                s.getString(R.string.pending_capture_currency_mismatch).takeIf { capture.reason == "CURRENCY_MISMATCH" },
-                s.getString(R.string.pending_capture_no_original).takeIf { capture.reason == "NO_ORIGINAL" }
-            ).joinToString(" · ") + "\n" + capture.rawText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis
-        )
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            matching.forEach { acc ->
-                AssistChip(
-                    onClick = { repository.filePendingCapture(capture, acc.id, rememberSender) },
-                    label = { Text(acc.name) }
-                )
-            }
-            TextButton(onClick = { repository.dismissPendingCapture(capture.id) }) { Text(s.getString(R.string.dismiss_button)) }
-        }
-        if (!capture.sender.isNullOrBlank() && !isCancel) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = rememberSender, onCheckedChange = { rememberSender = it })
-                Text(s.getString(R.string.pending_capture_remember), style = MaterialTheme.typography.bodySmall)
-            }
         }
     }
 }

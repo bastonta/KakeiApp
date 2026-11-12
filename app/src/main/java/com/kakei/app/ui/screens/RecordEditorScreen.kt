@@ -39,6 +39,7 @@ import com.kakei.app.data.remote.dto.CategoryDto
 import com.kakei.app.data.remote.dto.LabelDto
 import com.kakei.app.data.remote.dto.SplitDto
 import com.kakei.app.data.remote.dto.TransactionDto
+import com.kakei.app.data.repository.RecordDraft
 import com.kakei.app.ui.components.*
 import com.kakei.app.ui.theme.KakeiTheme
 import java.math.BigDecimal
@@ -76,8 +77,14 @@ fun RecordEditorScreen(
     /** Record being edited (the debit leg for a transfer), or null for a new record. */
     initialRecord: TransactionDto? = null,
     /**
-     * Offered while editing a record that waits for review: when ticked, saving also learns a
-     * smart rule mapping the payee to the chosen category.
+     * Prefill of a new record built from a parked bank alert (ignored with [initialRecord]):
+     * the user completes what the alert did not state, usually the amount.
+     */
+    draft: RecordDraft? = null,
+    /**
+     * Offered while editing a record that waits for review, or filing an alert whose rule
+     * fixed no category: when ticked, saving also learns a smart rule mapping the payee to
+     * the chosen category.
      */
     onCreateRule: ((payee: String, categoryId: String) -> Unit)? = null,
     onDismiss: () -> Unit,
@@ -112,15 +119,19 @@ fun RecordEditorScreen(
         }
     }
 
-    var recordType by remember { mutableStateOf(initialRecord?.type ?: "EXPENSE") }
+    var recordType by remember { mutableStateOf(initialRecord?.type ?: draft?.type ?: "EXPENSE") }
     var expression by remember {
         mutableStateOf(
-            initialRecord?.amount?.abs()?.setScale(2, RoundingMode.HALF_UP)?.stripTrailingZeros()
-                ?.toPlainString() ?: "0"
+            (initialRecord?.amount ?: draft?.amount)?.abs()?.setScale(2, RoundingMode.HALF_UP)
+                ?.stripTrailingZeros()?.toPlainString() ?: "0"
         )
     }
     var selectedAccountId by remember {
-        mutableStateOf(initialRecord?.accountId ?: accounts.firstOrNull()?.id.orEmpty())
+        mutableStateOf(
+            initialRecord?.accountId
+                ?: draft?.accountId?.takeIf { id -> accounts.any { it.id == id } }
+                ?: accounts.firstOrNull()?.id.orEmpty()
+        )
     }
     var targetAccountId by remember {
         mutableStateOf(
@@ -128,24 +139,25 @@ fun RecordEditorScreen(
                 ?: accounts.drop(1).firstOrNull()?.id ?: accounts.firstOrNull()?.id.orEmpty()
         )
     }
-    var selectedCategoryId by remember { mutableStateOf(initialRecord?.categoryId) }
+    var selectedCategoryId by remember { mutableStateOf(initialRecord?.categoryId ?: draft?.categoryId) }
     // Once the user picks a category themselves, typing a known payee no longer overrides it.
-    var categoryPickedManually by remember { mutableStateOf(editing) }
-    var payee by remember { mutableStateOf(initialRecord?.payee.orEmpty()) }
-    var note by remember { mutableStateOf(initialRecord?.note.orEmpty()) }
+    var categoryPickedManually by remember { mutableStateOf(editing || draft?.categoryId != null) }
+    var payee by remember { mutableStateOf((initialRecord?.payee ?: draft?.payee).orEmpty()) }
+    var note by remember { mutableStateOf((initialRecord?.note ?: draft?.note).orEmpty()) }
     var clearingStatus by remember { mutableStateOf(initialRecord?.status ?: "CLEARED") }
     var selectedLabels by remember { mutableStateOf(initialRecord?.labelIds?.toSet() ?: setOf()) }
     var splits by remember { mutableStateOf(initialRecord?.splits ?: listOf()) }
     var newLabelName by remember { mutableStateOf<String?>(null) }
     var bookingAt by remember {
         mutableStateOf(
-            initialRecord?.bookingDate?.let(::bookingDateTime)
+            (initialRecord?.bookingDate ?: draft?.bookingDate)?.let(::bookingDateTime)
                 ?: LocalDateTime.now().withSecond(0).withNano(0)
         )
     }
     // Untouched: a new record is booked at the moment of saving, an edit keeps its timestamp.
     var bookingTouched by remember { mutableStateOf(false) }
-    val offerRule = onCreateRule != null && initialRecord?.needsReview == true
+    val offerRule = onCreateRule != null &&
+        (initialRecord?.needsReview == true || (initialRecord == null && draft != null && draft.categoryId == null))
     var createRule by remember { mutableStateOf(true) }
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()

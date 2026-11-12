@@ -7,6 +7,7 @@ import com.kakei.app.automation.ParsedBankNotification
 import com.kakei.app.automation.PushCaptureRule
 import com.kakei.app.automation.PushRuleEngine
 import com.kakei.app.automation.PushRuleResult
+import com.kakei.app.automation.PushRuleTemplates
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.security.PasskeyHelper
@@ -159,14 +160,105 @@ class UnitTest {
 
     @Test
     fun pushRuleEngine_validatesPatterns() {
-        assertEquals(PushRuleResult.Reason.NO_AMOUNT_GROUP, PushRuleEngine.validate("Покупка ([0-9]+)"))
+        // The amount group is optional, except for a cancellation, which is matched by amount.
+        assertNull(PushRuleEngine.validate("Покупка ([0-9]+)"))
+        assertEquals(PushRuleResult.Reason.NO_AMOUNT_GROUP, PushRuleEngine.validate("Отмена ([0-9]+)", "CANCEL"))
         assertEquals(PushRuleResult.Reason.BAD_REGEX, PushRuleEngine.validate("(?<amount>[0-9+"))
+        // An empty pattern would match every notification of the app.
+        assertEquals(PushRuleResult.Reason.EMPTY, PushRuleEngine.validate("  "))
         assertNull(PushRuleEngine.validate("(?<amount>[0-9]+)"))
         val bad = PushCaptureRule("r3", "app", "", "(?<amount>[a-z]+)")
         assertEquals(
             PushRuleResult.Invalid(PushRuleResult.Reason.BAD_AMOUNT),
             PushRuleEngine.apply(bad, "abc", "KZT")
         )
+    }
+
+    @Test
+    fun pushRuleEngine_booksAlertsWithoutAmount() {
+        val bus = PushCaptureRule("b", "kz.kaspi.mobile", "Автобус", """Билет\s+(?<merchant>.+?)\.\s*Оплата проезда""")
+        val text = "Платежи\nБилет Avtobys. Оплата проезда"
+
+        // No amount group and no fixed amount: matched, the amount is asked later.
+        val later = (PushRuleEngine.apply(bus, text, "KZT") as PushRuleResult.Matched).parsed
+        assertNull(later.amount)
+        assertEquals("Avtobys", later.merchant)
+        assertEquals("KZT", later.currency)
+
+        // A fixed fare books on its own.
+        val fixed = (PushRuleEngine.apply(bus.copy(fixedAmount = BigDecimal("120")), text, "KZT") as PushRuleResult.Matched).parsed
+        assertEquals(BigDecimal("120.00"), fixed.amount)
+
+        // The fixed amount never overrides one the notification states.
+        val stated = PushCaptureRule("s", "app", "", """Покупка (?<amount>[0-9]+)""", fixedAmount = BigDecimal("5"))
+        assertEquals(BigDecimal("700.00"), (PushRuleEngine.apply(stated, "Покупка 700", "KZT") as PushRuleResult.Matched).parsed.amount)
+    }
+
+    @Test
+    fun pushRuleTemplates_parseRealBankAlerts() {
+        fun parse(label: String, text: String): ParsedBankNotification {
+            val t = PushRuleTemplates.ALL.first { it.label == label }
+            assertNull(label, PushRuleEngine.validate(t.pattern, t.operationType))
+            val rule = PushCaptureRule("t", "app", t.ruleName, t.pattern, operationType = t.operationType)
+            val result = PushRuleEngine.apply(rule, text, "USD")
+            assertTrue("$label did not match: $result", result is PushRuleResult.Matched)
+            return (result as PushRuleResult.Matched).parsed
+        }
+
+        parse("Kaspi · Покупка", "Kaspi Gold\nПокупка: 1 360 ₸\nARAY MARKET\nДоступно: 104 906,23 ₸").let {
+            assertEquals(BigDecimal("1360.00"), it.amount)
+            assertEquals("KZT", it.currency)
+            assertEquals("ARAY MARKET", it.merchant)
+            assertEquals("EXPENSE", it.operationType)
+        }
+        // No-break spaces as thousands separators, decimals with a comma.
+        parse("Kaspi · Покупка", "Kaspi Gold\nПокупка: 2\u00a0720,80\u00a0₸\nWOLT.COM\nДоступно: 81\u00a0904,35\u00a0₸").let {
+            assertEquals(BigDecimal("2720.80"), it.amount)
+            assertEquals("WOLT.COM", it.merchant)
+        }
+        parse("Kaspi · Пополнение", "Kaspi Gold\nПополнение: 2 700 ₸\nНұрбол С.").let {
+            assertEquals(BigDecimal("2700.00"), it.amount)
+            assertEquals("INCOME", it.operationType)
+            assertEquals("Нұрбол С", it.merchant)
+        }
+        parse("Kaspi · Автобус", "Платежи\nБилет Avtobys. Оплата проезда").let {
+            assertNull(it.amount)
+            assertEquals("Avtobys", it.merchant)
+        }
+        parse("Kaspi · Парковка", "Платежи\nПлатная парковка ТЦ Алем будет оплачена автоплатежом").let {
+            assertNull(it.amount)
+            assertEquals("Платная парковка ТЦ Алем", it.merchant)
+        }
+        parse(
+            "Halyk · Списание",
+            "ONLINEBANK_HALYK\nСписание: 2,500.00 KZT. За ведение счёта. Доступно на счете KZ26***5701: 744,375.61 KZT"
+        ).let {
+            assertEquals(BigDecimal("2500.00"), it.amount)
+            assertEquals("KZT", it.currency)
+            assertEquals("За ведение счёта", it.merchant)
+        }
+
+        // The templates do not fire on each other's alerts or on the autopayment receipt.
+        val rules = PushRuleTemplates.ALL.mapIndexed { i, t ->
+            PushCaptureRule("t$i", "app", t.ruleName, t.pattern, operationType = t.operationType)
+        }
+        assertNull(PushRuleEngine.match(rules, "app", "Платежи\nОплачено автоплатежом", "KZT"))
+        assertEquals("Kaspi пополнение", PushRuleEngine.match(rules, "app", "Kaspi Gold\nПополнение: 2 700 ₸\nНұрбол С.", "KZT")!!.first.name)
+    }
+
+    @Test
+    fun notificationDeduplicationHelper_keepsAmountlessAlertsApart() {
+        val dedup = NotificationDeduplicationHelper()
+        val t0 = 1_700_000_000_000L
+        val bus = ParsedBankNotification(null, "KZT", "EXPENSE", "Avtobys", "Билет Avtobys. Оплата проезда")
+        val parking = ParsedBankNotification(null, "KZT", "EXPENSE", "Парковка", "Платная парковка будет оплачена")
+        assertTrue(dedup.shouldProcess(bus, "kz.kaspi", t0, eventKey = "k|1"))
+        // a re-post of the same notification is dropped
+        assertFalse(dedup.shouldProcess(bus, "kz.kaspi", t0 + 1_000L, eventKey = "k|1"))
+        // a second ticket is a separate payment
+        assertTrue(dedup.shouldProcess(bus, "kz.kaspi", t0 + 60_000L, eventKey = "k|2"))
+        // without an amount there is nothing to pair across apps on
+        assertTrue(dedup.shouldProcess(parking, "com.other", t0 + 90_000L, eventKey = "o|1"))
     }
 
     private fun alert(amount: String, type: String = "EXPENSE", raw: String = "alert") =

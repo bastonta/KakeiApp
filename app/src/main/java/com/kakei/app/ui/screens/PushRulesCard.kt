@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
@@ -22,12 +23,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakei.app.R
 import com.kakei.app.automation.PushCaptureRule
 import com.kakei.app.automation.PushRuleEngine
 import com.kakei.app.automation.PushRuleResult
+import com.kakei.app.automation.PushRuleTemplates
 import com.kakei.app.core.util.CurrencyFormatter
 import com.kakei.app.data.remote.dto.AccountDto
 import com.kakei.app.data.remote.dto.CategoryDto
@@ -290,6 +293,9 @@ private fun PushRuleEditorDialog(
     var pattern by remember { mutableStateOf(initial.pattern) }
     var type by remember { mutableStateOf(initial.operationType) }
     var currency by remember { mutableStateOf(initial.currency.orEmpty()) }
+    var fixedAmount by remember {
+        mutableStateOf(initial.fixedAmount?.stripTrailingZeros()?.toPlainString().orEmpty())
+    }
     var accountId by remember { mutableStateOf(initial.accountId) }
     var categoryId by remember { mutableStateOf(initial.categoryId) }
     var testText by remember { mutableStateOf(samples.firstOrNull().orEmpty()) }
@@ -299,10 +305,13 @@ private fun PushRuleEditorDialog(
         pattern = pattern,
         operationType = type,
         currency = currency.trim().uppercase().takeIf { it.isNotEmpty() },
+        // Only an alert that states no amount needs one from the rule.
+        fixedAmount = fixedAmount.trim().replace(" ", "").replace(",", ".").toBigDecimalOrNull()
+            ?.takeIf { it.signum() > 0 && !PushRuleEngine.hasAmountGroup(pattern) },
         accountId = accountId,
         categoryId = categoryId.takeIf { type != "CANCEL" }
     )
-    val validation = PushRuleEngine.validate(pattern)
+    val validation = PushRuleEngine.validate(pattern, type)
     val preview = if (validation == null && testText.isNotBlank()) {
         PushRuleEngine.apply(draft, testText, defaultCurrency)
     } else {
@@ -323,6 +332,24 @@ private fun PushRuleEditorDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Ready-made rules for known bank alerts; offered while the rule is still blank.
+                if (initial.pattern.isEmpty()) {
+                    Text(s.getString(R.string.push_rule_templates), style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PushRuleTemplates.ALL.forEach { template ->
+                            FilterChip(
+                                selected = pattern == template.pattern,
+                                onClick = {
+                                    name = template.ruleName
+                                    pattern = template.pattern
+                                    type = template.operationType
+                                    categoryId = template.categoryId?.takeIf { id -> categories.any { it.id == id } }
+                                },
+                                label = { Text(template.label) }
+                            )
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -373,6 +400,17 @@ private fun PushRuleEditorDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (validation == null && type != "CANCEL" && !PushRuleEngine.hasAmountGroup(pattern)) {
+                    OutlinedTextField(
+                        value = fixedAmount,
+                        onValueChange = { fixedAmount = it },
+                        label = { Text(s.getString(R.string.push_rule_fixed_amount)) },
+                        supportingText = { Text(s.getString(R.string.push_rule_fixed_amount_help)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
 
                 Text(s.getString(R.string.push_rule_account), style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -425,8 +463,9 @@ private fun PushRuleEditorDialog(
                     null -> "" to true
                     is PushRuleResult.Matched -> {
                         val p = preview.parsed
-                        "${s.getString(pushOperationLabel(p.operationType))} · " +
-                            "${CurrencyFormatter.format(p.amount, p.currency)} · ${p.merchant}" to true
+                        val amountText = p.amount?.let { CurrencyFormatter.format(it, p.currency) }
+                            ?: s.getString(R.string.push_rule_amount_later)
+                        "${s.getString(pushOperationLabel(p.operationType))} · $amountText · ${p.merchant}" to true
                     }
                     PushRuleResult.NoMatch -> s.getString(R.string.push_rule_no_match) to false
                     is PushRuleResult.Invalid -> s.getString(R.string.push_rule_err_amount) to false

@@ -8,7 +8,8 @@ import java.math.RoundingMode
 import java.util.Locale
 
 data class ParsedBankNotification(
-    val amount: BigDecimal,
+    /** Null when the alert states no amount and its rule has no fixed one: the user enters it later. */
+    val amount: BigDecimal?,
     val currency: String,
     /** "EXPENSE" | "INCOME" | "CANCEL" (voids an earlier captured expense) | "REFUND" (money back, booked as income) */
     val operationType: String,
@@ -98,6 +99,7 @@ object BankAlertText {
  * wallet). Two separate same-amount payments from one app are both kept, and each
  * cross-app pair is consumed once, so repeated equal purchases still book once each.
  * The merchant is not part of the fingerprint: different apps name it differently.
+ * An alert without an amount has nothing to pair across apps on: only its own re-posts are dropped.
  */
 class NotificationDeduplicationHelper(
     private val windowMillis: Long = 5 * 60 * 1000L
@@ -123,7 +125,8 @@ class NotificationDeduplicationHelper(
             list.removeAll { nowMillis - it.atMillis > windowMillis }
             if (list.isEmpty()) iterator.remove()
         }
-        val key = "${parsed.operationType}|${parsed.amount.setScale(2, RoundingMode.HALF_UP)}|${parsed.currency}"
+        val amount = parsed.amount?.setScale(2, RoundingMode.HALF_UP)
+        val key = "${parsed.operationType}|${amount ?: "?"}|${parsed.currency}"
         val seen = recent.getOrPut(key) { mutableListOf() }
 
         val repost = seen.any {
@@ -132,7 +135,7 @@ class NotificationDeduplicationHelper(
         }
         if (repost) return false
 
-        val pair = seen.firstOrNull { it.sender != sender }
+        val pair = seen.firstOrNull { it.sender != sender }.takeIf { amount != null }
         if (pair != null) {
             seen.remove(pair)
             return false

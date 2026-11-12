@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Push rules for notifications without an amount (bus ticket, parking autopayment): the `amount` group is now optional. Such a rule books with its own fixed amount, or, when that is left blank, the operation waits in the unprocessed list until you enter the amount.
+- Ready-made rule templates in the rule editor: Kaspi purchase, Kaspi top-up, Kaspi bus ticket, Kaspi parking autopayment, Halyk debit.
+- "All / Unprocessed" quick filter on the transactions page. Unprocessed shows records waiting for a category and bank alerts waiting for an amount or an account, whatever their date; tapping an alert opens the record editor prefilled from it.
+
+### Changed
+- Home shows only how many operations are waiting to be processed; a tap (on the counter or the bell) opens the transactions page on the Unprocessed filter instead of the first record's editor.
+- Alerts waiting for an account moved from Settings to the unprocessed list. Filing one there remembers the account for that app's next alerts.
+
+### Removed
+- The "Quick category" card on Home and its setting.
+
 ## [1.9.0] - 2026-11-05
 
 ### Added
