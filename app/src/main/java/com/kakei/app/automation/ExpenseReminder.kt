@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters
 import com.kakei.app.KakeiApplication
 import com.kakei.app.MainActivity
 import com.kakei.app.R
+import com.kakei.app.core.i18n.withAppLanguage
 import java.time.Duration
 import java.time.LocalTime
 import java.time.ZonedDateTime
@@ -113,8 +114,8 @@ class ExpenseReminderWorker(
         val app = applicationContext as? KakeiApplication ?: return Result.success()
         val settings = app.repository.settingsState.value
         if (!settings.expenseReminderEnabled) return Result.success()
-        // Resolve strings in the per-app locale; the worker runs without an activity.
-        val localized = ContextCompat.getContextForLanguage(applicationContext)
+        // Resolve strings in the language picked in the app; the worker runs without an activity.
+        val localized = applicationContext.withAppLanguage(settings.language)
         ExpenseReminderScheduler.showNotification(localized)
         ExpenseReminderScheduler.apply(
             applicationContext,

@@ -1,6 +1,9 @@
 package com.kakei.app.core.i18n
 
+import android.content.Context
+import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.LocaleList
 import java.util.Locale
 
 /**
@@ -22,3 +25,14 @@ enum class AppLanguage(val code: String, val displayName: String) {
 /** Interface language these resources were resolved for. */
 val Resources.appLanguage: AppLanguage
     get() = AppLanguage.fromCode(configuration.locales[0].language)
+
+/**
+ * Context whose resources resolve strings in [language]. Background code (workers, the
+ * repository) uses it instead of relying on the system per-app locale, which the framework does
+ * not always apply to the application context outside an activity.
+ */
+fun Context.withAppLanguage(language: AppLanguage): Context {
+    val config = Configuration(resources.configuration)
+    config.setLocales(LocaleList(language.locale))
+    return createConfigurationContext(config)
+}

@@ -2,7 +2,6 @@ package com.kakei.app.data.repository
 
 import android.content.Context
 import androidx.annotation.StringRes
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.kakei.app.BuildConfig
 import com.kakei.app.R
@@ -16,6 +15,7 @@ import com.kakei.app.automation.PushCaptureRule
 import com.kakei.app.automation.PushRuleEngine
 import com.kakei.app.automation.SmartMerchantMatcher
 import com.kakei.app.core.i18n.AppLanguage
+import com.kakei.app.core.i18n.withAppLanguage
 import com.kakei.app.core.security.BackupCryptoHelper
 import com.kakei.app.core.security.BiometricHelper
 import com.kakei.app.core.security.PasskeyCancelledException
@@ -397,7 +397,7 @@ class KakeiRepository(
 
     /** Resolves a user-facing status message in the per-app locale (also outside an activity). */
     private fun str(@StringRes id: Int, vararg args: Any?): String =
-        ContextCompat.getContextForLanguage(appContext).getString(id, *args)
+        appContext.withAppLanguage(_settingsState.value.language).getString(id, *args)
 
     fun setLanguage(language: AppLanguage) {
         if (language == _settingsState.value.language) return
