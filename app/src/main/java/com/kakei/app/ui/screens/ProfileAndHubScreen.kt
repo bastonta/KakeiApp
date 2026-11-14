@@ -19,6 +19,10 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +91,8 @@ fun ProfileAndHubScreen(
     var showLockTimeoutDialog by remember { mutableStateOf(false) }
     var showReminderTimeDialog by remember { mutableStateOf(false) }
     var showAddPasskeyDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var passkeyToDelete by remember { mutableStateOf<UserPasskeyItem?>(null) }
 
     // The probe hits Settings / system services: run it off the main thread, and again
@@ -253,7 +259,13 @@ fun ProfileAndHubScreen(
                         if (syncErrors.isNotEmpty()) {
                             Text(
                                 text = s.getString(R.string.rejected_by_server) +
-                                    "${syncErrors.size} · " + syncErrors.first().let { "${it.entityType} ${it.operation} → ${it.status} ${it.error}" },
+                                    "${syncErrors.size} · " + syncErrors.first().let { err ->
+                                        listOfNotNull(
+                                            "${err.entityType} ${err.operation}",
+                                            err.summary?.let { "«$it»" },
+                                            "→ ${err.status} ${err.error}"
+                                        ).joinToString(" ")
+                                    },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.coral
                             )
@@ -517,12 +529,109 @@ fun ProfileAndHubScreen(
                     icon = Icons.AutoMirrored.Outlined.Logout,
                     kind = KakeiButtonKind.TONAL,
                     color = c.coral,
-                    onClick = { repository.logout() },
+                    onClick = { showLogoutDialog = true },
                     modifier = Modifier.fillMaxWidth(),
                     height = 56.dp
                 )
             }
+
+            // 8. Delete the account (server side); needs a live session to confirm the password.
+            if (settings.isAuthenticated) {
+                item {
+                    Text(
+                        text = s.getString(R.string.delete_account_button),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = c.muted,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showDeleteAccountDialog = true }
+                            .padding(vertical = 12.dp)
+                    )
+                }
+            }
         }
+    }
+
+    // Sign out: the account's data leaves the device, unsynced changes included.
+    if (showLogoutDialog) {
+        val removesData = repository.signOutRemovesLocalData
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text(s.getString(R.string.logout_confirm_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        s.getString(
+                            if (removesData) R.string.logout_confirm_text else R.string.logout_confirm_text_offline
+                        )
+                    )
+                    if (removesData && pendingMutations.isNotEmpty()) {
+                        Text(
+                            s.getQuantityString(
+                                R.plurals.logout_unsynced_changes,
+                                pendingMutations.size,
+                                pendingMutations.size
+                            ),
+                            color = c.coral
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        repository.logout()
+                    }
+                ) { Text(s.getString(R.string.logout_button)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) { Text(s.getString(R.string.cancel_button)) }
+            }
+        )
+    }
+
+    // Delete account: the password re-proves ownership before the server erases everything.
+    if (showDeleteAccountDialog) {
+        var password by remember { mutableStateOf("") }
+        var inProgress by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!inProgress) showDeleteAccountDialog = false },
+            title = { Text(s.getString(R.string.delete_account_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(s.getString(R.string.delete_account_text))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(s.getString(R.string.auth_password_label)) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = password.isNotEmpty() && !inProgress,
+                    colors = ButtonDefaults.buttonColors(containerColor = c.coral),
+                    onClick = {
+                        inProgress = true
+                        repository.deleteUserAccount(password) { deleted ->
+                            inProgress = false
+                            if (deleted) showDeleteAccountDialog = false
+                        }
+                    }
+                ) { Text(s.getString(R.string.delete_account_confirm)) }
+            },
+            dismissButton = {
+                TextButton(enabled = !inProgress, onClick = { showDeleteAccountDialog = false }) {
+                    Text(s.getString(R.string.cancel_button))
+                }
+            }
+        )
     }
 
     // Language

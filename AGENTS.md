@@ -117,7 +117,8 @@ The project strictly manages all dependencies through the **Gradle Version Catal
 6. **7 Home Screen Widgets**:
    - All seven providers extend `BaseKakeiWidgetProvider` and render the same layout (`res/layout/widget_kakei_card.xml`): a title and a one-line text summary from `KakeiRepository.getWidgetMetricSummary(action)`. Tapping opens `MainActivity` with the widget action. There are no rings, charts, or an in-widget calculator.
    - Providers and their actions: `BudgetRingWidget` (`BUDGET_RING`), `GoalsRingWidget` (`GOALS_RING`), `TodaySpendWidget` (`TODAY_SPEND`), `DebtBalanceWidget` (`DEBT_BALANCE`), `QuickAddWidget` (`QUICK_ADD`), `SplitBillWidget` (`SPLIT_BILL`, opens the in-app split screen), `NetWorthWidget` (`NET_WORTH`).
-   - Widgets are refreshed via `KakeiWidgetUpdater`. Despite its name, `MidnightWidgetResetWorker` is a 12-hour periodic WorkManager job counted from first scheduling at app start, not a midnight reset.
+   - Widgets are refreshed via `KakeiWidgetUpdater`. `MidnightWidgetResetWorker` is a daily WorkManager job whose first run is scheduled just after the next local midnight, so "today" figures roll over with the calendar day.
+   - Widgets that show figures (`NET_WORTH`, `TODAY_SPEND`, `BUDGET_RING`, `GOALS_RING`, `DEBT_BALANCE`) only show "Open Kakei" while the app lock is enabled or nobody is signed in (and offline mode is off).
 
 ### D. Centralized Server Scheduling & Outbox Sync
 
@@ -128,6 +129,10 @@ The project strictly manages all dependencies through the **Gradle Version Catal
   - No Last-Write-Wins: updates send `expectedSyncRevision`; on a `409` revision conflict the mutation is recorded as rejected and the server copy is pulled.
 - **Background Sync**: `SyncWorker` runs every 30 minutes via WorkManager without a network constraint, so it also fires while offline (the drain then stops on the first network failure).
 - **Offline Autonomous Mode**: The app operates fully without an active backend connection, buffering mutations in SQLite.
+- **Replica ownership**: The local replica belongs to the account in the `user_id` preference. Signing out wipes it (outbox included; the UI warns about unsent changes); signing in as a different user wipes whatever a previous account left (`adoptLocalDataFor`). A replica created without an account (offline mode) has no owner and is uploaded on the first sign-in. An expired session keeps the replica.
+- **Pull merge**: `KakeiDatabase.mergeCollection` neither deletes nor overwrites entities that still have queued mutations; the outbox is re-read before every merge. A sync requested while one is running is followed by another run.
+- **Session credentials**: Only a refused refresh token (400/401/403 from `/identity/token/refresh`) ends the session; network errors, 429 and 5xx keep it. The refresh cookie is stored with its issuing host, sent only to the token endpoints, and never re-attached to another host. Plain `http` is accepted only for local/private hosts (`KakeiApiClient.isPrivateHost`).
+- **Record day**: Calculators take a record's day from `PeriodStatistics.bookingDate` (device time zone), never from the UTC prefix of `bookingDate`.
 
 ### E. Financial Calculators & Domain Engines (`FinancialCalculators`)
 

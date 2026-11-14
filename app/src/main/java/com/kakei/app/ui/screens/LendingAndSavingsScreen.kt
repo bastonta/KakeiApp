@@ -151,6 +151,16 @@ fun LendingScreen(
                         color = c.text
                     )
                 }
+                if (lendingResponse.unconvertedCurrencies.isNotEmpty()) {
+                    Text(
+                        s.getString(
+                            R.string.totals_exclude_currencies,
+                            lendingResponse.unconvertedCurrencies.joinToString(", ")
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.amber
+                    )
+                }
             }
         }
 

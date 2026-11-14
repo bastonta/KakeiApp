@@ -49,7 +49,9 @@ data class SyncErrorEntity(
     val entityId: String,
     val status: Int,
     val error: String,
-    val createdAt: String
+    val createdAt: String,
+    /** What the mutation was about (entity name, amount), when the payload names it. */
+    val summary: String? = null
 )
 
 /**
@@ -261,21 +263,28 @@ class KakeiDatabase(context: Context) {
     /**
      * Replaces the server view of a collection while preserving local-only entities
      * that still have pending Outbox mutations (otherwise an offline create would be
-     * wiped by the next pull). Everything else that is absent from the server is removed.
+     * wiped by the next pull, and an offline edit would be overwritten by the older server
+     * copy). Everything else that is absent from the server is removed, unless
+     * [deleteMissing] is false because [serverItems] is known to be incomplete.
      */
     fun mergeCollection(
         collection: String,
         serverItems: List<Triple<String, String, String>>,
-        protectedIds: Set<String>
+        protectedIds: Set<String>,
+        deleteMissing: Boolean = true
     ) {
         val serverIds = serverItems.map { it.first }.toSet()
         runInTransaction {
             for ((id, sortKey, payload) in serverItems) {
+                // The local copy carries a change the server has not received yet.
+                if (id in protectedIds) continue
                 putItem(collection, id, sortKey, payload)
             }
-            for (localId in listIds(collection)) {
-                if (localId !in serverIds && localId !in protectedIds) {
-                    deleteItem(collection, localId)
+            if (deleteMissing) {
+                for (localId in listIds(collection)) {
+                    if (localId !in serverIds && localId !in protectedIds) {
+                        deleteItem(collection, localId)
+                    }
                 }
             }
         }

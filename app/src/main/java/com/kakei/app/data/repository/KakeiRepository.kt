@@ -37,6 +37,7 @@ import com.kakei.app.data.remote.RefreshCookieStorage
 import com.kakei.app.data.remote.dto.*
 import com.kakei.app.domain.calculators.FinancialCalculators
 import com.kakei.app.domain.calculators.ObligationSchedule
+import com.kakei.app.domain.calculators.PeriodStatistics
 import com.kakei.app.ui.theme.ThemeMode
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -44,6 +45,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,7 +55,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 data class AppSettingsState(
     val isAuthenticated: Boolean = false,
@@ -129,6 +135,12 @@ data class GroupMemberMutationPayload(
     val permissionLevel: String? = null
 )
 
+/** Outbox payload of "post this planned payment now": the occurrence the user saw. */
+@Serializable
+data class ExecuteObligationPayload(
+    val expectedDueDate: String? = null
+)
+
 /** Recent notification texts kept per picked app for the push rule editor. */
 private const val MAX_PUSH_SAMPLES = 10
 
@@ -177,6 +189,8 @@ class KakeiRepository(
     private val dedupHelper = NotificationDeduplicationHelper()
     private val captureDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val syncMutex = Mutex()
+    /** Set when a sync was asked for while one was running; that run is followed by another. */
+    private val syncRequestedDuringRun = AtomicBoolean(false)
 
     private val _settingsState = MutableStateFlow(loadInitialSettings())
     val settingsState: StateFlow<AppSettingsState> = _settingsState.asStateFlow()
@@ -332,6 +346,8 @@ class KakeiRepository(
             syncInProgress = false,
             statusMessage = str(R.string.session_expired_please_sign_in)
         )
+        // Widgets stop showing amounts while nobody is signed in.
+        KakeiWidgetUpdater.refreshAllWidgets(appContext)
     }
 
     private fun scheduleSync() {
@@ -453,18 +469,42 @@ class KakeiRepository(
 
     fun setServerBaseUrl(url: String) {
         val clean = url.trim()
+        val previousOrigin = apiClient.serverOrigin()
         prefs.edit { putString("server_url", clean) }
         apiClient.updateBaseUrl(clean)
         _settingsState.value = _settingsState.value.copy(serverBaseUrl = clean)
+        // A session belongs to the server that issued it: its tokens are never offered to
+        // another host. The local replica stays until someone signs in (see adoptLocalDataFor).
+        val serverChanged = previousOrigin != null && previousOrigin != apiClient.serverOrigin()
+        if (serverChanged && _settingsState.value.isAuthenticated) {
+            apiClient.clearSession()
+            securePrefs.remove(SecurePrefs.KEY_ACCESS_TOKEN)
+            securePrefs.remove(SecurePrefs.KEY_REFRESH_COOKIE)
+            _passkeys.value = emptyList()
+            _settingsState.value = _settingsState.value.copy(
+                isAuthenticated = false,
+                syncInProgress = false,
+                serverVersion = null
+            )
+            KakeiWidgetUpdater.refreshAllWidgets(appContext)
+        }
         if (clean.isEmpty()) {
             postMessage(str(R.string.enter_the_kakei_server_url))
+            return
+        }
+        if (KakeiApiClient.isInsecurePublicUrl(clean)) {
+            postMessage(str(R.string.insecure_server_url))
             return
         }
         scope.launch {
             apiClient.getVersion().onSuccess { ver ->
                 _settingsState.value = _settingsState.value.copy(
                     serverVersion = "${ver.version} (${if (ver.debug) "debug" else "release"})",
-                    statusMessage = str(R.string.connected_to_kakei_server_v, ver.version)
+                    statusMessage = if (serverChanged) {
+                        str(R.string.server_changed_sign_in_again)
+                    } else {
+                        str(R.string.connected_to_kakei_server_v, ver.version)
+                    }
                 )
             }.onFailure { err ->
                 postMessage(str(R.string.server_check_failed, err.message))
@@ -496,6 +536,8 @@ class KakeiRepository(
                 current.statusMessage
             }
         )
+        // Widgets hide their figures while the app lock is on.
+        if (nextBio != current.biometricLockEnabled) KakeiWidgetUpdater.refreshAllWidgets(appContext)
     }
 
     // ========================================================================
@@ -683,6 +725,7 @@ class KakeiRepository(
             ?: _settingsState.value.profile.email
 
     private suspend fun completeLoginSession(userId: String, email: String, token: String) {
+        adoptLocalDataFor(userId)
         securePrefs.putString(SecurePrefs.KEY_ACCESS_TOKEN, token)
         prefs.edit {
             remove("jwt_token")
@@ -701,6 +744,57 @@ class KakeiRepository(
         )
         pushLoginLanguageIfChanged()
         synchronizeWithServer()
+    }
+
+    /**
+     * Makes sure the local replica belongs to [userId] before anything is synced. Data left by
+     * another account (its session expired, or the server URL changed) is wiped, so its queued
+     * offline changes are never uploaded into this account and its figures are never shown.
+     * Data created without an account (offline mode) has no owner and is kept: signing in
+     * uploads it.
+     */
+    private suspend fun adoptLocalDataFor(userId: String) {
+        val previousOwner = prefs.getString("user_id", null)
+        if (previousOwner == null || previousOwner == userId) return
+        syncMutex.withLock { wipeLocalUserData() }
+    }
+
+    /**
+     * Removes everything that belongs to the signed-in account from the device: the encrypted
+     * replica with its outbox, sync errors and parked alerts, the cached identity, and the
+     * references push rules hold to that account's entities. Device settings (language, theme,
+     * lock, server URL, the picked apps and the rule patterns themselves) stay.
+     */
+    private fun wipeLocalUserData() {
+        database.clearAll()
+        val rules = _settingsState.value.pushCaptureRules.map { it.copy(accountId = null, categoryId = null) }
+        prefs.edit {
+            remove("user_id")
+            remove("user_email")
+            remove("user_name")
+            remove("two_factor")
+            remove("last_sync")
+            remove("capture_default_account")
+            remove("capture_sender_accounts")
+            putString("push_capture_rules", database.json.encodeToString(rules))
+        }
+        _recentPushSamples.value = emptyMap()
+        _passkeys.value = emptyList()
+        _exchangeRates.value = ExchangeRatesResponse()
+        _rateBook.value = ExchangeRateBook.EMPTY
+        val current = _settingsState.value
+        _settingsState.value = current.copy(
+            profile = AppSettingsState().profile.copy(
+                email = "",
+                defaultCurrency = current.profile.defaultCurrency,
+                language = current.language.code
+            ),
+            captureDefaultAccountId = null,
+            captureSenderAccounts = emptyMap(),
+            pushCaptureRules = rules,
+            lastSyncTimestamp = null
+        )
+        reloadFromLocalDatabase()
     }
 
     /**
@@ -732,22 +826,60 @@ class KakeiRepository(
         }
     }
 
+    /** True when signing out erases the local replica (it belongs to an account, see [logout]). */
+    val signOutRemovesLocalData: Boolean
+        get() = prefs.contains("user_id")
+
+    /**
+     * Signs out and removes the account's data from the device, including changes that have
+     * not reached the server yet (the UI asks for confirmation when there are any). A replica
+     * that never belonged to an account (offline mode only) is left alone: it exists nowhere else.
+     */
     fun logout() {
         scope.launch {
+            // No widget, capture or screen may use the data from this point on.
+            _settingsState.value = _settingsState.value.copy(isAuthenticated = false, isOfflineAutonomousMode = false)
             runCatching { apiClient.revokeToken() }
+            endSessionAndForgetAccount()
+            postMessage(str(R.string.signed_out))
+        }
+    }
+
+    /** Drops the session credentials and, when the replica belonged to an account, the replica. */
+    private suspend fun endSessionAndForgetAccount() {
+        // Waits for a running sync, which would otherwise write pulled rows back after the wipe.
+        syncMutex.withLock {
             apiClient.clearSession()
             securePrefs.remove(SecurePrefs.KEY_ACCESS_TOKEN)
             securePrefs.remove(SecurePrefs.KEY_REFRESH_COOKIE)
+            val hadAccount = prefs.contains("user_id")
             prefs.edit {
                 remove("jwt_token")
                 putBoolean("offline_mode", false)
             }
-            _passkeys.value = emptyList()
             _settingsState.value = _settingsState.value.copy(
                 isAuthenticated = false,
                 isOfflineAutonomousMode = false,
-                statusMessage = str(R.string.signed_out)
+                syncInProgress = false
             )
+            if (hadAccount) wipeLocalUserData() else KakeiWidgetUpdater.refreshAllWidgets(appContext)
+        }
+    }
+
+    /**
+     * Erases the account on the server (the password re-proves ownership) and then everything
+     * it left on this device. [onResult] reports whether the account is gone.
+     */
+    fun deleteUserAccount(password: String, onResult: (Boolean) -> Unit = {}) {
+        scope.launch {
+            apiClient.deleteAccount(AccountDeleteRequest(password = password)).onSuccess {
+                endSessionAndForgetAccount()
+                postMessage(str(R.string.account_deleted))
+                onResult(true)
+            }.onFailure { err ->
+                postMessage(str(R.string.account_delete_failed, err.message))
+                onResult(false)
+            }
         }
     }
 
@@ -855,10 +987,24 @@ class KakeiRepository(
             entityId = mut.entityId,
             status = result.status,
             error = result.error ?: "Rejected by server",
-            createdAt = Instant.now().toString()
+            createdAt = Instant.now().toString(),
+            summary = describeMutationSubject(mut)
         )
         putDto(KakeiDatabase.COL_SYNC_ERRORS, err.id, err.createdAt, err)
     }
+
+    /**
+     * What a rejected mutation was about ("Groceries", "Rent · 120000"), read from its payload.
+     * A rejected create disappears from the lists on the next pull, so this is the only
+     * trace that tells the user what has to be entered again.
+     */
+    private fun describeMutationSubject(mut: SyncMutationEntity): String? = runCatching {
+        val obj = database.json.parseToJsonElement(mut.payloadJson) as? JsonObject ?: return null
+        fun text(key: String) = (obj[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.takeIf { it.isNotBlank() }
+        val label = MUTATION_LABEL_KEYS.firstNotNullOfOrNull(::text)
+        val amount = MUTATION_AMOUNT_KEYS.firstNotNullOfOrNull(::text)
+        listOfNotNull(label, amount).joinToString(" · ").take(80).ifBlank { null }
+    }.getOrNull()
 
     fun dismissSyncErrors() {
         database.clearCollection(KakeiDatabase.COL_SYNC_ERRORS)
@@ -1021,13 +1167,22 @@ class KakeiRepository(
                 )
             }
             "OBLIGATION" to "EXECUTE" -> {
-                apiClient.executeObligation(mut.entityId).fold(
+                val expectedDueDate = runCatching {
+                    j.decodeFromString<ExecuteObligationPayload>(mut.payloadJson).expectedDueDate
+                }.getOrNull()
+                apiClient.executeObligation(mut.entityId, expectedDueDate).fold(
                     onSuccess = { resp ->
                         putDto(KakeiDatabase.COL_OBLIGATIONS, resp.obligation.id, resp.obligation.nextDueDate, resp.obligation)
                         putDto(KakeiDatabase.COL_TRANSACTIONS, resp.postedRecord.id, resp.postedRecord.bookingDate, resp.postedRecord)
                         applied()
                     },
-                    onFailure = { failure(it) }
+                    onFailure = { t ->
+                        // The occurrence was booked already (a retry after a lost response, or the
+                        // scheduler got there first): the pull brings the posted record.
+                        val alreadyPosted = t is ApiException && t.statusCode == 409 &&
+                            t.problem?.errors?.any { it.code.endsWith(OBLIGATION_ALREADY_POSTED) } == true
+                        if (alreadyPosted) applied() else failure(t)
+                    }
                 )
             }
             "OBLIGATION" to "DELETE" -> simpleDelete { apiClient.deleteObligation(mut.entityId) }
@@ -1172,25 +1327,36 @@ class KakeiRepository(
             recomputeDerivedAnalytics()
             return
         }
-        if (!syncMutex.tryLock()) return // a sync is already running
+        if (!syncMutex.tryLock()) {
+            // A sync is already running. Whatever prompted this call (usually a change made
+            // meanwhile) is picked up by a follow-up run instead of waiting for the next
+            // periodic sync.
+            syncRequestedDuringRun.set(true)
+            return
+        }
         try {
+            syncRequestedDuringRun.set(false)
             _settingsState.value = _settingsState.value.copy(syncInProgress = true)
 
             // 1. Flush Outbox mutations (per-item HTTP 207 statuses decide the fate of each entry)
             val (drained, rejectedCount) = drainOutbox()
             if (!_settingsState.value.isAuthenticated) return // session expired during the drain
 
-            // Entities that still have queued mutations are local-only and must survive the pull.
+            // Entities that still have queued mutations hold changes the server has not seen:
+            // the pull must neither delete nor overwrite them. The outbox is read again before
+            // every merge, so a change made while the pull is running is protected as well.
             val remaining = database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false)
-            // A queued reorder touches every account it lists, not its own entity id.
-            val protectedIds = remaining.flatMap { mut ->
-                if (mut.entityType == "ACCOUNT" && mut.operation == "REORDER") {
-                    runCatching { database.json.decodeFromString<ReorderAccountsRequest>(mut.payloadJson).accountIds }
-                        .getOrDefault(emptyList())
-                } else {
-                    listOf(mut.entityId)
-                }
-            }.toSet()
+            val protectedIds: () -> Set<String> = {
+                database.listItems<SyncMutationEntity>(KakeiDatabase.COL_MUTATIONS, descending = false).flatMap { mut ->
+                    // A queued reorder touches every account it lists, not its own entity id.
+                    if (mut.entityType == "ACCOUNT" && mut.operation == "REORDER") {
+                        runCatching { database.json.decodeFromString<ReorderAccountsRequest>(mut.payloadJson).accountIds }
+                            .getOrDefault(emptyList())
+                    } else {
+                        listOf(mut.entityId)
+                    }
+                }.toSet()
+            }
             var pullFailures = 0
 
             // 2. Pull fresh state and merge it over the local replica
@@ -1227,7 +1393,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_ACCOUNTS,
                     resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1236,7 +1402,7 @@ class KakeiRepository(
                     database.mergeCollection(
                         KakeiDatabase.COL_CATEGORIES,
                         resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
-                        protectedIds
+                        protectedIds()
                     )
                 }
             }.onFailure { pullFailures++ }
@@ -1245,7 +1411,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_LABELS,
                     resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1253,7 +1419,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_RULES,
                     resp.items.map { Triple(it.id, it.counterpartyPattern, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1261,20 +1427,28 @@ class KakeiRepository(
             val allRecords = mutableListOf<TransactionDto>()
             var offset = 0
             var recordsOk = true
+            // True when the walk stopped at the cap with more pages left on the server.
+            var truncated = false
             while (true) {
                 val page = apiClient.listRecords(offset = offset, limit = RECORDS_PAGE_SIZE).getOrElse {
                     recordsOk = false
                     null
                 } ?: break
                 allRecords += page.items
-                if (!page.more || page.items.isEmpty() || allRecords.size >= MAX_PULLED_RECORDS) break
+                if (!page.more || page.items.isEmpty()) break
+                if (allRecords.size >= MAX_PULLED_RECORDS) {
+                    truncated = true
+                    break
+                }
                 offset += page.items.size
             }
             if (recordsOk) {
                 database.mergeCollection(
                     KakeiDatabase.COL_TRANSACTIONS,
                     allRecords.map { Triple(it.id, it.bookingDate, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds(),
+                    // An incomplete list says nothing about the records it does not contain.
+                    deleteMissing = !truncated
                 )
             } else {
                 pullFailures++
@@ -1284,7 +1458,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_BUDGETS,
                     resp.items.map { Triple(it.id, it.name, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1292,7 +1466,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_OBLIGATIONS,
                     resp.items.map { Triple(it.id, it.nextDueDate, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1300,7 +1474,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_LENDING,
                     resp.items.map { Triple(it.id, it.createdAt, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1308,7 +1482,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_SAVINGS,
                     resp.items.map { Triple(it.id, it.title, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             }.onFailure { pullFailures++ }
 
@@ -1325,7 +1499,7 @@ class KakeiRepository(
                 database.mergeCollection(
                     KakeiDatabase.COL_GROUP_MEMBERS,
                     members.distinctBy { it.id }.map { Triple(it.id, it.createdAt, j.encodeToString(it)) },
-                    protectedIds
+                    protectedIds()
                 )
             } else {
                 pullFailures++
@@ -1369,6 +1543,12 @@ class KakeiRepository(
                 _settingsState.value = _settingsState.value.copy(syncInProgress = false)
             }
             syncMutex.unlock()
+            if (syncRequestedDuringRun.getAndSet(false) &&
+                _settingsState.value.isAuthenticated &&
+                database.listIds(KakeiDatabase.COL_MUTATIONS).isNotEmpty()
+            ) {
+                scope.launch { synchronizeWithServer() }
+            }
         }
     }
 
@@ -1440,7 +1620,13 @@ class KakeiRepository(
             totalOwedToMe = owedToMe,
             totalOwedByMe = owedByMe,
             netPosition = (owedToMe - owedByMe).setScale(2, RoundingMode.HALF_UP),
-            items = lendItems
+            items = lendItems,
+            unconvertedCurrencies = lendItems
+                .filter { !it.isSettled && !it.isForgiven && it.outstandingAmount.signum() != 0 }
+                .map { it.currency.uppercase() }
+                .distinct()
+                .filter { rates.convert(BigDecimal.ONE, it, baseCurrency) == null }
+                .sorted()
         )
 
         _forecast.value = FinancialCalculators.calculateCashFlowForecast(accs, obs, baseCurrency, rates = rates)
@@ -2325,7 +2511,12 @@ class KakeiRepository(
         if (_settingsState.value.isAuthenticated) {
             // The server posts the ledger record and advances the schedule itself; posting a
             // local record as well would duplicate it. The response is applied on sync.
-            enqueueMutation("OBLIGATION", obligation.id, "EXECUTE", "{}")
+            enqueueMutation(
+                "OBLIGATION",
+                obligation.id,
+                "EXECUTE",
+                database.json.encodeToString(ExecuteObligationPayload(obligation.nextDueDate.take(10)))
+            )
             return
         }
         // Offline autonomous mode: post locally & advance nextDueDate
@@ -2679,10 +2870,21 @@ class KakeiRepository(
         return BackupCryptoHelper.encryptBackup(rawJson, passphrase)
     }
 
+    /**
+     * Replaces the local replica with a backup. Only available without a signed-in account:
+     * for an account the server holds the data, and the next sync would drop every restored
+     * row the server does not know (and the restore would discard the outbox). The swap runs
+     * in one transaction, so a failure half way leaves the previous data in place.
+     */
     fun restoreEncryptedBackupString(encryptedBase64: String, passphrase: String): Boolean {
+        if (_settingsState.value.isAuthenticated) {
+            postMessage(str(R.string.backup_restore_needs_offline))
+            return false
+        }
         return runCatching {
             val plain = BackupCryptoHelper.decryptBackup(encryptedBase64, passphrase)
             val snapshot = database.json.decodeFromString<EncryptedSnapshotPayload>(plain)
+            database.runInTransaction {
             database.clearAll()
             snapshot.accounts.forEach { database.putItem(KakeiDatabase.COL_ACCOUNTS, it.id, it.name, database.json.encodeToString(it)) }
             snapshot.categories.forEach { database.putItem(KakeiDatabase.COL_CATEGORIES, it.id, it.name, database.json.encodeToString(it)) }
@@ -2693,6 +2895,7 @@ class KakeiRepository(
             snapshot.obligations.forEach { database.putItem(KakeiDatabase.COL_OBLIGATIONS, it.id, it.nextDueDate, database.json.encodeToString(it)) }
             snapshot.lending.forEach { database.putItem(KakeiDatabase.COL_LENDING, it.id, it.createdAt, database.json.encodeToString(it)) }
             snapshot.savings.forEach { database.putItem(KakeiDatabase.COL_SAVINGS, it.id, it.title, database.json.encodeToString(it)) }
+            }
             reloadFromLocalDatabase()
             postMessage(str(R.string.restored_encrypted_backup_records, snapshot.transactions.size))
             true
@@ -2776,6 +2979,9 @@ class KakeiRepository(
 
     fun ingestPushNotification(packageName: String, rawText: String, eventKey: String? = null): TransactionDto? {
         val settings = _settingsState.value
+        // After a sign-out there is no ledger to book into. An expired session still has its
+        // owner's replica: alerts keep landing there and are sent once that user signs in again.
+        if (!settings.isAuthenticated && !settings.isOfflineAutonomousMode && !signOutRemovesLocalData) return null
         if (packageName !in settings.pushCaptureApps) return null
         rememberPushSample(packageName, rawText)
         val (rule, parsed) = PushRuleEngine.match(
@@ -2915,14 +3121,14 @@ class KakeiRepository(
     private fun cancelCapturedExpense(parsed: ParsedBankNotification, sender: String, accountIdOverride: String?) {
         // A cancellation rule always reads the amount; it is how the expense is found.
         val amount = parsed.amount ?: return
-        val since = LocalDate.now().minusDays(CANCEL_LOOKBACK_DAYS).toString()
+        val since = LocalDate.now().minusDays(CANCEL_LOOKBACK_DAYS)
         val currency = parsed.currency
         val candidates = _transactions.value.filter {
             it.type == "EXPENSE" &&
                 it.amount.compareTo(amount) == 0 &&
                 it.currency.equals(currency, ignoreCase = true) &&
                 it.note?.startsWith(CAPTURE_NOTE_PREFIX) == true &&
-                it.bookingDate.take(10) >= since &&
+                (PeriodStatistics.bookingDate(it.bookingDate)?.let { day -> !day.isBefore(since) } ?: false) &&
                 (accountIdOverride == null || it.accountId == accountIdOverride)
         }
         val merchant = parsed.merchant.trim()
@@ -3091,14 +3297,26 @@ class KakeiRepository(
     }
 
     fun getWidgetMetricSummary(widgetAction: String): String {
-        val baseCurr = _settingsState.value.profile.defaultCurrency
+        val settings = _settingsState.value
+        val baseCurr = settings.profile.defaultCurrency
+        val showsFigures = widgetAction in FIGURE_WIDGET_ACTIONS
+        // The home screen is visible without unlocking the app: with the app lock on, or with
+        // nobody signed in, widgets only offer to open the app.
+        if (showsFigures && (settings.biometricLockEnabled ||
+                (!settings.isAuthenticated && !settings.isOfflineAutonomousMode))
+        ) {
+            return str(R.string.widget_open_app)
+        }
         return when (widgetAction) {
             "NET_WORTH" -> formatConvertedTotal(netWorth())
             "TODAY_SPEND" -> {
-                val today = LocalDate.now().toString()
+                val today = LocalDate.now()
                 val spent = ConvertedTotal.of(
                     _transactions.value
-                        .filter { it.type == "EXPENSE" && it.bookingDate.startsWith(today) }
+                        .filter {
+                            it.type == "EXPENSE" && it.transferPairId == null &&
+                                PeriodStatistics.bookingDate(it.bookingDate) == today
+                        }
                         .map { it.amount to it.currency },
                     baseCurr,
                     _rateBook.value
@@ -3135,6 +3353,12 @@ class KakeiRepository(
         private const val FX_RATE_UNAVAILABLE = "fx_rate_unavailable"
         private const val PREF_DEMO_SEED_CLEANED = "demo_seed_cleanup_v1"
         private const val MAX_PULLED_RECORDS = 20_000
+        private const val OBLIGATION_ALREADY_POSTED = "obligation_already_posted"
+        /** Widgets that show money or budget figures (the others are plain shortcuts). */
+        private val FIGURE_WIDGET_ACTIONS = setOf("NET_WORTH", "TODAY_SPEND", "BUDGET_RING", "GOALS_RING", "DEBT_BALANCE")
+        /** Payload fields that name the entity of a mutation, most specific first. */
+        private val MUTATION_LABEL_KEYS = listOf("name", "title", "personName", "payee", "counterpartyPattern", "memberEmail", "note")
+        private val MUTATION_AMOUNT_KEYS = listOf("amount", "principalAmount", "limitAmount", "targetAmount")
     }
 
     // ========================================================================

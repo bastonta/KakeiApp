@@ -2,6 +2,7 @@ package com.kakei.app
 
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -69,6 +70,7 @@ class MainActivity : AppCompatActivity() {
 
         val app = application as KakeiApplication
         syncAppLocale(app.repository)
+        protectScreenWhileLockEnabled(app.repository)
         val openQuickAddInitial = intent?.getBooleanExtra(EXTRA_OPEN_QUICK_ADD, false) == true ||
             intent?.getStringExtra(EXTRA_WIDGET_ACTION) == "QUICK_ADD"
         val widgetAction = intent?.getStringExtra(EXTRA_WIDGET_ACTION)
@@ -129,6 +131,22 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * With the app lock on, the window is marked secure: the Recents thumbnail and
+     * screenshots would otherwise show balances without passing the lock.
+     */
+    private fun protectScreenWhileLockEnabled(repository: KakeiRepository) {
+        fun apply(secure: Boolean) {
+            if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        // Applied before the first frame, then kept in step with the setting.
+        apply(repository.settingsState.value.biometricLockEnabled)
+        lifecycleScope.launch {
+            repository.settingsState.map { it.biometricLockEnabled }.distinctUntilChanged().collect { apply(it) }
         }
     }
 

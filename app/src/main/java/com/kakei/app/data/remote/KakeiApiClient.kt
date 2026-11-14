@@ -24,6 +24,10 @@ class ApiException(
     override val message: String
 ) : IOException(message)
 
+/** A request was refused locally because it would send credentials over plain http to a public host. */
+class InsecureServerException(val host: String) :
+    IOException("Refusing to send credentials over plain http to $host; use https")
+
 /**
  * Persists the `refresh_token` cookie between process restarts. Backed by the
  * Keystore-encrypted `SecurePrefs` in production.
@@ -81,14 +85,26 @@ class KakeiApiClient(
             for (cookie in cookies) {
                 existing.removeAll { it.name == cookie.name }
                 existing.add(cookie)
-                if (cookie.name == REFRESH_COOKIE_NAME) persistRefreshCookie(cookie)
+                if (cookie.name == REFRESH_COOKIE_NAME) persistRefreshCookie(url.host, cookie)
             }
             cookieStore[url.host] = existing
         }
 
+        // The refresh token travels only to the token endpoints (refresh / revoke) and never
+        // over plain http when the server marked it Secure. Its Path is checked by suffix
+        // because the server issues it for `/api/identity/token` even when it is reached
+        // through the `/v1/api` prefix.
         override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            return cookieStore[url.host]?.filter { it.expiresAt > System.currentTimeMillis() }
-                ?: emptyList()
+            val now = System.currentTimeMillis()
+            return cookieStore[url.host]?.filter { cookie ->
+                cookie.expiresAt > now &&
+                    (!cookie.secure || url.isHttps) &&
+                    if (cookie.name == REFRESH_COOKIE_NAME) {
+                        url.encodedPath.contains(TOKEN_ENDPOINT_PREFIX)
+                    } else {
+                        cookie.matches(url)
+                    }
+            } ?: emptyList()
         }
     }
 
@@ -96,22 +112,32 @@ class KakeiApiClient(
         restoreRefreshCookie()
     }
 
-    private fun persistRefreshCookie(cookie: Cookie) {
+    private fun persistRefreshCookie(host: String, cookie: Cookie) {
         val storage = refreshCookieStorage ?: return
         // An expired/empty cookie is how the server revokes the session.
         val expired = cookie.expiresAt <= System.currentTimeMillis() || cookie.value.isBlank()
-        storage.save(if (expired) null else cookie.toString())
+        storage.save(if (expired) null else "$host$COOKIE_HOST_SEPARATOR$cookie")
     }
 
+    /**
+     * Re-attaches the stored refresh cookie, but only to the host that issued it: a cookie
+     * saved for one server is never handed to another one after the server URL changes.
+     * Entries written by older builds carry no host and are bound to the current server once.
+     */
     private fun restoreRefreshCookie() {
         val raw = refreshCookieStorage?.load() ?: return
         val url = baseUrl.toHttpUrlOrNull() ?: return
-        val cookie = Cookie.parse(url, raw) ?: return
+        val separator = raw.indexOf(COOKIE_HOST_SEPARATOR)
+        val storedHost = if (separator > 0) raw.substring(0, separator) else null
+        val serialized = if (separator > 0) raw.substring(separator + 1) else raw
+        if (storedHost != null && !storedHost.equals(url.host, ignoreCase = true)) return
+        val cookie = Cookie.parse(url, serialized) ?: return
         if (cookie.expiresAt <= System.currentTimeMillis()) {
             refreshCookieStorage.save(null)
             return
         }
         cookieStore[url.host] = listOf(cookie)
+        if (storedHost == null) persistRefreshCookie(url.host, cookie)
     }
 
     /** True when a refresh token is on hand, i.e. a session can outlive the access JWT. */
@@ -121,6 +147,9 @@ class KakeiApiClient(
             it.name == REFRESH_COOKIE_NAME && it.expiresAt > System.currentTimeMillis()
         } == true
     }
+
+    /** Scheme, host and port of the configured server, or null while no valid URL is set. */
+    fun serverOrigin(): String? = originOf(baseUrl)
 
     /** Forgets every session credential (used on sign-out and expiry). */
     fun clearSession() {
@@ -136,6 +165,10 @@ class KakeiApiClient(
         .writeTimeout(20, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val original = chain.request()
+            if (!original.url.isHttps && !isPrivateHost(original.url.host)) {
+                // Passwords, the JWT and the refresh cookie must not cross the internet in clear text.
+                throw InsecureServerException(original.url.host)
+            }
             val tokenUsed = accessToken
             val builder = original.newBuilder()
                 .header("Accept", "application/json")
@@ -177,15 +210,28 @@ class KakeiApiClient(
                 expireSession()
                 return null
             }
-            val refreshed = tryRefreshTokenSync()
-            if (refreshed.isNullOrBlank()) {
-                expireSession()
-                return null
+            return when (val outcome = tryRefreshTokenSync()) {
+                is RefreshOutcome.Refreshed -> {
+                    accessToken = outcome.token
+                    onAccessTokenRefreshed?.invoke(outcome.token)
+                    outcome.token
+                }
+                // Only the server saying "this refresh token is no good" ends the session.
+                RefreshOutcome.Rejected -> {
+                    expireSession()
+                    null
+                }
+                // Network failure, timeout, 429 or 5xx: the session is still valid, the
+                // caller gets its 401 back and the request is retried later.
+                RefreshOutcome.Unavailable -> null
             }
-            accessToken = refreshed
-            onAccessTokenRefreshed?.invoke(refreshed)
-            return refreshed
         }
+    }
+
+    private sealed interface RefreshOutcome {
+        data class Refreshed(val token: String) : RefreshOutcome
+        data object Rejected : RefreshOutcome
+        data object Unavailable : RefreshOutcome
     }
 
     private fun expireSession() {
@@ -209,7 +255,7 @@ class KakeiApiClient(
         }
     }
 
-    private fun tryRefreshTokenSync(): String? {
+    private fun tryRefreshTokenSync(): RefreshOutcome {
         return try {
             val url = "$baseUrl/identity/token/refresh"
             val req = Request.Builder()
@@ -217,13 +263,18 @@ class KakeiApiClient(
                 .post("".toRequestBody("application/json".toMediaType()))
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body.string()
-                    json.decodeFromString<TokenRefreshResponse>(body).token
-                } else null
+                when {
+                    resp.isSuccessful -> {
+                        val token = json.decodeFromString<TokenRefreshResponse>(resp.body.string()).token
+                        if (token.isBlank()) RefreshOutcome.Unavailable else RefreshOutcome.Refreshed(token)
+                    }
+                    // The server refuses a missing, expired or revoked refresh token with 400.
+                    resp.code == 400 || resp.code == 401 || resp.code == 403 -> RefreshOutcome.Rejected
+                    else -> RefreshOutcome.Unavailable
+                }
             }
         } catch (_: Exception) {
-            null
+            RefreshOutcome.Unavailable
         }
     }
 
@@ -342,6 +393,7 @@ class KakeiApiClient(
     suspend fun updateProfileInfo(req: ProfileInfoUpdateRequest): Result<Unit> =
         requestJson("PUT", "/profile/info", json.encodeToString(req))
 
+    /** Erases the account on the server; the request carries the password (or a passkey assertion). */
     suspend fun deleteAccount(req: AccountDeleteRequest): Result<Unit> =
         requestJson("DELETE", "/profile/account", json.encodeToString(req))
 
@@ -500,8 +552,17 @@ class KakeiApiClient(
     suspend fun deleteObligation(id: String): Result<Unit> =
         requestJson("DELETE", "/planning/obligations/$id")
 
-    suspend fun executeObligation(id: String): Result<ExecuteObligationResponse> =
-        requestJson("POST", "/planning/obligations/$id/execute")
+    /**
+     * Posts the next occurrence now. [expectedDueDate] (`YYYY-MM-DD`) names the occurrence the
+     * user was looking at: when the server has already moved past it (a repeated request), it
+     * answers 409 `obligation_already_posted` instead of booking the following one as well.
+     */
+    suspend fun executeObligation(id: String, expectedDueDate: String? = null): Result<ExecuteObligationResponse> =
+        requestJson(
+            "POST",
+            "/planning/obligations/$id/execute",
+            queryParams = mapOf("expectedDueDate" to expectedDueDate)
+        )
 
     suspend fun getForecast(horizonDays: Long = 30): Result<CashFlowForecastDto> =
         requestJson("GET", "/planning/forecast", queryParams = mapOf("horizonDays" to horizonDays.toString()))
@@ -567,7 +628,16 @@ class KakeiApiClient(
             if (!accountId.isNullOrBlank()) urlBuilder.addQueryParameter("accountId", accountId)
             val req = Request.Builder().url(urlBuilder.build()).get().build()
             okHttpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) throw IOException("Export failed: HTTP ${resp.code}")
+                if (!resp.isSuccessful) {
+                    val problem = runCatching {
+                        json.decodeFromString<ProblemDetails>(resp.body.string())
+                    }.getOrNull()
+                    throw ApiException(
+                        statusCode = resp.code,
+                        problem = problem,
+                        message = problem?.readableMessage() ?: "Export failed: HTTP ${resp.code}"
+                    )
+                }
                 resp.body.bytes()
             }
         }
@@ -605,5 +675,47 @@ class KakeiApiClient(
 
     companion object {
         const val REFRESH_COOKIE_NAME = "refresh_token"
+
+        /** Separates the issuing host from the serialized cookie in [RefreshCookieStorage]. */
+        private const val COOKIE_HOST_SEPARATOR = '\n'
+
+        private const val TOKEN_ENDPOINT_PREFIX = "/identity/token/"
+
+        /** `scheme://host:port` of a server URL, or null when it is not a valid http(s) URL. */
+        fun originOf(rawUrl: String): String? {
+            val url = rawUrl.trim().toHttpUrlOrNull() ?: return null
+            return "${url.scheme}://${url.host}:${url.port}"
+        }
+
+        /** True for a server URL that would send credentials over plain http to a public host. */
+        fun isInsecurePublicUrl(rawUrl: String): Boolean {
+            val url = rawUrl.trim().toHttpUrlOrNull() ?: return false
+            return !url.isHttps && !isPrivateHost(url.host)
+        }
+
+        /**
+         * Hosts a self-hosted server may reasonably be reached at over plain http: the device
+         * itself, the emulator host, private (RFC 1918 / unique-local) and link-local
+         * addresses, and names that only resolve inside a local network.
+         */
+        fun isPrivateHost(host: String): Boolean {
+            val h = host.trim().lowercase().removePrefix("[").removeSuffix("]")
+            if (h == "localhost" || h.endsWith(".localhost") || h.endsWith(".local") ||
+                h.endsWith(".lan") || h.endsWith(".home.arpa") || h.endsWith(".internal")
+            ) return true
+            if (':' in h) {
+                // IPv6 literal: loopback, unique-local fc00::/7, link-local fe80::/10.
+                return h == "::1" || h.startsWith("fc") || h.startsWith("fd") ||
+                    h.startsWith("fe8") || h.startsWith("fe9") || h.startsWith("fea") || h.startsWith("feb")
+            }
+            val octets = h.split('.').map { it.toIntOrNull() ?: return !h.contains('.') }
+            if (octets.size != 4 || octets.any { it !in 0..255 }) return false
+            val (a, b) = octets
+            return a == 10 || a == 127 ||
+                (a == 172 && b in 16..31) ||
+                (a == 192 && b == 168) ||
+                (a == 169 && b == 254) ||
+                (a == 100 && b in 64..127) // carrier-grade NAT, used by mesh VPNs
+        }
     }
 }

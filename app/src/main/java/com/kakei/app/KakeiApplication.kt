@@ -11,6 +11,8 @@ import com.kakei.app.automation.NotificationListenerWatchdogWorker
 import com.kakei.app.automation.SyncWorker
 import com.kakei.app.data.local.KakeiDatabase
 import com.kakei.app.data.repository.KakeiRepository
+import java.time.Duration
+import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
 
 class KakeiApplication : Application() {
@@ -50,12 +52,17 @@ class KakeiApplication : Application() {
                 syncRequest
             )
 
+            // Daily, first run just after the next local midnight, so "today" figures on the
+            // widgets roll over with the calendar day. UPDATE re-anchors installs that still
+            // carry the old 12-hour schedule counted from first launch.
+            val now = ZonedDateTime.now()
+            val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone).plusMinutes(1)
             val widgetResetRequest = PeriodicWorkRequestBuilder<MidnightWidgetResetWorker>(
-                12, TimeUnit.HOURS
-            ).build()
+                24, TimeUnit.HOURS
+            ).setInitialDelay(Duration.between(now, nextMidnight).toMillis(), TimeUnit.MILLISECONDS).build()
             wm.enqueueUniquePeriodicWork(
                 "kakei_midnight_widget_reset",
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.UPDATE,
                 widgetResetRequest
             )
         }

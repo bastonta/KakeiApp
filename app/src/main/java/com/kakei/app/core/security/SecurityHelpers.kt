@@ -233,13 +233,16 @@ class SecurePrefs(context: Context) {
     private val memoryFallback = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun getString(key: String): String? {
-        if (!KeystoreCipher.isAvailable()) return memoryFallback[key]
+        memoryFallback[key]?.let { return it }
+        if (!KeystoreCipher.isAvailable()) return null
         val payload = prefs.getString(key, null) ?: return null
         return try {
-            String(KeystoreCipher.decrypt(KEY_ALIAS, payload), Charsets.UTF_8)
-        } catch (_: Exception) {
-            // Unreadable (key rotated or data from another device): drop it.
-            prefs.edit { remove(key) }
+            String(KeystoreCipher.withRetry { KeystoreCipher.decrypt(KEY_ALIAS, payload) }, Charsets.UTF_8)
+        } catch (e: Exception) {
+            // Only a value that can never be read again (key rotated, data from another
+            // device, malformed payload) is dropped. A Keystore that is merely busy keeps
+            // the stored secret, so a hiccup at launch does not sign the user out.
+            if (KeystoreCipher.isPermanentFailure(e)) prefs.edit { remove(key) }
             null
         }
     }
@@ -253,9 +256,15 @@ class SecurePrefs(context: Context) {
             memoryFallback[key] = value
             return
         }
-        prefs.edit {
-            putString(key, KeystoreCipher.encrypt(KEY_ALIAS, value.toByteArray(Charsets.UTF_8)))
+        val encrypted = try {
+            KeystoreCipher.withRetry { KeystoreCipher.encrypt(KEY_ALIAS, value.toByteArray(Charsets.UTF_8)) }
+        } catch (_: Exception) {
+            // The secret stays in memory for this process; it is requested again after a restart.
+            memoryFallback[key] = value
+            return
         }
+        memoryFallback.remove(key)
+        prefs.edit { putString(key, encrypted) }
     }
 
     fun remove(key: String) {

@@ -909,6 +909,13 @@ private fun PlanningSubScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                if (forecast.unconvertedCurrencies.isNotEmpty()) {
+                    Text(
+                        s.getString(R.string.totals_exclude_currencies, forecast.unconvertedCurrencies.joinToString(", ")),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.amber
+                    )
+                }
                 if (forecast.dailyTimeline.size >= 2) {
                     ForecastChart(forecast)
                 }

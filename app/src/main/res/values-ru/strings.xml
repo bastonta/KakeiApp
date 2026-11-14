@@ -542,4 +542,24 @@
         <item quantity="many">%d операций ждут обработки</item>
         <item quantity="other">%d операции ждут обработки</item>
     </plurals>
+    <string name="server_changed_sign_in_again">Сервер изменён. Войдите на этом сервере, чтобы продолжить.</string>
+    <string name="insecure_server_url">Этот адрес находится в публичном интернете: используйте https://, чтобы пароль и сессия не передавались открытым текстом. Обычный http работает только для адресов локальной сети.</string>
+    <string name="backup_restore_needs_offline">Резервную копию можно восстановить только без входа в аккаунт: при следующей синхронизации её заменили бы данные сервера. Сначала выйдите.</string>
+    <string name="widget_open_app">Открыть Kakei</string>
+    <string name="totals_exclude_currencies">Не учтено в итогах (нет курса): %1$s</string>
+    <string name="logout_confirm_title">Выйти?</string>
+    <string name="logout_confirm_text">Данные этого аккаунта будут удалены с устройства. Они остаются на сервере и вернутся при следующем входе.</string>
+    <string name="logout_confirm_text_offline">Вы вернётесь на экран входа. Данные, созданные без аккаунта, останутся на устройстве.</string>
+    <plurals name="logout_unsynced_changes">
+        <item quantity="one">%d изменение не отправлено на сервер и будет потеряно.</item>
+        <item quantity="few">%d изменения не отправлены на сервер и будут потеряны.</item>
+        <item quantity="many">%d изменений не отправлены на сервер и будут потеряны.</item>
+        <item quantity="other">%d изменения не отправлены на сервер и будут потеряны.</item>
+    </plurals>
+    <string name="delete_account_button">Удалить аккаунт</string>
+    <string name="delete_account_title">Удалить аккаунт?</string>
+    <string name="delete_account_text">Аккаунт и все его данные будут стёрты с сервера и с этого устройства. Отменить это нельзя. Для подтверждения введите пароль.</string>
+    <string name="delete_account_confirm">Удалить навсегда</string>
+    <string name="account_deleted">Аккаунт удалён</string>
+    <string name="account_delete_failed">Не удалось удалить аккаунт: %1$s</string>
 </resources>

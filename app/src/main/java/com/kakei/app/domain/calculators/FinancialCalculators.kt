@@ -10,6 +10,7 @@ import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
@@ -66,28 +67,25 @@ object FinancialCalculators {
         transactions: List<TransactionDto>,
         today: LocalDate = LocalDate.now(),
         rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
-        categories: List<CategoryDto> = emptyList()
+        categories: List<CategoryDto> = emptyList(),
+        zone: ZoneId = ZoneId.systemDefault()
     ): List<BudgetEnvelopeDto> {
-        val currentMonthStart = today.withDayOfMonth(1)
-        val currentMonthEnd = YearMonth.from(today).atEndOfMonth()
-        val remainingDays = maxOf(1L, ChronoUnit.DAYS.between(today, currentMonthEnd) + 1L)
-
         return budgets.map { budget ->
-            val periodStart = budget.periodStart.takeIf { it.length >= 10 }
-                ?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
-                ?: currentMonthStart
-            val periodEnd = budget.periodEnd.takeIf { it.length >= 10 }
-                ?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
-                ?: currentMonthEnd
+            // The window is derived from the budget's own cycle for [today], not taken from
+            // the cached server answer: offline, a cached window goes stale as soon as the
+            // week, month or year rolls over.
+            val (periodStart, periodEnd) = budgetPeriodWindow(budget, today)
+            val remainingDays = maxOf(1L, ChronoUnit.DAYS.between(today, periodEnd) + 1L)
+            // Like the backend, nothing before the budget started or after it ended counts.
+            val countFrom = parseDay(budget.startDate)?.takeIf { it.isAfter(periodStart) } ?: periodStart
+            val countTo = budget.endDate?.let(::parseDay)?.takeIf { it.isBefore(periodEnd) } ?: periodEnd
 
             val budgetCategoryIds = expandWithSubcategories(budget.categoryIds, categories)
             val matchingExpenses = transactions.filter { tx ->
                 tx.type == "EXPENSE" &&
                     tx.transferPairId == null &&
-                    runCatching {
-                        val txDate = LocalDate.parse(tx.bookingDate.take(10))
-                        !txDate.isBefore(periodStart) && !txDate.isAfter(periodEnd)
-                    }.getOrDefault(false) &&
+                    (PeriodStatistics.bookingDate(tx.bookingDate, zone)
+                        ?.let { !it.isBefore(countFrom) && !it.isAfter(countTo) } ?: false) &&
                     (budgetCategoryIds.isEmpty() ||
                         (tx.categoryId != null && budgetCategoryIds.contains(tx.categoryId)) ||
                         tx.splits.any { it.categoryId != null && budgetCategoryIds.contains(it.categoryId) })
@@ -134,6 +132,29 @@ object FinancialCalculators {
         }
     }
 
+    private fun parseDay(raw: String): LocalDate? =
+        raw.takeIf { it.length >= 10 }?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+
+    /**
+     * Active cycle `(start, end)` of [budget] on [today], mirroring the backend
+     * (`BudgetRepository::compute_period_window`): the ISO week, the calendar month or year,
+     * or the fixed span of a one-off budget.
+     */
+    fun budgetPeriodWindow(budget: BudgetEnvelopeDto, today: LocalDate): Pair<LocalDate, LocalDate> =
+        when (budget.periodType.uppercase()) {
+            "WEEKLY" -> {
+                val monday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+                monday to monday.plusDays(6)
+            }
+            "YEARLY" -> LocalDate.of(today.year, 1, 1) to LocalDate.of(today.year, 12, 31)
+            "ONE_OFF" -> {
+                val start = parseDay(budget.startDate) ?: parseDay(budget.periodStart) ?: today.withDayOfMonth(1)
+                val end = budget.endDate?.let(::parseDay) ?: parseDay(budget.periodEnd) ?: start.plusDays(30)
+                start to end
+            }
+            else -> today.withDayOfMonth(1) to YearMonth.from(today).atEndOfMonth()
+        }
+
     /**
      * Computes the composite 0..100 Financial Health Score (Savings Rate + Budget Compliance + Debt-to-Income).
      */
@@ -144,13 +165,13 @@ object FinancialCalculators {
         baseCurrency: String,
         today: LocalDate = LocalDate.now(),
         rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
-        categories: List<CategoryDto> = emptyList()
+        categories: List<CategoryDto> = emptyList(),
+        zone: ZoneId = ZoneId.systemDefault()
     ): FinancialHealthScoreDto {
         val windowStart = today.minusDays(30)
         val recentTx = transactions.filter { tx ->
-            tx.transferPairId == null && runCatching {
-                !LocalDate.parse(tx.bookingDate.take(10)).isBefore(windowStart)
-            }.getOrDefault(true)
+            tx.transferPairId == null &&
+                (PeriodStatistics.bookingDate(tx.bookingDate, zone)?.let { !it.isBefore(windowStart) } ?: true)
         }
 
         val income = recentTx.filter { it.type == "INCOME" }
@@ -169,7 +190,7 @@ object FinancialCalculators {
                 .multiply(BigDecimal("100"))
                 .divide(income, 1, RoundingMode.HALF_UP)
                 .max(BigDecimal("-100"))
-        } else if (expense == BigDecimal.ZERO) {
+        } else if (expense.signum() == 0) {
             BigDecimal("20.0")
         } else {
             BigDecimal.ZERO
@@ -178,7 +199,7 @@ object FinancialCalculators {
         // 2 points per % saved; 20%+ earns the full 40.
         val savingsScore = savingsRatePct.multiply(BigDecimal(2)).setScale(0, RoundingMode.HALF_UP).toInt().coerceIn(0, 40)
 
-        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates, categories)
+        val evaluatedBudgets = evaluateBudgets(budgets, transactions, today, rates, categories, zone)
         val compliantCount = evaluatedBudgets.count { it.usagePercentage <= BigDecimal("100") }
         val budgetCompliancePct = if (evaluatedBudgets.isNotEmpty()) {
             BigDecimal.valueOf(compliantCount * 100L)
@@ -254,11 +275,12 @@ object FinancialCalculators {
      */
     fun calculateNoSpendStreak(
         transactions: List<TransactionDto>,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        zone: ZoneId = ZoneId.systemDefault()
     ): NoSpendStreakDto {
         val spendDates = transactions
             .filter { it.type == "EXPENSE" && it.transferPairId == null }
-            .mapNotNull { runCatching { LocalDate.parse(it.bookingDate.take(10)) }.getOrNull() }
+            .mapNotNull { PeriodStatistics.bookingDate(it.bookingDate, zone) }
             .toSet()
 
         var currentStreak = 0L
@@ -304,7 +326,8 @@ object FinancialCalculators {
         baseCurrency: String,
         year: Int = LocalDate.now().year,
         month: Int = LocalDate.now().monthValue,
-        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
+        zone: ZoneId = ZoneId.systemDefault()
     ): SpendingHeatmapsDto {
         val ym = YearMonth.of(year, month.coerceIn(1, 12))
         val expenses = transactions.filter { it.type == "EXPENSE" && it.transferPairId == null }
@@ -313,7 +336,7 @@ object FinancialCalculators {
         val byMonth = mutableMapOf<Int, Pair<BigDecimal, Long>>()
 
         for (tx in expenses) {
-            val date = runCatching { LocalDate.parse(tx.bookingDate.take(10)) }.getOrNull() ?: continue
+            val date = PeriodStatistics.bookingDate(tx.bookingDate, zone) ?: continue
             if (date.year != year) continue
             val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: continue
             val prevDay = byDate[date] ?: (BigDecimal.ZERO to 0L)
@@ -371,7 +394,8 @@ object FinancialCalculators {
         transactions: List<TransactionDto>,
         baseCurrency: String,
         today: LocalDate = LocalDate.now(),
-        rates: ExchangeRateBook = ExchangeRateBook.EMPTY
+        rates: ExchangeRateBook = ExchangeRateBook.EMPTY,
+        zone: ZoneId = ZoneId.systemDefault()
     ): InsightsSummaryDto {
         val currentYm = YearMonth.from(today)
         val prevYm = currentYm.minusMonths(1)
@@ -388,7 +412,7 @@ object FinancialCalculators {
 
         for (tx in transactions) {
             if (tx.type != "EXPENSE" || tx.transferPairId != null) continue
-            val date = runCatching { LocalDate.parse(tx.bookingDate.take(10)) }.getOrNull() ?: continue
+            val date = PeriodStatistics.bookingDate(tx.bookingDate, zone) ?: continue
             val conv = CurrencyFormatter.convert(tx.amount, tx.currency, baseCurrency, rates) ?: continue
             val txYm = YearMonth.from(date)
 
@@ -459,10 +483,14 @@ object FinancialCalculators {
         today: LocalDate = LocalDate.now(),
         rates: ExchangeRateBook = ExchangeRateBook.EMPTY
     ): CashFlowForecastDto {
+        // Currencies left out of the base-currency totals because no rate is known for them.
+        val unconverted = sortedSetOf<String>()
         val liquidBalance = accounts
             .filter { !it.isArchived && !it.isExcludedFromStats }
             .fold(BigDecimal.ZERO) { acc, a ->
-                acc + (CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurrency, rates) ?: BigDecimal.ZERO)
+                val conv = CurrencyFormatter.convert(a.currentBalance, a.currency, baseCurrency, rates)
+                if (conv == null && a.currentBalance.signum() != 0) unconverted += a.currency.uppercase()
+                acc + (conv ?: BigDecimal.ZERO)
             }.setScale(2, RoundingMode.HALF_UP)
 
         val projections = mutableListOf<VirtualProjectionDto>()
@@ -481,6 +509,7 @@ object FinancialCalculators {
                     val conv = CurrencyFormatter.convert(ob.amount, ob.currency, baseCurrency, rates)
                     // An obligation in a currency without a known rate cannot be projected
                     // into the base-currency timeline; it is skipped rather than guessed.
+                    if (conv == null) unconverted += ob.currency.uppercase()
                     if (conv != null) projections.add(
                         VirtualProjectionDto(
                             obligationId = ob.id,
@@ -543,7 +572,8 @@ object FinancialCalculators {
             obligationToLiquidityRatio = ratio,
             liquidityDeficitAlert = ratio > BigDecimal("50.0") || runningBalance < BigDecimal.ZERO,
             projections = projections,
-            dailyTimeline = dailyTimeline
+            dailyTimeline = dailyTimeline,
+            unconvertedCurrencies = unconverted.toList()
         )
     }
 

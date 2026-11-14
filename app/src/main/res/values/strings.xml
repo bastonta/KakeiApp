@@ -532,4 +532,22 @@
         <item quantity="one">%d operation to process</item>
         <item quantity="other">%d operations to process</item>
     </plurals>
+    <string name="server_changed_sign_in_again">Server changed. Sign in to this server to continue.</string>
+    <string name="insecure_server_url">This address is on the public internet: use https:// so the password and session are not sent in clear text. Plain http works only for local network addresses.</string>
+    <string name="backup_restore_needs_offline">A backup can only be restored without a signed-in account: the server copy would replace it on the next sync. Sign out first.</string>
+    <string name="widget_open_app">Open Kakei</string>
+    <string name="totals_exclude_currencies">Not included in the totals (no exchange rate): %1$s</string>
+    <string name="logout_confirm_title">Sign out?</string>
+    <string name="logout_confirm_text">The data of this account will be removed from this device. It stays on the server and comes back when you sign in again.</string>
+    <string name="logout_confirm_text_offline">You will return to the sign-in screen. Data created without an account stays on this device.</string>
+    <plurals name="logout_unsynced_changes">
+        <item quantity="one">%d change has not been sent to the server and will be lost.</item>
+        <item quantity="other">%d changes have not been sent to the server and will be lost.</item>
+    </plurals>
+    <string name="delete_account_button">Delete account</string>
+    <string name="delete_account_title">Delete account?</string>
+    <string name="delete_account_text">The account and all its data are erased from the server and from this device. This cannot be undone. Enter your password to confirm.</string>
+    <string name="delete_account_confirm">Delete forever</string>
+    <string name="account_deleted">Account deleted</string>
+    <string name="account_delete_failed">Could not delete the account: %1$s</string>
 </resources>

@@ -743,7 +743,9 @@ data class CashFlowForecastDto(
     val obligationToLiquidityRatio: DecimalStr = BigDecimal.ZERO,
     val liquidityDeficitAlert: Boolean = false,
     val projections: List<VirtualProjectionDto> = emptyList(),
-    val dailyTimeline: List<DailyForecastPointDto> = emptyList()
+    val dailyTimeline: List<DailyForecastPointDto> = emptyList(),
+    /** Currencies left out of the totals because no exchange rate is known for them. */
+    val unconvertedCurrencies: List<String> = emptyList()
 )
 
 // ============================================================================
@@ -787,7 +789,9 @@ data class LendingListResponse(
     val totalOwedToMe: DecimalStr = BigDecimal.ZERO,
     val totalOwedByMe: DecimalStr = BigDecimal.ZERO,
     val netPosition: DecimalStr = BigDecimal.ZERO,
-    val items: List<LendingRecordDto> = emptyList()
+    val items: List<LendingRecordDto> = emptyList(),
+    /** Currencies of open debts left out of the totals because no exchange rate is known. */
+    val unconvertedCurrencies: List<String> = emptyList()
 )
 
 @Serializable

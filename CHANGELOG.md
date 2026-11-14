@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Delete account in Settings: the password confirms it, then the account is erased on the server and its data on the device.
+- The cash flow forecast and the debts summary name the currencies left out of their totals because no exchange rate is known.
+- A rejected change in the sync status line names what it was about (entity name, amount).
+
+### Changed
+- Signing out asks for confirmation and removes the account's data from the device, including changes that were not sent yet (their number is shown). Data created without an account stays.
+- Signing in as another user, or changing the server address, no longer carries the previous account's data or session over.
+- With the app lock on, the app is hidden in Recents and screenshots, and home screen widgets show "Open Kakei" instead of figures; the same when nobody is signed in.
+- Plain `http://` server addresses are accepted only for local network hosts; a public host needs `https://`.
+- An encrypted backup can be restored only without a signed-in account (the next sync would have replaced it), and the restore is all-or-nothing.
+- "Post now" for a planned payment names the occurrence, so a repeated request does not post the next one too (server 0.5.0).
+
+### Fixed
+- A server outage or a network error while refreshing the session no longer signs you out.
+- The refresh cookie was sent with every request and re-attached to a new server address; a temporary Keystore failure erased the stored session.
+- A change made while a sync was running could disappear from the screen until the next sync; edits waiting in the outbox were overwritten by the older server copy.
+- With more than 20 000 records on the server, older local records were deleted after each sync.
+- Budgets, streaks, the heatmap, insights and the "today" widget used the UTC day of a record instead of the local one.
+- Weekly, yearly and one-off budgets counted remaining days to the end of the month and kept a stale period offline; expenses before a budget's start date were counted.
+- The health score showed a 0% savings rate when there was neither income nor expense.
+- A three-letter merchant name in a bank alert could be read as a currency code.
+- Home screen widgets refresh just after midnight instead of every 12 hours from first launch.
+
 ## [1.10.0] - 2026-11-13
 
 ### Added
