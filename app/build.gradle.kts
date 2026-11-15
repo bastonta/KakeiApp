@@ -23,8 +23,8 @@ android {
         applicationId = "com.kakei.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 12
-        versionName = "1.10.0"
+        versionCode = 13
+        versionName = "1.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
