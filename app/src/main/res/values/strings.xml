@@ -219,6 +219,9 @@
     <string name="remove_passkey_confirm">Remove passkey?</string>
     <string name="will_no_longer_sign_you">\"%1$s\" will no longer sign you in. Remove the key itself in your password manager.</string>
     <string name="remove">Remove</string>
+    <string name="reauth_hint_password">Enter your account password to confirm.</string>
+    <string name="reauth_hint_password_or_code">Enter your account password or a code from your authenticator app to confirm.</string>
+    <string name="reauth_2fa_code_label">2FA code</string>
     <string name="none">None</string>
     <string name="smart_rule_simulator">Smart Rule Simulator:</string>
     <string name="test_merchant_text">Test Merchant Text</string>

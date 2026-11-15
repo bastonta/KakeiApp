@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plain `http://` server addresses are accepted only for local network hosts; a public host needs `https://`.
 - An encrypted backup can be restored only without a signed-in account (the next sync would have replaced it), and the restore is all-or-nothing.
 - "Post now" for a planned payment names the occurrence, so a repeated request does not post the next one too (server 0.5.0).
+- Adding or removing a passkey asks for the account password or, with 2FA on, a code from the authenticator app (required by the server after 0.5.0).
 
 ### Fixed
 - A server outage or a network error while refreshing the session no longer signs you out.

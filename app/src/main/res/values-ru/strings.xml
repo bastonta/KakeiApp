@@ -218,6 +218,9 @@
     <string name="remove_passkey_confirm">Удалить passkey?</string>
     <string name="will_no_longer_sign_you">«%1$s» больше не подойдёт для входа. Ключ на устройстве можно удалить в менеджере паролей.</string>
     <string name="remove">Удалить</string>
+    <string name="reauth_hint_password">Для подтверждения введите пароль от аккаунта.</string>
+    <string name="reauth_hint_password_or_code">Для подтверждения введите пароль от аккаунта или код из приложения-аутентификатора.</string>
+    <string name="reauth_2fa_code_label">Код 2FA</string>
     <string name="none">нет</string>
     <string name="smart_rule_simulator">Проверка правил:</string>
     <string name="test_merchant_text">Текст для проверки</string>

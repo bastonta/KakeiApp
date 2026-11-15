@@ -723,25 +723,29 @@ fun ProfileAndHubScreen(
     // New passkey name, then the system Credential Manager sheet
     if (showAddPasskeyDialog) {
         var passkeyName by remember { mutableStateOf(android.os.Build.MODEL) }
+        val reauth = remember { ReauthState() }
         AlertDialog(
             onDismissRequest = { showAddPasskeyDialog = false },
             title = { Text(s.getString(R.string.new_passkey)) },
             text = {
-                OutlinedTextField(
-                    value = passkeyName,
-                    onValueChange = { passkeyName = it.take(100) },
-                    label = { Text(s.getString(R.string.category_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = passkeyName,
+                        onValueChange = { passkeyName = it.take(100) },
+                        label = { Text(s.getString(R.string.category_name)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    ReauthFields(state = reauth, twoFactorEnabled = settings.profile.twoFactorEnabled)
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        repository.registerPasskey(context, passkeyName)
+                        repository.registerPasskey(context, passkeyName, reauth.toRequest())
                         showAddPasskeyDialog = false
                     },
-                    enabled = !settings.syncInProgress
+                    enabled = reauth.isReady && !settings.syncInProgress
                 ) {
                     Text(s.getString(R.string.create))
                 }
@@ -753,26 +757,42 @@ fun ProfileAndHubScreen(
     }
 
     passkeyToDelete?.let { passkey ->
+        val reauth = remember(passkey.id) { ReauthState() }
+        var inProgress by remember(passkey.id) { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { passkeyToDelete = null },
+            onDismissRequest = { if (!inProgress) passkeyToDelete = null },
             title = { Text(s.getString(R.string.remove_passkey_confirm)) },
             text = {
-                Text(
-                    s.getString(R.string.will_no_longer_sign_you, passkey.name)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        s.getString(R.string.will_no_longer_sign_you, passkey.name)
+                    )
+                    ReauthFields(state = reauth, twoFactorEnabled = settings.profile.twoFactorEnabled)
+                }
             },
             confirmButton = {
                 Button(
+                    enabled = reauth.isReady && !inProgress,
                     onClick = {
-                        repository.deletePasskey(passkey.id)
-                        passkeyToDelete = null
+                        inProgress = true
+                        repository.deletePasskey(passkey.id, reauth.toRequest()) { removed ->
+                            inProgress = false
+                            if (removed) {
+                                passkeyToDelete = null
+                            } else {
+                                // A code works once, and a wrong password should be retyped.
+                                reauth.value = ""
+                            }
+                        }
                     }
                 ) {
                     Text(s.getString(R.string.remove))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { passkeyToDelete = null }) { Text(s.getString(R.string.cancel_button)) }
+                TextButton(enabled = !inProgress, onClick = { passkeyToDelete = null }) {
+                    Text(s.getString(R.string.cancel_button))
+                }
             }
         )
     }
@@ -1111,6 +1131,74 @@ private fun DiagnosticLine(label: String, value: String, ok: Boolean) {
         Spacer(modifier = Modifier.width(10.dp))
         Text(label, style = MaterialTheme.typography.bodyMedium, color = c.text, modifier = Modifier.weight(1f))
         Text(value, style = MaterialTheme.typography.bodySmall, color = c.muted)
+    }
+}
+
+/**
+ * What the user typed to prove they own the account before a passkey is added or removed:
+ * the password or, when 2FA is on and they chose so, a code of the authenticator app.
+ */
+@Stable
+private class ReauthState {
+    var useCode by mutableStateOf(false)
+    var value by mutableStateOf("")
+
+    val isReady: Boolean
+        get() = if (useCode) value.length == ReauthRequest.CODE_LENGTH else value.isNotEmpty()
+
+    fun toRequest(): ReauthRequest =
+        if (useCode) ReauthRequest(code = value) else ReauthRequest(password = value)
+}
+
+/** Password field; with [twoFactorEnabled] also a switch to the authenticator code. */
+@Composable
+private fun ReauthFields(state: ReauthState, twoFactorEnabled: Boolean) {
+    val s = LocalResources.current
+    // The code is offered only while 2FA is on (it may be switched off while the dialog is open).
+    val useCode = state.useCode && twoFactorEnabled
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = s.getString(
+                if (twoFactorEnabled) R.string.reauth_hint_password_or_code else R.string.reauth_hint_password
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+        if (twoFactorEnabled) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = !useCode,
+                    onClick = { state.useCode = false; state.value = "" },
+                    label = { Text(s.getString(R.string.auth_password_label)) }
+                )
+                FilterChip(
+                    selected = useCode,
+                    onClick = { state.useCode = true; state.value = "" },
+                    label = { Text(s.getString(R.string.reauth_2fa_code_label)) }
+                )
+            }
+        }
+        if (useCode) {
+            OutlinedTextField(
+                value = state.value,
+                onValueChange = { input ->
+                    state.value = input.filter(Char::isDigit).take(ReauthRequest.CODE_LENGTH)
+                },
+                label = { Text(s.getString(R.string.reauth_2fa_code_label)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            OutlinedTextField(
+                value = state.value,
+                onValueChange = { state.value = it },
+                label = { Text(s.getString(R.string.auth_password_label)) },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 

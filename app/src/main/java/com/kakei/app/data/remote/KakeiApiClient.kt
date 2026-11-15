@@ -407,8 +407,8 @@ class KakeiApiClient(
             onAccessTokenRefreshed?.invoke(it.token)
         }
 
-    suspend fun enable2fa(): Result<TfaEnableResponse> =
-        requestJson("POST", "/profile/2fa-enable")
+    suspend fun enable2fa(req: TfaEnableRequest): Result<TfaEnableResponse> =
+        requestJson("POST", "/profile/2fa-enable", json.encodeToString(req))
 
     suspend fun confirm2fa(req: TfaConfirmRequest): Result<TfaConfirmResponse> =
         requestJson("POST", "/profile/2fa-confirm", json.encodeToString(req))
@@ -428,14 +428,14 @@ class KakeiApiClient(
     suspend fun listPasskeys(): Result<List<UserPasskeyItem>> =
         requestJson("GET", "/profile/passkeys")
 
-    suspend fun passkeyRegisterStart(): Result<PasskeyCeremonyResponse> =
-        requestJson("POST", "/profile/passkeys/register-start")
+    suspend fun passkeyRegisterStart(proof: ReauthRequest): Result<PasskeyCeremonyResponse> =
+        requestJson("POST", "/profile/passkeys/register-start", json.encodeToString(proof))
 
     suspend fun passkeyRegisterFinish(req: PasskeyRegisterFinishRequest): Result<UserPasskeyItem> =
         requestJson("POST", "/profile/passkeys/register-finish", json.encodeToString(req))
 
-    suspend fun deletePasskey(id: String): Result<Unit> =
-        requestJson("DELETE", "/profile/passkeys/$id")
+    suspend fun deletePasskey(id: String, proof: ReauthRequest): Result<Unit> =
+        requestJson("DELETE", "/profile/passkeys/$id", json.encodeToString(proof))
 
     // 3. Accounts
     suspend fun listAccounts(isArchived: Boolean? = null): Result<AccountsListResponse> =

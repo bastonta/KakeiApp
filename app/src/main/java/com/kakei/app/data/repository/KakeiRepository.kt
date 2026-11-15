@@ -629,12 +629,15 @@ class KakeiRepository(
         }
     }
 
-    /** Creates a passkey on this device and registers it on the signed-in Kakei account. */
-    fun registerPasskey(activityContext: Context, name: String) {
+    /**
+     * Creates a passkey on this device and registers it on the signed-in Kakei account.
+     * The server starts the ceremony only with a [proof] of ownership (password or 2FA code).
+     */
+    fun registerPasskey(activityContext: Context, name: String, proof: ReauthRequest) {
         scope.launch {
             _settingsState.value = _settingsState.value.copy(syncInProgress = true)
             val result = runCatching {
-                val ceremony = apiClient.passkeyRegisterStart().getOrThrow()
+                val ceremony = apiClient.passkeyRegisterStart(proof).getOrThrow()
                 val attestation = PasskeyHelper.createPasskey(activityContext, ceremony.challenge)
                 apiClient.passkeyRegisterFinish(
                     PasskeyRegisterFinishRequest(
@@ -659,13 +662,16 @@ class KakeiRepository(
         }
     }
 
-    fun deletePasskey(id: String) {
+    /** Removes a passkey from the account; the server asks for a [proof] of ownership. */
+    fun deletePasskey(id: String, proof: ReauthRequest, onResult: (Boolean) -> Unit = {}) {
         scope.launch {
-            apiClient.deletePasskey(id).onSuccess {
+            apiClient.deletePasskey(id, proof).onSuccess {
                 _passkeys.value = _passkeys.value.filterNot { it.id == id }
                 postMessage(str(R.string.passkey_removed))
+                onResult(true)
             }.onFailure { err ->
                 postMessage(str(R.string.could_not_remove_passkey, err.message))
+                onResult(false)
             }
         }
     }

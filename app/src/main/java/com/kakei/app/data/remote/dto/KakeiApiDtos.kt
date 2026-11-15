@@ -265,6 +265,16 @@ data class PasswordChangeRequest(
     val newPassword: String
 )
 
+/** `POST /profile/2fa-enable`: starting the 2FA setup requires the account password. */
+@Serializable
+data class TfaEnableRequest(
+    val password: String
+)
+
+/**
+ * [url] is the `otpauth://` link for the QR code; [secret] is the same key for typing into an
+ * authenticator app by hand (RFC 4648 base32 in groups of four).
+ */
 @Serializable
 data class TfaEnableResponse(
     val url: String,
@@ -296,6 +306,21 @@ data class AccountDeleteRequest(
 data class TfaDisableRequest(
     val password: String
 )
+
+/**
+ * Proof of ownership the server asks for before a passkey is added
+ * (`POST /profile/passkeys/register-start`) or removed (`DELETE /profile/passkeys/{id}`):
+ * exactly one of the account [password] or, when 2FA is on, the authenticator [code].
+ */
+@Serializable
+data class ReauthRequest(
+    val password: String? = null,
+    val code: String? = null
+) {
+    companion object {
+        const val CODE_LENGTH = 6
+    }
+}
 
 @Serializable
 data class UserPasskeyItem(
